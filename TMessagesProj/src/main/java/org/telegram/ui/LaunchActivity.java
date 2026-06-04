@@ -300,7 +300,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     private FireworksOverlay fireworksOverlay;
     private BottomSheetTabsOverlay bottomSheetTabsOverlay;
     public DrawerLayoutContainer drawerLayoutContainer;
-    public androidx.drawerlayout.widget.DrawerLayout potokDrawerLayout;
+   public boolean potokDrawerOpen = false;
 public org.telegram.ui.PotokDrawerView potokDrawerView;
     private PasscodeViewDialog passcodeDialog;
     private List<PasscodeView> overlayPasscodeViews = new ArrayList<>();
@@ -506,18 +506,12 @@ public org.telegram.ui.PotokDrawerView potokDrawerView;
         drawerLayoutContainer.setBehindKeyboardColor(Theme.getColor(Theme.key_windowBackgroundWhite));
 
         frameLayout.addView(drawerLayoutContainer, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-        // Потоk — боковая шторка
-potokDrawerLayout = new androidx.drawerlayout.widget.DrawerLayout(this);
-potokDrawerLayout.setDrawerElevation(0);
+        // Поток — боковая шторка
 potokDrawerView = new org.telegram.ui.PotokDrawerView(this, null);
-androidx.drawerlayout.widget.DrawerLayout.LayoutParams drawerParams = new androidx.drawerlayout.widget.DrawerLayout.LayoutParams(
-    AndroidUtilities.dp(280),
-    androidx.drawerlayout.widget.DrawerLayout.LayoutParams.MATCH_PARENT,
-    android.view.Gravity.LEFT
-);
-potokDrawerLayout.addView(potokDrawerView, drawerParams);
+potokDrawerView.setVisibility(View.GONE);
+potokDrawerView.setTranslationX(-AndroidUtilities.dp(280));
 potokDrawerView.setOnDrawerItemClickListener(id -> {
-    potokDrawerLayout.closeDrawers();
+    closePotokDrawer();
     if (id == org.telegram.ui.PotokDrawerView.ID_CONTACTS) {
         presentFragment(new ContactsActivity(null));
     } else if (id == org.telegram.ui.PotokDrawerView.ID_CALLS) {
@@ -532,15 +526,14 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
         presentFragment(new SettingsActivity());
     } else if (id == org.telegram.ui.PotokDrawerView.ID_NEW_GROUP) {
         Bundle groupArgs = new Bundle();
-presentFragment(new GroupCreateActivity(groupArgs));
+        presentFragment(new GroupCreateActivity(groupArgs));
     } else if (id == org.telegram.ui.PotokDrawerView.ID_NEW_CHANNEL) {
         Bundle args = new Bundle();
         args.putInt("step", 0);
         presentFragment(new ChannelCreateActivity(args));
     }
 });
-frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-
+drawerLayoutContainer.addView(potokDrawerView, LayoutHelper.createFrame(280, LayoutHelper.MATCH_PARENT, android.view.Gravity.LEFT));
         themeSwitchSunView = new ImageView(this) {
             @Override
             protected void onDraw(Canvas canvas) {
@@ -9140,4 +9133,25 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
     public PipActivityController getPipController() {
         return pipActivityController;
     }
+    public void openPotokDrawer() {
+    if (potokDrawerView == null || potokDrawerOpen) return;
+    potokDrawerOpen = true;
+    potokDrawerView.setVisibility(View.VISIBLE);
+    potokDrawerView.animate()
+        .translationX(0)
+        .setDuration(250)
+        .setInterpolator(new android.view.animation.DecelerateInterpolator())
+        .start();
+}
+
+public void closePotokDrawer() {
+    if (potokDrawerView == null || !potokDrawerOpen) return;
+    potokDrawerOpen = false;
+    potokDrawerView.animate()
+        .translationX(-AndroidUtilities.dp(280))
+        .setDuration(200)
+        .setInterpolator(new android.view.animation.AccelerateInterpolator())
+        .withEndAction(() -> potokDrawerView.setVisibility(View.GONE))
+        .start();
+}
 }

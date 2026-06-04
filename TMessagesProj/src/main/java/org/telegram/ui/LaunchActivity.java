@@ -531,7 +531,8 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
     } else if (id == org.telegram.ui.PotokDrawerView.ID_SETTINGS) {
         presentFragment(new SettingsActivity());
     } else if (id == org.telegram.ui.PotokDrawerView.ID_NEW_GROUP) {
-        presentFragment(new GroupCreateActivity());
+        Bundle groupArgs = new Bundle();
+presentFragment(new GroupCreateActivity(groupArgs));
     } else if (id == org.telegram.ui.PotokDrawerView.ID_NEW_CHANNEL) {
         Bundle args = new Bundle();
         args.putInt("step", 0);

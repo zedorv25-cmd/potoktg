@@ -3438,6 +3438,26 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             if (searchString != null || folderId != 0) {
                 actionBar.setBackButtonDrawable(backDrawable = new BackDrawable(false));
             }
+            if (folderId == 0 && searchString == null && !onlySelect) {
+    MenuDrawable menuDrawable = new MenuDrawable();
+    actionBar.setBackButtonDrawable(menuDrawable);
+    actionBar.setBackButtonContentDescription(LocaleController.getString("AccDescrOpenMenu", R.string.AccDescrOpenMenu));
+    actionBar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
+        @Override
+        public void onItemClick(int id) {
+            if (id == -1) {
+                LaunchActivity launchActivity = (LaunchActivity) getParentActivity();
+                if (launchActivity != null && launchActivity.potokDrawerLayout != null) {
+                    if (launchActivity.potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT)) {
+                        launchActivity.potokDrawerLayout.closeDrawers();
+                    } else {
+                        launchActivity.potokDrawerLayout.openDrawer(android.view.Gravity.LEFT);
+                    }
+                }
+            }
+        }
+    });
+}
             if (folderId != 0) {
                 actionBar.setTitle(getString(R.string.ArchivedChats));
             } else {

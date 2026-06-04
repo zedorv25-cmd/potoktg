@@ -3447,12 +3447,9 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         public void onItemClick(int id) {
             if (id == -1) {
                 LaunchActivity launchActivity = (LaunchActivity) getParentActivity();
-                if (launchActivity != null && launchActivity.potokDrawerLayout != null) {
-                    if (launchActivity.potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT)) {
-                        launchActivity.potokDrawerLayout.closeDrawers();
-                    } else {
-                        launchActivity.potokDrawerLayout.openDrawer(android.view.Gravity.LEFT);
-                    }
+                if (launchActivity != null) {
+    launchActivity.openPotokDrawer();
+}
                 }
             }
         }
@@ -5549,43 +5546,43 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
         checkUi_searchFieldStyle();
 
         // Поток — свайп вправо для открытия шторки
-fragmentView.setOnTouchListener(new android.view.View.OnTouchListener() {
-    private float startX;
-    private float startY;
-    private boolean tracking;
+        fragmentView.setOnTouchListener(new android.view.View.OnTouchListener() {
+            private float startX;
+            private float startY;
+            private boolean tracking;
 
-    @Override
-    public boolean onTouch(android.view.View v, android.view.MotionEvent event) {
-        LaunchActivity launchActivity = (LaunchActivity) getParentActivity();
-        if (launchActivity == null || launchActivity.potokDrawerLayout == null) return false;
-        if (launchActivity.potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT)) return false;
+            @Override
+            public boolean onTouch(android.view.View v, android.view.MotionEvent event) {
+                LaunchActivity launchActivity = (LaunchActivity) getParentActivity();
+                if (launchActivity == null) return false;
+                if (launchActivity.potokDrawerOpen) return false;
 
-        switch (event.getAction()) {
-            case android.view.MotionEvent.ACTION_DOWN:
-                startX = event.getX();
-                startY = event.getY();
-                tracking = false;
-                return false;
-            case android.view.MotionEvent.ACTION_MOVE:
-                float dx = event.getX() - startX;
-                float dy = event.getY() - startY;
-                if (!tracking && dx > AndroidUtilities.dp(20) && Math.abs(dy) < AndroidUtilities.dp(30)) {
-                    tracking = true;
+                switch (event.getAction()) {
+                    case android.view.MotionEvent.ACTION_DOWN:
+                        startX = event.getX();
+                        startY = event.getY();
+                        tracking = false;
+                        return false;
+                    case android.view.MotionEvent.ACTION_MOVE:
+                        float dx = event.getX() - startX;
+                        float dy = event.getY() - startY;
+                        if (!tracking && dx > AndroidUtilities.dp(20) && Math.abs(dy) < AndroidUtilities.dp(30)) {
+                            tracking = true;
+                        }
+                        if (tracking) {
+                            launchActivity.openPotokDrawer();
+                            tracking = false;
+                            return true;
+                        }
+                        return false;
+                    case android.view.MotionEvent.ACTION_UP:
+                    case android.view.MotionEvent.ACTION_CANCEL:
+                        tracking = false;
+                        return false;
                 }
-                if (tracking) {
-                    launchActivity.potokDrawerLayout.openDrawer(android.view.Gravity.LEFT);
-                    tracking = false;
-                    return true;
-                }
                 return false;
-            case android.view.MotionEvent.ACTION_UP:
-            case android.view.MotionEvent.ACTION_CANCEL:
-                tracking = false;
-                return false;
-        }
-        return false;
-    }
-});
+            }
+        });
         ViewCompat.setOnApplyWindowInsetsListener(fragmentView, this::onApplyWindowInsets);
         return fragmentView;
     }

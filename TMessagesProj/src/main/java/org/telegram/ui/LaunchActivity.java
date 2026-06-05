@@ -781,6 +781,10 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
 
                     @Override
                     public void onBackInvoked() {
+                        if (potokDrawerLayout != null && potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT)) {
+    potokDrawerLayout.closeDrawers();
+    return;
+}
                         invoked = true;
                         if (locked) {
                             locker.unlock();
@@ -857,15 +861,19 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
                     }
                 };
             }
-            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
-                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                (OnBackAnimationCallback) onBackAnimationCallback
-            );
+           getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+            OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            (OnBackAnimationCallback) onBackAnimationCallback
+        );
         } else if (Build.VERSION.SDK_INT >= 33) {
             if (onBackInvokedCallback == null) {
                 onBackInvokedCallback = new OnBackInvokedCallback() {
                     @Override
                     public void onBackInvoked() {
+                        if (potokDrawerLayout != null && potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT)) {
+                            potokDrawerLayout.closeDrawers();
+                            return;
+                        }
                         if (AndroidUtilities.isTablet()) {
                             onBackPressed();
                             return;
@@ -880,6 +888,11 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
                     }
                 };
             }
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                (OnBackInvokedCallback) onBackInvokedCallback
+            );
+        }
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 OnBackInvokedDispatcher.PRIORITY_DEFAULT,
                 (OnBackInvokedCallback) onBackInvokedCallback

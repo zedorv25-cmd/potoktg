@@ -893,12 +893,7 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
                 (OnBackInvokedCallback) onBackInvokedCallback
             );
         }
-            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
-                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                (OnBackInvokedCallback) onBackInvokedCallback
-            );
-        }
-
+            
         //if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
         //    refreshRateController = new RefreshRateController(this);
         //}

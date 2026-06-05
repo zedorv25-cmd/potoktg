@@ -540,6 +540,20 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
         presentFragment(new ChannelCreateActivity(args));
     }
 });
+        potokDrawerLayout.addDrawerListener(new androidx.drawerlayout.widget.DrawerLayout.DrawerListener() {
+    @Override
+    public void onDrawerSlide(android.view.View drawerView, float slideOffset) {}
+    @Override
+    public void onDrawerOpened(android.view.View drawerView) {}
+    @Override
+    public void onDrawerClosed(android.view.View drawerView) {}
+    @Override
+    public void onDrawerStateChanged(int newState) {
+        if (newState == androidx.drawerlayout.widget.DrawerLayout.STATE_IDLE) {
+            updateDrawerSwipeLock();
+        }
+    }
+});
 frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         themeSwitchSunView = new ImageView(this) {
             @Override
@@ -578,6 +592,7 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
             if (getLastFragment() != null && getLastFragment().getLastStoryViewer() != null) {
                 getLastFragment().getLastStoryViewer().updatePlayingMode();
             }
+            updateDrawerSwipeLock();
         });
         actionBarLayout.setDelegate(this);
         Theme.loadWallpaper(true);
@@ -8298,6 +8313,10 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
 
     @Override
     public void onBackPressed() {
+        if (potokDrawerLayout != null && potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT)) {
+    potokDrawerLayout.closeDrawers();
+    return;
+}
         if (!onBackPressed(true)) {
             return;
         }
@@ -9140,8 +9159,8 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
     public PipActivityController getPipController() {
         return pipActivityController;
     }
-   public void openPotokDrawer() {
-    if (potokDrawerLayout != null) {
+  public void openPotokDrawer() {
+    if (potokDrawerLayout != null && isOnMainScreen()) {
         potokDrawerLayout.openDrawer(android.view.Gravity.LEFT);
     }
 }
@@ -9149,6 +9168,20 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
 public void closePotokDrawer() {
     if (potokDrawerLayout != null) {
         potokDrawerLayout.closeDrawers();
+    }
+}
+
+private boolean isOnMainScreen() {
+    if (mainFragmentsStack == null || mainFragmentsStack.isEmpty()) return false;
+    return mainFragmentsStack.get(mainFragmentsStack.size() - 1) instanceof DialogsActivity;
+}
+
+public void updateDrawerSwipeLock() {
+    if (potokDrawerLayout == null) return;
+    if (isOnMainScreen()) {
+        potokDrawerLayout.setDrawerLockMode(androidx.drawerlayout.widget.DrawerLayout.LOCK_MODE_UNLOCKED);
+    } else {
+        potokDrawerLayout.setDrawerLockMode(androidx.drawerlayout.widget.DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
     }
 }
 }

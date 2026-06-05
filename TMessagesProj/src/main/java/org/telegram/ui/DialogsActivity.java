@@ -5554,7 +5554,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             public boolean onTouch(android.view.View v, android.view.MotionEvent event) {
                 LaunchActivity launchActivity = (LaunchActivity) getParentActivity();
                 if (launchActivity == null) return false;
-                if (launchActivity.potokDrawerOpen) return false;
+                if (launchActivity.potokDrawerLayout != null && launchActivity.potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT)) return false;
 
                 switch (event.getAction()) {
                     case android.view.MotionEvent.ACTION_DOWN:

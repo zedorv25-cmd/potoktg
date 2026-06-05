@@ -508,8 +508,9 @@ public org.telegram.ui.PotokDrawerView potokDrawerView;
         frameLayout.addView(drawerLayoutContainer, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         // Поток — боковая шторка
 potokDrawerView = new org.telegram.ui.PotokDrawerView(this, null);
-potokDrawerView.setVisibility(View.GONE);
+potokDrawerView.setVisibility(View.INVISIBLE);
 potokDrawerView.setTranslationX(-AndroidUtilities.dp(280));
+        potokDrawerView.bringToFront();
 potokDrawerView.setOnDrawerItemClickListener(id -> {
     closePotokDrawer();
     if (id == org.telegram.ui.PotokDrawerView.ID_CONTACTS) {

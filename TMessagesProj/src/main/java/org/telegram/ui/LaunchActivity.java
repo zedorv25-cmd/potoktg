@@ -565,10 +565,10 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
             }
         };
         themeSwitchSunView.setScaleType(ImageView.ScaleType.CENTER);
-        potokDrawerLayout.addView(themeSwitchSunView, LayoutHelper.createFrame(48, 48));
+        frameLayout.addView(themeSwitchSunView, LayoutHelper.createFrame(48, 48));
         themeSwitchSunView.setVisibility(View.GONE);
-        potokDrawerLayout.addView(bottomSheetTabsOverlay = new BottomSheetTabsOverlay(this));
-        potokDrawerLayout.addView(fireworksOverlay = new FireworksOverlay(this) {
+        frameLayout.addView(bottomSheetTabsOverlay = new BottomSheetTabsOverlay(this));
+        frameLayout.addView(fireworksOverlay = new FireworksOverlay(this) {
             {
                 setVisibility(GONE);
             }
@@ -9183,7 +9183,8 @@ public void closePotokDrawer() {
 
 private boolean isOnMainScreen() {
     if (mainFragmentsStack == null || mainFragmentsStack.isEmpty()) return false;
-    return mainFragmentsStack.get(mainFragmentsStack.size() - 1) instanceof DialogsActivity;
+    BaseFragment top = mainFragmentsStack.get(mainFragmentsStack.size() - 1);
+    return top instanceof DialogsActivity || top instanceof MainTabsActivity;
 }
 
 public void updateDrawerSwipeLock() {

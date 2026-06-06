@@ -1,10 +1,8 @@
 name: Build
-
 on:
   push:
     branches: [ "master" ]
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -15,6 +13,15 @@ jobs:
       CCACHE_MAXSIZE: "10G"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+          df -h
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4

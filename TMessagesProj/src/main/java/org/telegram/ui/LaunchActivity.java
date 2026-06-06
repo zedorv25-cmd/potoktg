@@ -555,6 +555,7 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
         }
     }
 });
+        updateDrawerSwipeLock();
 frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         themeSwitchSunView = new ImageView(this) {
             @Override

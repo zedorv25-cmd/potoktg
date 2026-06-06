@@ -508,7 +508,8 @@ public org.telegram.ui.PotokDrawerView potokDrawerView;
         potokDrawerLayout = new androidx.drawerlayout.widget.DrawerLayout(this);
 potokDrawerLayout.addView(drawerLayoutContainer, new androidx.drawerlayout.widget.DrawerLayout.LayoutParams(
     androidx.drawerlayout.widget.DrawerLayout.LayoutParams.MATCH_PARENT,
-    androidx.drawerlayout.widget.DrawerLayout.LayoutParams.MATCH_PARENT
+    androidx.drawerlayout.widget.DrawerLayout.LayoutParams.MATCH_PARENT,
+    android.view.Gravity.NO_GRAVITY
 ));
 potokDrawerView = new org.telegram.ui.PotokDrawerView(this, null);
 androidx.drawerlayout.widget.DrawerLayout.LayoutParams drawerParams = new androidx.drawerlayout.widget.DrawerLayout.LayoutParams(
@@ -563,10 +564,10 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
             }
         };
         themeSwitchSunView.setScaleType(ImageView.ScaleType.CENTER);
-        frameLayout.addView(themeSwitchSunView, LayoutHelper.createFrame(48, 48));
+        potokDrawerLayout.addView(themeSwitchSunView, LayoutHelper.createFrame(48, 48));
         themeSwitchSunView.setVisibility(View.GONE);
-        frameLayout.addView(bottomSheetTabsOverlay = new BottomSheetTabsOverlay(this));
-        frameLayout.addView(fireworksOverlay = new FireworksOverlay(this) {
+        potokDrawerLayout.addView(bottomSheetTabsOverlay = new BottomSheetTabsOverlay(this));
+        potokDrawerLayout.addView(fireworksOverlay = new FireworksOverlay(this) {
             {
                 setVisibility(GONE);
             }

@@ -3442,17 +3442,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     MenuDrawable menuDrawable = new MenuDrawable();
     actionBar.setBackButtonDrawable(menuDrawable);
     actionBar.setBackButtonContentDescription(LocaleController.getString("AccDescrOpenMenu", R.string.AccDescrOpenMenu));
-   actionBar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
-    @Override
-    public void onItemClick(int id) {
-        if (id == -1) {
-            LaunchActivity launchActivity = (LaunchActivity) getParentActivity();
-            if (launchActivity != null) {
-                launchActivity.openPotokDrawer();
-            }
-        }
-    }
-});
+   
 }
             if (folderId != 0) {
                 actionBar.setTitle(getString(R.string.ArchivedChats));
@@ -3841,6 +3831,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                         }
                     } else if (onlySelect || folderId != 0) {
                         finishFragment();
+                    } else {
+                        LaunchActivity launchActivity = (LaunchActivity) getParentActivity();
+                        if (launchActivity != null) {
+                            launchActivity.openPotokDrawer();
+                        }
                     }
                 } else if (id == 1) {
                     if (getParentActivity() == null) {

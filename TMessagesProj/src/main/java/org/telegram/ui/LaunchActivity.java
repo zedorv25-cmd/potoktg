@@ -527,10 +527,14 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
         args.putInt("type", 0);
         actionBarLayout.presentFragment(new CallLogActivity());
    } else if (id == org.telegram.ui.PotokDrawerView.ID_SAVED) {
-        Bundle args = new Bundle();
-        args.putLong("dialog_id", UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId());
-        args.putBoolean("isFromDrawer", true);
-        actionBarLayout.presentFragment(new ChatActivity(args));
+    Bundle args = new Bundle();
+    args.putLong("dialog_id", UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId());
+    AndroidUtilities.runOnUIThread(() -> {
+        BaseFragment fragment = actionBarLayout.getLastFragment();
+        if (fragment != null) {
+            fragment.presentFragment(new ChatActivity(args));
+        }
+    }, 300);
     } else if (id == org.telegram.ui.PotokDrawerView.ID_SETTINGS) {
         actionBarLayout.presentFragment(new SettingsActivity());
     } else if (id == org.telegram.ui.PotokDrawerView.ID_NEW_GROUP) {

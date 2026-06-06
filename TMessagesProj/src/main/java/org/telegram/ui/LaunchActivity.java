@@ -521,24 +521,25 @@ potokDrawerLayout.addView(potokDrawerView, drawerParams);
 potokDrawerView.setOnDrawerItemClickListener(id -> {
     potokDrawerLayout.closeDrawers();
     if (id == org.telegram.ui.PotokDrawerView.ID_CONTACTS) {
-        presentFragment(new ContactsActivity(null));
+        actionBarLayout.presentFragment(new ContactsActivity(null));
     } else if (id == org.telegram.ui.PotokDrawerView.ID_CALLS) {
         Bundle args = new Bundle();
         args.putInt("type", 0);
-        presentFragment(new CallLogActivity());
-    } else if (id == org.telegram.ui.PotokDrawerView.ID_SAVED) {
+        actionBarLayout.presentFragment(new CallLogActivity());
+   } else if (id == org.telegram.ui.PotokDrawerView.ID_SAVED) {
         Bundle args = new Bundle();
         args.putLong("dialog_id", UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId());
-        presentFragment(new ChatActivity(args));
+        args.putBoolean("isFromDrawer", true);
+        actionBarLayout.presentFragment(new ChatActivity(args));
     } else if (id == org.telegram.ui.PotokDrawerView.ID_SETTINGS) {
-        presentFragment(new SettingsActivity());
+        actionBarLayout.presentFragment(new SettingsActivity());
     } else if (id == org.telegram.ui.PotokDrawerView.ID_NEW_GROUP) {
         Bundle groupArgs = new Bundle();
-        presentFragment(new GroupCreateActivity(groupArgs));
+        actionBarLayout.presentFragment(new GroupCreateActivity(groupArgs));
     } else if (id == org.telegram.ui.PotokDrawerView.ID_NEW_CHANNEL) {
         Bundle args = new Bundle();
         args.putInt("step", 0);
-        presentFragment(new ChannelCreateActivity(args));
+        actionBarLayout.presentFragment(new ChannelCreateActivity(args));
     }
 });
         potokDrawerLayout.addDrawerListener(new androidx.drawerlayout.widget.DrawerLayout.DrawerListener() {

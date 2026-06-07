@@ -526,9 +526,9 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
         Bundle args = new Bundle();
         args.putInt("type", 0);
         actionBarLayout.presentFragment(new CallLogActivity());
-  } else if (id == org.telegram.ui.PotokDrawerView.ID_SAVED) {
+} else if (id == org.telegram.ui.PotokDrawerView.ID_SAVED) {
     Bundle args = new Bundle();
-    args.putLong("dialog_id", UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId());
+    args.putLong("user_id", UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId());
     AndroidUtilities.runOnUIThread(() -> {
         BaseFragment lastFragment = actionBarLayout.getLastFragment();
         if (lastFragment instanceof MainTabsActivity) {

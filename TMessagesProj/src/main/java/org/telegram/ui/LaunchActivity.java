@@ -9182,6 +9182,38 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
         potokDrawerLayout.openDrawer(android.view.Gravity.LEFT);
     }
 }
+    private float swipeStartX;
+private float swipeStartY;
+private boolean swipeTracking;
+
+@Override
+public boolean dispatchTouchEvent(MotionEvent event) {
+    if (potokDrawerLayout != null && !potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT) && isOnMainScreen()) {
+        switch (event.getAction()) {
+            case MotionEvent.ACTION_DOWN:
+                swipeStartX = event.getX();
+                swipeStartY = event.getY();
+                swipeTracking = false;
+                break;
+            case MotionEvent.ACTION_MOVE:
+                float dx = event.getX() - swipeStartX;
+                float dy = event.getY() - swipeStartY;
+                if (!swipeTracking && dx > AndroidUtilities.dp(30) && Math.abs(dy) < AndroidUtilities.dp(40)) {
+                    swipeTracking = true;
+                    openPotokDrawer();
+                    event.setAction(MotionEvent.ACTION_CANCEL);
+                    super.dispatchTouchEvent(event);
+                    return true;
+                }
+                break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                swipeTracking = false;
+                break;
+        }
+    }
+    return super.dispatchTouchEvent(event);
+}
 
 public void closePotokDrawer() {
     if (potokDrawerLayout != null) {

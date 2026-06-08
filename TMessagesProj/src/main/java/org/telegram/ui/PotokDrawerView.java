@@ -1,5 +1,5 @@
 package org.telegram.ui;
-
+import android.view.MotionEvent;
 import android.content.Context;
 import android.view.Gravity;
 import android.view.View;
@@ -131,4 +131,22 @@ public class PotokDrawerView extends FrameLayout {
     public void setOnDrawerItemClickListener(OnDrawerItemClickListener listener) {
         this.listener = listener;
     }
+    @Override
+public boolean onTouchEvent(MotionEvent event) {
+    switch (event.getAction()) {
+        case MotionEvent.ACTION_DOWN:
+            break;
+        case MotionEvent.ACTION_MOVE:
+            float dy = event.getY() - event.getHistoricalY(0);
+            if (dy > 0) {
+                setTranslationY(getTranslationY() + dy * 0.15f);
+            }
+            break;
+        case MotionEvent.ACTION_UP:
+        case MotionEvent.ACTION_CANCEL:
+            animate().translationY(0).setDuration(200).start();
+            break;
+    }
+    return super.onTouchEvent(event);
+}
 }

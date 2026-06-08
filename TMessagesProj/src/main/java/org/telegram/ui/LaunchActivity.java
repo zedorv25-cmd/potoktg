@@ -544,7 +544,7 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
         Bundle args = new Bundle();
         args.putInt("step", 0);
         actionBarLayout.presentFragment(new ChannelCreateActivity(args));
-    }
+    
     } else if (id == org.telegram.ui.PotokDrawerView.ID_FOLDERS) {
     actionBarLayout.presentFragment(new FiltersSetupActivity());
 } else if (id == org.telegram.ui.PotokDrawerView.ID_WALLET) {

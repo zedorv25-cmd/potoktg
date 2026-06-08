@@ -91,7 +91,7 @@ public class PotokDrawerView extends FrameLayout {
         content.addView(createMenuItem(context, ID_SAVED, R.drawable.msg_saved, LocaleController.getString("SavedMessages", R.string.SavedMessages)));
         content.addView(createMenuItem(context, ID_CALLS, R.drawable.msg_calls, LocaleController.getString("Calls", R.string.Calls)));
         content.addView(createDivider(context));
-        content.addView(createMenuItem(context, ID_WALLET, R.drawable.msg_wallet, LocaleController.getString("Wallet", R.string.Wallet)));
+        content.addView(createMenuItem(context, ID_WALLET, R.drawable.settings_wallet, LocaleController.getString("PotokWallet", R.string.PotokWallet)));
         content.addView(createMenuItem(context, ID_SETTINGS, R.drawable.msg_settings_old, LocaleController.getString("Settings", R.string.Settings)));
 
         ScrollView scrollView = new ScrollView(context);

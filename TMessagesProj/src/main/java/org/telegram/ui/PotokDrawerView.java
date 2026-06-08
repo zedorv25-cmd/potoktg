@@ -37,7 +37,6 @@ public class PotokDrawerView extends FrameLayout {
     public static final int ID_NEW_GROUP = 5;
     public static final int ID_NEW_CHANNEL = 6;
     public static final int ID_FOLDERS = 7;
-    public static final int ID_WALLET = 8;
 
     public PotokDrawerView(Context context, BaseFragment fragment) {
         super(context);
@@ -91,7 +90,6 @@ public class PotokDrawerView extends FrameLayout {
         content.addView(createMenuItem(context, ID_SAVED, R.drawable.msg_saved, LocaleController.getString("SavedMessages", R.string.SavedMessages)));
         content.addView(createMenuItem(context, ID_CALLS, R.drawable.msg_calls, LocaleController.getString("Calls", R.string.Calls)));
         content.addView(createDivider(context));
-        content.addView(createMenuItem(context, ID_WALLET, R.drawable.settings_wallet, LocaleController.getString("PotokWallet", R.string.PotokWallet)));
         content.addView(createMenuItem(context, ID_SETTINGS, R.drawable.msg_settings_old, LocaleController.getString("Settings", R.string.Settings)));
 
         ScrollView scrollView = new ScrollView(context);

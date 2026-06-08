@@ -529,12 +529,16 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
 } else if (id == org.telegram.ui.PotokDrawerView.ID_SAVED) {
     Bundle args = new Bundle();
     args.putLong("user_id", UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId());
-    AndroidUtilities.runOnUIThread(() -> {
-        BaseFragment lastFragment = actionBarLayout.getLastFragment();
-        if (lastFragment instanceof MainTabsActivity) {
-            ((MainTabsActivity) lastFragment).getDialogsActivity().presentFragment(new ChatActivity(args));
+    potokDrawerLayout.addDrawerListener(new androidx.drawerlayout.widget.DrawerLayout.SimpleDrawerListener() {
+        @Override
+        public void onDrawerClosed(View drawerView) {
+            potokDrawerLayout.removeDrawerListener(this);
+            BaseFragment lastFragment = actionBarLayout.getLastFragment();
+            if (lastFragment instanceof MainTabsActivity) {
+                ((MainTabsActivity) lastFragment).getDialogsActivity().presentFragment(new ChatActivity(args));
+            }
         }
-    }, 300);
+    });
     } else if (id == org.telegram.ui.PotokDrawerView.ID_SETTINGS) {
         actionBarLayout.presentFragment(new SettingsActivity());
     } else if (id == org.telegram.ui.PotokDrawerView.ID_NEW_GROUP) {

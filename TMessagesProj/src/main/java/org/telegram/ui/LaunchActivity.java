@@ -547,7 +547,7 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
     
     } else if (id == org.telegram.ui.PotokDrawerView.ID_FOLDERS) {
     actionBarLayout.presentFragment(new FiltersSetupActivity());
-
+    }
 });
         potokDrawerLayout.addDrawerListener(new androidx.drawerlayout.widget.DrawerLayout.DrawerListener() {
     @Override

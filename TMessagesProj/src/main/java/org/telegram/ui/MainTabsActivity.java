@@ -360,32 +360,6 @@ private static final int INDEX_CONTACTS = 3;
         return true;
     }
 
-    public boolean openCallsSelector(View anchor) {
-        if (getContext() == null || getParentActivity() == null) return false;
-        final ItemOptions o = ItemOptions.makeOptions(this, anchor);
-        o.add(R.drawable.menu_call_create, getString(R.string.GroupCallCreate2), () -> CallLogActivity.openCreateCall(this));
-        if (getUserConfig().showCallsTab) {
-            o.add(R.drawable.msg_archive_hide, getString(R.string.HideCallTab), () -> {
-                getUserConfig().setShowCallsTab(false);
-                checkUi_callTabVisible(false, true);
-                NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.callTabsVisibleToggled);
-            });
-        } else {
-            o.add(R.drawable.menu_add_tab_24, getString(R.string.GroupCallShowInMainTabs), () -> {
-                getUserConfig().setShowCallsTab(true);
-                checkUi_callTabVisible(true, true);
-                NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.callTabsVisibleToggled);
-            });
-        }
-        o.setBlur(true);
-        o.translate(0, -dp(4));
-        final ShapeDrawable bg = Theme.createRoundRectDrawable(dp(28), getThemedColor(Theme.key_windowBackgroundWhite));
-        bg.getPaint().setShadowLayer(dp(6), 0, dp(1), Theme.multAlpha(0xFF000000, 0.15f));
-        o.setScrimViewBackground(bg);
-        o.show();
-        return true;
-    }
-
     private Integer pendingFolderId;
 
     private boolean openFoldersSelector(View anchor) {

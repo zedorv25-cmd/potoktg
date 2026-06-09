@@ -101,7 +101,6 @@ private static final int INDEX_CONTACTS = 3;
 
 
     private IUpdateLayout updateLayout;
-    private boolean dropCallsFragmentAfterPageScroll;
 
     private UpdateLayoutWrapper updateLayoutWrapper;
     private FrameLayout tabsViewWrapper;
@@ -218,8 +217,6 @@ private static final int INDEX_CONTACTS = 3;
 
         Bulletin.addDelegate(this, delegate);
         Bulletin.addDelegate(contentView, delegate);
-
-        showAccountChangeHint();
     }
 
     private void checkContactsTabBadge() {
@@ -241,9 +238,6 @@ private static final int INDEX_CONTACTS = 3;
         super.onPause();
         Bulletin.removeDelegate(this);
         Bulletin.removeDelegate(contentView);
-        if (accountSwitchHint != null) {
-            accountSwitchHint.hide();
-        }
     }
 
     @Override
@@ -285,23 +279,6 @@ private static final int INDEX_CONTACTS = 3;
             tabsView.addView(tabs[index]);
             tabsView.setViewVisible(view, true, false);
         }
-
-                if (viewPager.getCurrentPosition() == position) {
-                    final BaseFragment fragment = getCurrentVisibleFragment();
-                    if (fragment instanceof MainTabsActivity.TabFragmentDelegate) {
-                        ((MainTabsActivity.TabFragmentDelegate) fragment).onParentScrollToTop();
-                    }
-                    return;
-                }
-
-                selectTab(position, true);
-                viewPager.scrollToPosition(position);
-            });
-
-            tabsView.addView(tabs[index]);
-            tabsView.setViewVisible(view, true, false);
-        }
-        checkUi_callTabVisible(getUserConfig().showCallsTab, false);
 
         selectTab(viewPager.getCurrentPosition(), false);
 
@@ -594,13 +571,7 @@ private static final int INDEX_CONTACTS = 3;
 
         if (viewPager != null) {
             final int currentPosition = viewPager.getCurrentPosition();
-            if (currentPosition != POSITION_CALLS_OR_SETTINGS && dropCallsFragmentAfterPageScroll) {
-                dropFragmentAtPosition(POSITION_CALLS_OR_SETTINGS);
-                dropCallsFragmentAfterPageScroll = false;
-            }
-            if (currentPosition != POSITION_PROFILE) {
-                dropFragmentAtPosition(POSITION_PROFILE);
-            }
+            
             if (pendingFolderId != null && currentPosition == POSITION_CHATS && dialogsActivity != null) {
                 dialogsActivity.scrollToFolder(pendingFolderId);
                 pendingFolderId = null;
@@ -880,7 +851,7 @@ private static final int INDEX_CONTACTS = 3;
         }
 
         final float animatedPosition = viewPager.getPositionAnimated();
-        final float isProfile = 1f - MathUtils.clamp(Math.abs(POSITION_PROFILE - animatedPosition), 0, 1);
+        final float isProfile = 1f - MathUtils.clamp(Math.abs(POSITION_CONTACTS - animatedPosition), 0, 1);
         final float hide = 1f - AndroidUtilities.getNavigationBarThirdButtonsFactor(0, 1f, navigationBarHeight);
         final float alpha = (1f - isProfile * hide) * animatorTabsVisible.getFloatValue();
 
@@ -966,40 +937,6 @@ private static final int INDEX_CONTACTS = 3;
             fragment.prepareFragmentToSlide(topFragment, beginSlide);
         }
     }
-
-
-    private HintView2 accountSwitchHint;
-    private boolean accountSwitchHintShown;
-
-    private void showAccountChangeHint() {
-        if (accountSwitchHintShown) return;
-
-        if (accountSwitchHint == null && HintsController.Hint.AccountSwitchHint.show()) {
-            AndroidUtilities.runOnUIThread(() -> {
-                if (getContext() == null || tabs == null) return;
-
-                final View v = tabs[INDEX_PROFILE];
-                final float translate = (contentView.getWidth() - ((tabsView.getX() + v.getX()) + v.getWidth()) + v.getWidth() / 2f) / AndroidUtilities.density;
-
-                accountSwitchHint = new HintView2(getContext(), HintView2.DIRECTION_BOTTOM);
-                accountSwitchHint.setTranslationY(-navigationBarHeight + dp(4));
-                accountSwitchHint.setPadding(dp(7.33f), 0, dp(7.33f), 0);
-                accountSwitchHint.setMultilineText(false);
-                accountSwitchHint.setCloseButton(true);
-                accountSwitchHint.setText(getString(R.string.SwitchAccountHint));
-                accountSwitchHint.setJoint(1, -translate + 7.33f);
-                contentView.addView(accountSwitchHint, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 100, Gravity.BOTTOM | Gravity.FILL_HORIZONTAL, 0, 0, 0, DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS));
-                accountSwitchHint.setOnHiddenListener(() -> AndroidUtilities.removeFromParent(accountSwitchHint));
-                accountSwitchHint.setDuration(8000);
-                accountSwitchHint.show();
-
-                HintsController.Hint.AccountSwitchHint.increment();
-            }, 1500);
-        }
-
-        accountSwitchHintShown = true;
-    }
-
 
     /* * */
 

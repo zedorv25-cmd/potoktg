@@ -90,6 +90,8 @@ private static final int INDEX_CHATS = 0;
 private static final int INDEX_FEED = 1;
 private static final int INDEX_TRAF = 2;
 private static final int INDEX_CONTACTS = 3;
+private NotificationCenter.ObserversGroup observersGroup;
+private NotificationCenter.ObserversGroup globalObserversGroup;
 
    
 

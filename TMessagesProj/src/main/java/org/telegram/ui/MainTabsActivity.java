@@ -622,10 +622,13 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
             return new ContactsActivity(args);
         } else if (position == POSITION_FEED) {
             return new PotokFeedFragment();
-        } else if (position == POSITION_TRAF) {
-            Bundle args = new Bundle();
-            args.putBoolean("hasMainTabs", true);
-            return new SettingsActivity(args);
+       } else if (position == POSITION_TRAF) {
+    Bundle args = new Bundle();
+    args.putBoolean("hasMainTabs", true);
+    args.putInt("selectedFolder", 1);
+    DialogsActivity trafActivity = new DialogsActivity(args);
+    trafActivity.setMainTabsActivityController(new MainTabsActivityControllerImpl());
+    return trafActivity;
         } else if (position == POSITION_CHATS) {
             Bundle args = new Bundle();
             args.putBoolean("hasMainTabs", true);

@@ -22,6 +22,7 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.RawRes;
 import androidx.annotation.StringRes;
+import androidx.annotation.DrawableRes;
 import androidx.core.graphics.ColorUtils;
 import androidx.core.math.MathUtils;
 
@@ -396,6 +397,19 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         tab.tabAnimation = tabAnimation;
         tab.textView.setText(LocaleController.getString(stringRes));
         tab.checkPlayAnimation(false);
+        tab.imageView.setLayoutParams(LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 4, 0, 0));
+        tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
+        tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
+        tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);
+        tab.updateColors();
+        return tab;
+    }
+    public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
+        GlassTabView tab = new GlassTabView(context);
+        tab.resourcesProvider = resourcesProvider;
+        tab.tabAnimation = null;
+        tab.textView.setText(LocaleController.getString(stringRes));
+        tab.imageView.setImageResource(iconRes);
         tab.imageView.setLayoutParams(LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 4, 0, 0));
         tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
         tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);

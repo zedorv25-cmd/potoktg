@@ -10817,4 +10817,8 @@
 
     <string name="GuestBotFor"> for </string>
     <string name="PotokWallet">Кошелёк</string>
+    <string name="PotokTabChats">Чаты</string>
+<string name="PotokTabFeed">Лента</string>
+<string name="PotokTabTraf">Траф</string>
+<string name="PotokTabContacts">Контакты</string>
 </resources>

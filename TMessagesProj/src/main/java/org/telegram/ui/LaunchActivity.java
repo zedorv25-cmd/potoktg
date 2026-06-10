@@ -9191,8 +9191,9 @@ private float swipeStartY;
 private boolean swipeTracking;
 
 @Override
+@Override
 public boolean dispatchTouchEvent(MotionEvent event) {
-    if (potokDrawerLayout != null && !potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT) && isOnMainScreen()) {
+    if (potokDrawerLayout != null && !potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT)) {
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
                 swipeStartX = event.getX();
@@ -9204,10 +9205,21 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                 float dy = event.getY() - swipeStartY;
                 if (!swipeTracking && dx > AndroidUtilities.dp(30) && Math.abs(dy) < AndroidUtilities.dp(40)) {
                     swipeTracking = true;
-                    openPotokDrawer();
-                    event.setAction(MotionEvent.ACTION_CANCEL);
-                    super.dispatchTouchEvent(event);
-                    return true;
+                    boolean isOnChatsTab = false;
+                    if (isOnMainScreen()) {
+                        BaseFragment top = mainFragmentsStack.get(mainFragmentsStack.size() - 1);
+                        if (top instanceof MainTabsActivity) {
+                            isOnChatsTab = ((MainTabsActivity) top).getCurrentPosition() == MainTabsActivity.POSITION_CHATS;
+                        } else if (top instanceof DialogsActivity) {
+                            isOnChatsTab = true;
+                        }
+                    }
+                    if (isOnChatsTab) {
+                        openPotokDrawer();
+                        event.setAction(MotionEvent.ACTION_CANCEL);
+                        super.dispatchTouchEvent(event);
+                        return true;
+                    }
                 }
                 break;
             case MotionEvent.ACTION_UP:
@@ -9216,6 +9228,8 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                 break;
         }
     }
+    return super.dispatchTouchEvent(event);
+}
     return super.dispatchTouchEvent(event);
 }
 

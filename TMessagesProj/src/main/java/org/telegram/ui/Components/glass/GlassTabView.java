@@ -260,7 +260,9 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
             backupImageView.setColorFilter(filter);
             backupImageView.invalidate();
         }
-        imageView.setColorFilter(filter);
+        if (tabAnimation != null) {
+    imageView.setColorFilter(filter);
+}
         textView.setTextColor(colorText);
     }
 

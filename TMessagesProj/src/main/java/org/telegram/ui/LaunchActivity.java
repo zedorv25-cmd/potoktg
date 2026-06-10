@@ -9191,7 +9191,6 @@ private float swipeStartY;
 private boolean swipeTracking;
 
 @Override
-@Override
 public boolean dispatchTouchEvent(MotionEvent event) {
     if (potokDrawerLayout != null && !potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT)) {
         switch (event.getAction()) {

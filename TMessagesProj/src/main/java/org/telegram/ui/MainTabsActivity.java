@@ -625,7 +625,7 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
       } else if (position == POSITION_TRAF) {
             Bundle args = new Bundle();
             args.putBoolean("hasMainTabs", true);
-            args.putInt("folderId", 1);
+            args.putInt("dialogsType", 7);
             DialogsActivity trafActivity = new DialogsActivity(args);
             trafActivity.setMainTabsActivityController(new MainTabsActivityControllerImpl());
             return trafActivity;

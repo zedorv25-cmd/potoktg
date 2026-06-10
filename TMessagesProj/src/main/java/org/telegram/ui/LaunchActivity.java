@@ -9226,10 +9226,8 @@ public boolean dispatchTouchEvent(MotionEvent event) {
             case MotionEvent.ACTION_CANCEL:
                 swipeTracking = false;
                 break;
-        }
+       }
     }
-    return super.dispatchTouchEvent(event);
-}
     return super.dispatchTouchEvent(event);
 }
 

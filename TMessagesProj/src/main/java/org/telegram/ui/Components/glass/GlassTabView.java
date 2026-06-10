@@ -260,9 +260,7 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
             backupImageView.setColorFilter(filter);
             backupImageView.invalidate();
         }
-        if (tabAnimation != null) {
-    imageView.setColorFilter(filter);
-}
+        imageView.setColorFilter(filter);
         textView.setTextColor(colorText);
     }
 
@@ -411,13 +409,8 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
     tab.resourcesProvider = resourcesProvider;
     tab.tabAnimation = null;
     tab.textView.setText(LocaleController.getString(stringRes));
-    tab.imageView.setVisibility(GONE);
-
-    android.widget.ImageView staticIcon = new android.widget.ImageView(context);
-    staticIcon.setImageResource(iconRes);
-    staticIcon.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
-    tab.addView(staticIcon, LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
-
+    tab.imageView.setVisibility(VISIBLE);
+    tab.imageView.setImageDrawable(context.getResources().getDrawable(iconRes, context.getTheme()).mutate());
     tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
     tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
     tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);

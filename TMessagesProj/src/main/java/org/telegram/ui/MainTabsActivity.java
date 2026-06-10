@@ -637,6 +637,9 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
     public DialogsActivity getDialogsActivity() {
         return dialogsActivity;
     }
+    public int getCurrentPosition() {
+    return viewPager != null ? viewPager.getCurrentPosition() : 0;
+}
 
     /* */
 

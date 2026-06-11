@@ -1330,7 +1330,7 @@ public boolean onTouchEvent(MotionEvent ev) {
                     !hasMainTabs &&
                     !searching &&
                     !rightSlidingDialogContainer.hasFragment() &&
-                    !parentLayout.checkTransitionAnimation() && !parentLayout.isInPreviewMode() && !parentLayout.isInPreviewOpenAnimationInProgress() &&
+                    !parentLayout.checkTransitionAnimation() && !parentLayout.isInPreviewMode() && !parentLayout.isPreviewOpenAnimationInProgress() &&
                     (
                             ev == null ||
                                     startedTracking ||

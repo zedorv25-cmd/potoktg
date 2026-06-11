@@ -13368,8 +13368,8 @@ public boolean onTouchEvent(MotionEvent ev) {
         if (filterTabsView != null && filterTabsView.isEditing()) {
             return false;
         }
-        if (hasMainTabs) {
-    return true;
+       if (hasMainTabs) {
+    return ev == null || forward;
 }
 
         final boolean isActionBarTouch = ev.getY() < actionBar.getMeasuredHeight();

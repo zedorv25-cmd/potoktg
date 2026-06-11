@@ -70,7 +70,7 @@ import org.telegram.ui.Components.UndoView;
 
 import java.util.ArrayList;
 
-public class FiltersSetupActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate {
+public class FiltersSetupActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate, MainTabsActivity.TabFragmentDelegate {
 
     private RecyclerListView listView;
     private ListAdapter adapter;

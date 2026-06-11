@@ -1322,24 +1322,25 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             super.requestDisallowInterceptTouchEvent(disallowIntercept);
         }
 
-        @Override
-        public boolean onTouchEvent(MotionEvent ev) {
-            if (
-                    parentLayout != null &&
-                            filterTabsView != null && !filterTabsView.isEditing() &&
-                            !searching &&
-                            !rightSlidingDialogContainer.hasFragment() &&
-                            !parentLayout.checkTransitionAnimation() && !parentLayout.isInPreviewMode() && !parentLayout.isPreviewOpenAnimationInProgress() &&
-                            (
-                                    ev == null ||
-                                            startedTracking ||
-                                            ev.getY() > getActionBarTop() + getActionBarFullHeight() && (chatInputViewsContainer == null || chatInputViewsContainer.getVisibility() != VISIBLE || ev.getY() < chatInputViewsContainer.getY())
-                            ) && (
-                            initialDialogsType == DIALOGS_TYPE_FORWARD ||
-                                    SharedConfig.getChatSwipeAction(currentAccount) == SwipeGestureSettingsView.SWIPE_GESTURE_FOLDERS ||
-                                    SharedConfig.getChatSwipeAction(currentAccount) == SwipeGestureSettingsView.SWIPE_GESTURE_ARCHIVE &&
-                                            viewPages[0] != null && (viewPages[0].dialogsAdapter.getDialogsType() == 7 || viewPages[0].dialogsAdapter.getDialogsType() == 8))
-            ) {
+       @Override
+public boolean onTouchEvent(MotionEvent ev) {
+    if (
+            parentLayout != null &&
+                    filterTabsView != null && !filterTabsView.isEditing() &&
+                    !hasMainTabs &&
+                    !searching &&
+                    !rightSlidingDialogContainer.hasFragment() &&
+                    !parentLayout.checkTransitionAnimation() && !parentLayout.isInPreviewMode() && !parentLayout.isInPreviewOpenAnimationInProgress() &&
+                    (
+                            ev == null ||
+                                    startedTracking ||
+                                    ev.getY() > getActionBarTop() + getActionBarFullHeight() && (chatInputViewsContainer == null || chatInputViewsContainer.getVisibility() != VISIBLE || ev.getY() < chatInputViewsContainer.getY())
+                    ) && (
+                    initialDialogsType == DIALOGS_TYPE_FORWARD ||
+                            SharedConfig.getChatSwipeAction(currentAccount) == SwipeGestureSettingsView.SWIPE_GESTURE_FOLDERS ||
+                            SharedConfig.getChatSwipeAction(currentAccount) == SwipeGestureSettingsView.SWIPE_GESTURE_ARCHIVE &&
+                                    viewPages[0] != null && (viewPages[0].dialogsAdapter.getDialogsType() == 7 || viewPages[0].dialogsAdapter.getDialogsType() == 8))
+    ) {
                 if (ev != null) {
                     if (velocityTracker == null) {
                         velocityTracker = VelocityTracker.obtain();

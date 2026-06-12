@@ -86,6 +86,10 @@ public class FiltersSetupActivity extends BaseFragment implements NotificationCe
         this.highlightTags = true;
         return this;
     }
+    @Override
+public boolean canParentTabsSlide(MotionEvent ev, boolean forward) {
+    return true;
+}
 
     public static class TextCell extends FrameLayout {
 

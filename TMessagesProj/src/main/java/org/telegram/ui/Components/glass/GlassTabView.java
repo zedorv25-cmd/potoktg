@@ -261,6 +261,10 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
             backupImageView.invalidate();
         }
         imageView.setColorFilter(filter);
+        View staticIconView = findViewWithTag("staticIcon");
+if (staticIconView instanceof android.widget.ImageView) {
+    ((android.widget.ImageView) staticIconView).setColorFilter(filter);
+}
         textView.setTextColor(colorText);
     }
 
@@ -400,19 +404,25 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         tab.imageView.setLayoutParams(LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 4, 0, 0));
         tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
         tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
-        tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);
-        tab.updateColors();
-        return tab;
-    }
-  public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
+    public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
     GlassTabView tab = new GlassTabView(context);
     tab.resourcesProvider = resourcesProvider;
     tab.tabAnimation = null;
     tab.textView.setText(LocaleController.getString(stringRes));
-    tab.imageView.setImageResource(iconRes);
-    tab.imageView.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
-    tab.imageView.setLayoutParams(LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
+    tab.imageView.setVisibility(GONE);
+
+    android.widget.ImageView staticIcon = new android.widget.ImageView(context);
+    staticIcon.setImageResource(iconRes);
+    staticIcon.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+    staticIcon.setTag("staticIcon");
+    tab.addView(staticIcon, LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
+
     tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
+    tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
+    tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);
+    tab.updateColors();
+    return tab;
+}
     tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
     tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);
     tab.updateColors();

@@ -405,25 +405,19 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         return tab;
     }
   public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
-        GlassTabView tab = new GlassTabView(context);
-        tab.resourcesProvider = resourcesProvider;
-        tab.tabAnimation = null;
-        tab.textView.setText(LocaleController.getString(stringRes));
-        tab.imageView.setVisibility(GONE);
-
-       androidx.appcompat.widget.AppCompatImageView staticIcon = new androidx.appcompat.widget.AppCompatImageView(context);
-staticIcon.setImageResource(iconRes);
-staticIcon.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
-staticIcon.setColorFilter(new android.graphics.PorterDuffColorFilter(
-    Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider),
-    android.graphics.PorterDuff.Mode.SRC_IN));
-
-        tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
-        tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
-        tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);
-        tab.updateColors();
-        return tab;
-    }
+    GlassTabView tab = new GlassTabView(context);
+    tab.resourcesProvider = resourcesProvider;
+    tab.tabAnimation = null;
+    tab.textView.setText(LocaleController.getString(stringRes));
+    tab.imageView.setImageResource(iconRes);
+    tab.imageView.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+    tab.imageView.setLayoutParams(LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
+    tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
+    tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
+    tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);
+    tab.updateColors();
+    return tab;
+}
 
     public static GlassTabView createAvatar(Context context, Theme.ResourcesProvider resourcesProvider, int currentAccount, @StringRes int stringRes) {
         GlassTabView tab = new GlassTabView(context);

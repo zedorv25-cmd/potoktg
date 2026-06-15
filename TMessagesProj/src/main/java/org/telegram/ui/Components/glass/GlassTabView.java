@@ -403,17 +403,6 @@ if (staticIconView instanceof android.widget.ImageView) {
         AvatarDrawable avatarDrawable = new AvatarDrawable(user);
         backupImageView.setForUserOrChat(user, avatarDrawable);
     }
-tab.resourcesProvider = resourcesProvider;
-        tab.tabAnimation = tabAnimation;
-        tab.textView.setText(LocaleController.getString(stringRes));
-        tab.checkPlayAnimation(false);
-        tab.imageView.setLayoutParams(LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 4, 0, 0));
-        tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
-        tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
-        tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);
-        tab.updateColors();
-        return tab;
-    }
 
     public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
         GlassTabView tab = new GlassTabView(context);

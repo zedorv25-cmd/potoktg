@@ -397,6 +397,8 @@ if (staticIconView instanceof android.widget.ImageView) {
 
     public static GlassTabView createMainTab(Context context, Theme.ResourcesProvider resourcesProvider, TabAnimation tabAnimation, @StringRes int stringRes) {
         GlassTabView tab = new GlassTabView(context);
+        return tab;
+    }
        
     public void updateUserAvatar(int currentAccount) {
         TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(UserConfig.getInstance(currentAccount).getClientUserId());

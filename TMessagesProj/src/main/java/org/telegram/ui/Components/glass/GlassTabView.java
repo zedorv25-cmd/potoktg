@@ -261,7 +261,7 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
             backupImageView.invalidate();
         }
         imageView.setColorFilter(filter);
-        View staticIconView = findViewWithTag("staticIcon");
+        android.view.View staticIconView = findViewWithTag("staticIcon");
 if (staticIconView instanceof android.widget.ImageView) {
     ((android.widget.ImageView) staticIconView).setColorFilter(filter);
 }

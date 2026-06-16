@@ -56,7 +56,7 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
     private final TextView textView;
     private final RLottieImageView imageView;
     private BackupImageView backupImageView;
-    private androidx.appcompat.widget.AppCompatImageView staticIconView;
+    private android.widget.ImageView staticIconView;
     private Theme.ResourcesProvider resourcesProvider;
     private final Paint paintCounterBackground = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final AnimatedTextView.AnimatedTextDrawable counter;
@@ -263,8 +263,8 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         }
         imageView.setColorFilter(filter);
         if (staticIconView != null) {
-    staticIconView.setColorFilter(filter);
-}
+            staticIconView.setColorFilter(filter);
+        }
         textView.setTextColor(colorText);
     }
 
@@ -397,29 +397,33 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
 
     public static GlassTabView createMainTab(Context context, Theme.ResourcesProvider resourcesProvider, TabAnimation tabAnimation, @StringRes int stringRes) {
         GlassTabView tab = new GlassTabView(context);
+        tab.resourcesProvider = resourcesProvider;
+        tab.tabAnimation = tabAnimation;
+        tab.textView.setText(LocaleController.getString(stringRes));
+        tab.checkPlayAnimation(false);
+        tab.imageView.setLayoutParams(LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 4, 0, 0));
+        tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
+        tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
+        tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);
+        tab.updateColors();
         return tab;
     }
-       
-    public void updateUserAvatar(int currentAccount) {
-        TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(UserConfig.getInstance(currentAccount).getClientUserId());
-        AvatarDrawable avatarDrawable = new AvatarDrawable(user);
-        backupImageView.setForUserOrChat(user, avatarDrawable);
-    }
-
-    public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
-      GlassTabView tab = new GlassTabView(context);
+  public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
+        GlassTabView tab = new GlassTabView(context);
         tab.resourcesProvider = resourcesProvider;
         tab.tabAnimation = null;
         tab.textView.setText(LocaleController.getString(stringRes));
         tab.imageView.setVisibility(GONE);
-        androidx.appcompat.widget.AppCompatImageView staticIcon = new androidx.appcompat.widget.AppCompatImageView(context);
+
+        android.widget.ImageView staticIcon = new android.widget.ImageView(context);
         staticIcon.setImageResource(iconRes);
         staticIcon.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
         tab.staticIconView = staticIcon;
+        tab.addView(staticIcon, LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
+
         tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
         tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
         tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);
-        tab.addView(staticIcon, LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
         tab.updateColors();
         return tab;
     }
@@ -428,12 +432,15 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         GlassTabView tab = new GlassTabView(context);
         tab.textView.setText(LocaleController.getString(stringRes));
         tab.imageView.setVisibility(GONE);
+
         TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(UserConfig.getInstance(currentAccount).getClientUserId());
         AvatarDrawable avatarDrawable = new AvatarDrawable(user);
+
         BackupImageView backupImageView = new BackupImageView(context);
         backupImageView.setForUserOrChat(user, avatarDrawable);
         backupImageView.setRoundRadius(dp(11));
         tab.backupImageView = backupImageView;
+
         tab.addView(backupImageView, LayoutHelper.createFrame(22, 22, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 5, 0, 0));
         tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
         tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
@@ -441,6 +448,13 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         tab.updateColors();
         return tab;
     }
+
+    public void updateUserAvatar(int currentAccount) {
+        TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(UserConfig.getInstance(currentAccount).getClientUserId());
+        AvatarDrawable avatarDrawable = new AvatarDrawable(user);
+        backupImageView.setForUserOrChat(user, avatarDrawable);
+    }
+
     public static GlassTabView createAttachTab(Context context, Theme.ResourcesProvider resourcesProvider) {
         GlassTabView tab = new GlassTabView(context);
         tab.resourcesProvider = resourcesProvider;

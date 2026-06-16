@@ -412,7 +412,7 @@ if (staticIconView instanceof android.widget.ImageView) {
         tab.tabAnimation = null;
         tab.textView.setText(LocaleController.getString(stringRes));
         tab.imageView.setVisibility(GONE);
-        android.widget.ImageView staticIcon = new android.widget.ImageView(context);
+        androidx.appcompat.widget.AppCompatImageView staticIcon = new androidx.appcompat.widget.AppCompatImageView(context);
         staticIcon.setImageResource(iconRes);
         staticIcon.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
         staticIcon.setTag("staticIcon");

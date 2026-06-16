@@ -56,6 +56,7 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
     private final TextView textView;
     private final RLottieImageView imageView;
     private BackupImageView backupImageView;
+    private androidx.appcompat.widget.AppCompatImageView staticIconView;
     private Theme.ResourcesProvider resourcesProvider;
     private final Paint paintCounterBackground = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final AnimatedTextView.AnimatedTextDrawable counter;
@@ -261,9 +262,8 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
             backupImageView.invalidate();
         }
         imageView.setColorFilter(filter);
-        android.view.View staticIconView = findViewWithTag("staticIcon");
-if (staticIconView instanceof android.widget.ImageView) {
-    ((android.widget.ImageView) staticIconView).setColorFilter(filter);
+        if (staticIconView != null) {
+    staticIconView.setColorFilter(filter);
 }
         textView.setTextColor(colorText);
     }
@@ -407,14 +407,19 @@ if (staticIconView instanceof android.widget.ImageView) {
     }
 
     public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
-       GlassTabView tab = new GlassTabView(context);
+      GlassTabView tab = new GlassTabView(context);
         tab.resourcesProvider = resourcesProvider;
         tab.tabAnimation = null;
         tab.textView.setText(LocaleController.getString(stringRes));
-        tab.imageView.setImageResource(iconRes);
+        tab.imageView.setVisibility(GONE);
+        androidx.appcompat.widget.AppCompatImageView staticIcon = new androidx.appcompat.widget.AppCompatImageView(context);
+        staticIcon.setImageResource(iconRes);
+        staticIcon.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+        tab.staticIconView = staticIcon;
         tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
         tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
         tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);
+        tab.addView(staticIcon, LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
         tab.updateColors();
         return tab;
     }

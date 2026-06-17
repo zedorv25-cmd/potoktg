@@ -413,13 +413,11 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         tab.resourcesProvider = resourcesProvider;
         tab.tabAnimation = null;
         tab.textView.setText(LocaleController.getString(stringRes));
-        tab.imageView.setVisibility(GONE);
 
-        android.widget.ImageView staticIcon = new android.widget.ImageView(context);
-        staticIcon.setImageResource(iconRes);
-        staticIcon.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
-        tab.staticIconView = staticIcon;
-        tab.addView(staticIcon, LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
+        // Используем существующий imageView — он уже подключён к updateColors()
+        tab.imageView.setImageResource(iconRes);
+        tab.imageView.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+        tab.imageView.setLayoutParams(LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 4, 0, 0));
 
         tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
         tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);

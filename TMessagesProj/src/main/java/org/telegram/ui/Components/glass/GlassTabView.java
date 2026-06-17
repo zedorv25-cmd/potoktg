@@ -56,7 +56,6 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
     private final TextView textView;
     private final RLottieImageView imageView;
     private BackupImageView backupImageView;
-    private android.widget.ImageView staticIconView;
     private Theme.ResourcesProvider resourcesProvider;
     private final Paint paintCounterBackground = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final AnimatedTextView.AnimatedTextDrawable counter;
@@ -262,9 +261,6 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
             backupImageView.invalidate();
         }
         imageView.setColorFilter(filter);
-        if (staticIconView != null) {
-            staticIconView.setColorFilter(filter);
-        }
         textView.setTextColor(colorText);
     }
 
@@ -408,17 +404,15 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         tab.updateColors();
         return tab;
     }
-  public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
+    public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
         GlassTabView tab = new GlassTabView(context);
         tab.resourcesProvider = resourcesProvider;
         tab.tabAnimation = null;
         tab.textView.setText(LocaleController.getString(stringRes));
-
-        // Используем существующий imageView — он уже подключён к updateColors()
+        // Используем imageView напрямую — точно так же как createMainTab
         tab.imageView.setImageResource(iconRes);
         tab.imageView.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
         tab.imageView.setLayoutParams(LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 4, 0, 0));
-
         tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);
         tab.colorSelected = Theme.getColor(Theme.key_glass_tabSelected, resourcesProvider);
         tab.colorSelectedText = Theme.getColor(Theme.key_glass_tabSelectedText, resourcesProvider);

@@ -262,9 +262,7 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
             backupImageView.invalidate();
         }
         imageView.setColorFilter(filter);
-        if (staticIconView != null) {
-            staticIconView.setColorFilter(filter);
-        }
+        // ВРЕМЕННО ОТКЛЮЧЕНО ДЛЯ ДИАГНОСТИКИ: if (staticIconView != null) { staticIconView.setColorFilter(filter); }
         textView.setTextColor(colorText);
     }
 
@@ -416,14 +414,27 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         tab.imageView.setVisibility(GONE);
 
         tab.staticIconView = new androidx.appcompat.widget.AppCompatImageView(context);
-        android.graphics.drawable.Drawable iconDrawable = androidx.core.content.res.ResourcesCompat.getDrawable(context.getResources(), iconRes, null);
-        if (iconDrawable == null) {
-            // ВРЕМЕННО: если наш drawable не грузится — берём системную иконку, чтобы убедиться что ImageView вообще умеет показывать картинку
-            iconDrawable = androidx.core.content.res.ResourcesCompat.getDrawable(context.getResources(), android.R.drawable.ic_menu_gallery, null);
+        android.graphics.drawable.Drawable iconDrawable;
+        if (iconRes == R.drawable.potok_tab_chats) {
+            // Тест 1: программный drawable, без обращения к ресурсам вообще
+            android.graphics.drawable.ShapeDrawable sd = new android.graphics.drawable.ShapeDrawable(new android.graphics.drawable.shapes.OvalShape());
+            sd.getPaint().setColor(0xFF00FF00);
+            sd.setIntrinsicWidth(24);
+            sd.setIntrinsicHeight(24);
+            iconDrawable = sd;
+        } else if (iconRes == R.drawable.potok_tab_feed) {
+            // Тест 2: системная иконка через getDrawable (старый способ, без AppCompat)
+            iconDrawable = context.getResources().getDrawable(android.R.drawable.ic_menu_gallery);
+        } else if (iconRes == R.drawable.potok_tab_traf) {
+            // Тест 3: наш реальный ресурс через ResourcesCompat
+            iconDrawable = androidx.core.content.res.ResourcesCompat.getDrawable(context.getResources(), iconRes, null);
+        } else {
+            // Тест 4: наш реальный ресурс через AppCompatResources (правильный способ для vector drawable)
+            iconDrawable = androidx.appcompat.content.res.AppCompatResources.getDrawable(context, iconRes);
         }
         tab.staticIconView.setImageDrawable(iconDrawable);
         tab.staticIconView.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
-        tab.staticIconView.setBackgroundColor(0x33FFFFFF); // полупрозрачная рамка-маркер, чтобы видеть границы View
+        tab.staticIconView.setBackgroundColor(0x55FFFFFF);
         tab.addView(tab.staticIconView, LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
 
         tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);

@@ -416,9 +416,14 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         tab.imageView.setVisibility(GONE);
 
         tab.staticIconView = new androidx.appcompat.widget.AppCompatImageView(context);
-        tab.staticIconView.setImageDrawable(androidx.core.content.res.ResourcesCompat.getDrawable(context.getResources(), iconRes, null));
+        android.graphics.drawable.Drawable iconDrawable = androidx.core.content.res.ResourcesCompat.getDrawable(context.getResources(), iconRes, null);
+        if (iconDrawable == null) {
+            // ВРЕМЕННО: если наш drawable не грузится — берём системную иконку, чтобы убедиться что ImageView вообще умеет показывать картинку
+            iconDrawable = androidx.core.content.res.ResourcesCompat.getDrawable(context.getResources(), android.R.drawable.ic_menu_gallery, null);
+        }
+        tab.staticIconView.setImageDrawable(iconDrawable);
         tab.staticIconView.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
-        tab.staticIconView.setBackgroundColor(0xFFFF00FF); // ВРЕМЕННЫЙ МАРКЕР ДЛЯ ДИАГНОСТИКИ — убрать после теста
+        tab.staticIconView.setBackgroundColor(0x33FFFFFF); // полупрозрачная рамка-маркер, чтобы видеть границы View
         tab.addView(tab.staticIconView, LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
 
         tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);

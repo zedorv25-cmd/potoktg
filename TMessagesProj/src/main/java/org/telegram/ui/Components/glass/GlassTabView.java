@@ -445,16 +445,23 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
                     android.util.Log.d("POTOK_ICON", "draw() ABORTED: size<=0");
                     return;
                 }
-                final float scale = size / 960f;
+                final float pathW = pathBoundsRect.width();
+                final float pathH = pathBoundsRect.height();
+                if (pathW <= 0 || pathH <= 0) {
+                    android.util.Log.d("POTOK_ICON", "draw() ABORTED: invalid pathBounds " + pathBoundsRect);
+                    return;
+                }
+                final float scale = size / Math.max(pathW, pathH);
                 canvas.save();
-                // центрируем квадрат внутри bounds на случай если они не идеально квадратные
                 final float dx = bounds.left + (bounds.width() - size) / 2f;
                 final float dy = bounds.top + (bounds.height() - size) / 2f;
                 canvas.translate(dx, dy);
                 canvas.scale(scale, scale);
+                // компенсируем реальное смещение path (Material-иконки используют отрицательные Y координаты)
+                canvas.translate(-pathBoundsRect.left, -pathBoundsRect.top);
                 canvas.drawPath(rawPath, paint);
                 canvas.restore();
-                android.util.Log.d("POTOK_ICON", "draw() FINISHED: scale=" + scale + " dx=" + dx + " dy=" + dy);
+                android.util.Log.d("POTOK_ICON", "draw() FINISHED: scale=" + scale + " dx=" + dx + " dy=" + dy + " compensateX=" + (-pathBoundsRect.left) + " compensateY=" + (-pathBoundsRect.top));
             }
 
             @Override

@@ -421,11 +421,42 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         } else {
             pathData = "M160-40v-80h640v80H160Zm0-800v-80h640v80H160Zm320 400q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h640q33 0 56.5 23.5T880-720v480q0 33-23.5 56.5T800-160H160Zm70-80q45-56 109-88t141-32q77 0 141 32t109 88h70v-480H160v480h70Zm118 0h264q-29-20-62.5-30T480-280q-36 0-69.5 10T348-240Zm103.5-291.5Q440-543 440-560t11.5-28.5Q463-600 480-600t28.5 11.5Q520-577 520-560t-11.5 28.5Q497-520 480-520t-28.5-11.5ZM480-480Z";
         }
-        final android.graphics.Path path = androidx.core.graphics.PathParser.createPathFromPathData(pathData);
-        final android.graphics.drawable.ShapeDrawable drawable = new android.graphics.drawable.ShapeDrawable(new android.graphics.drawable.shapes.PathShape(path, 960, 960));
-        drawable.setIntrinsicWidth(24);
-        drawable.setIntrinsicHeight(24);
-        return drawable;
+        final android.graphics.Path rawPath = androidx.core.graphics.PathParser.createPathFromPathData(pathData);
+        return new android.graphics.drawable.Drawable() {
+            private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+            { paint.setStyle(android.graphics.Paint.Style.FILL); }
+
+            @Override
+            public void draw(android.graphics.Canvas canvas) {
+                final android.graphics.Rect bounds = getBounds();
+                final int size = Math.min(bounds.width(), bounds.height());
+                if (size <= 0) return;
+                final float scale = size / 960f;
+                canvas.save();
+                // центрируем квадрат внутри bounds на случай если они не идеально квадратные
+                final float dx = bounds.left + (bounds.width() - size) / 2f;
+                final float dy = bounds.top + (bounds.height() - size) / 2f;
+                canvas.translate(dx, dy);
+                canvas.scale(scale, scale);
+                canvas.drawPath(rawPath, paint);
+                canvas.restore();
+            }
+
+            @Override
+            public void setAlpha(int alpha) { paint.setAlpha(alpha); }
+
+            @Override
+            public void setColorFilter(android.graphics.ColorFilter colorFilter) { paint.setColorFilter(colorFilter); }
+
+            @Override
+            public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
+
+            @Override
+            public int getIntrinsicWidth() { return -1; }
+
+            @Override
+            public int getIntrinsicHeight() { return -1; }
+        };
     }
 
   public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {

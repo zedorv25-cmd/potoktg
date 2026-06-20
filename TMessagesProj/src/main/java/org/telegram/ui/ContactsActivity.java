@@ -136,6 +136,11 @@ public class ContactsActivity extends BaseFragment implements FactorAnimator.Tar
     private ContactsAdapter listViewAdapter;
     private StickerEmptyView emptyView;
     private RecyclerListView listView;
+    private MainTabsActivityController mainTabsActivityController;
+
+    public void setMainTabsActivityController(MainTabsActivityController controller) {
+        mainTabsActivityController = controller;
+    }
     private RecyclerAnimationScrollHelper scrollHelper;
     private LinearLayoutManager layoutManager;
     private SearchAdapter searchListViewAdapter;
@@ -558,6 +563,9 @@ public class ContactsActivity extends BaseFragment implements FactorAnimator.Tar
         listView.setFastScrollEnabled(RecyclerListView.FastScroll.LETTER_TYPE);
         listView.setLayoutManager(layoutManager = new LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false));
         listView.setAdapter(listViewAdapter);
+        if (mainTabsActivityController != null) {
+            listView.addOnScrollListener(new TabBarScrollHider(mainTabsActivityController));
+        }
         listView.setClipToPadding(false);
         scrollHelper = new RecyclerAnimationScrollHelper(listView, layoutManager);
         scrollHelper.setScrollListener(this::blur3_InvalidateBlur);

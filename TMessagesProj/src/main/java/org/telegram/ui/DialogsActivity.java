@@ -4556,6 +4556,10 @@ public boolean onTouchEvent(MotionEvent ev) {
                 }
             });
 
+            if (hasMainTabs && mainTabsActivityController != null) {
+                viewPage.listView.addOnScrollListener(new TabBarScrollHider(mainTabsActivityController));
+            }
+
             viewPage.archivePullViewState = SharedConfig.archiveHidden ? ARCHIVE_ITEM_STATE_HIDDEN : ARCHIVE_ITEM_STATE_PINNED;
             if (viewPage.pullForegroundDrawable == null && folderId == 0) {
                 viewPage.pullForegroundDrawable = new PullForegroundDrawable(LocaleController.getString(R.string.AccSwipeForArchive), LocaleController.getString(R.string.AccReleaseForArchive)) {

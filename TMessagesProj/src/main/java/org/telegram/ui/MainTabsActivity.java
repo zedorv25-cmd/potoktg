@@ -256,10 +256,6 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         tabs[INDEX_TRAF] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_traf, R.string.PotokTabTraf);
         tabs[INDEX_CONTACTS] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_contacts, R.string.PotokTabContacts);
         tabs[INDEX_CHATS].setOnLongClickListener(this::openFoldersSelector);
-        tabs[INDEX_CONTACTS].setOnLongClickListener(v -> {
-            PotokDebugLog.showFiltered(context, "POTOK_ICON");
-            return true;
-        });
 
         for (int index = 0; index < tabs.length; index++) {
             final GlassTabView view = tabs[index];
@@ -623,11 +619,15 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
             args.putBoolean("needPhonebook", true);
             args.putBoolean("needFinishFragment", false);
             args.putBoolean("hasMainTabs", true);
-            return new ContactsActivity(args);
+            ContactsActivity contactsActivity = new ContactsActivity(args);
+            contactsActivity.setMainTabsActivityController(new MainTabsActivityControllerImpl());
+            return contactsActivity;
         } else if (position == POSITION_FEED) {
             return new PotokFeedFragment();
         } else if (position == POSITION_TRAF) {
-            return new FiltersSetupActivity();
+            FiltersSetupActivity filtersSetupActivity = new FiltersSetupActivity();
+            filtersSetupActivity.setMainTabsActivityController(new MainTabsActivityControllerImpl());
+            return filtersSetupActivity;
         } else if (position == POSITION_CHATS) {
             Bundle args = new Bundle();
             args.putBoolean("hasMainTabs", true);

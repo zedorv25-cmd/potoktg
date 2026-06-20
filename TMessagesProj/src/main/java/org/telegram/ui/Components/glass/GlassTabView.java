@@ -262,7 +262,9 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
             backupImageView.invalidate();
         }
         imageView.setColorFilter(filter);
-        // ВРЕМЕННО ОТКЛЮЧЕНО ДЛЯ ДИАГНОСТИКИ: if (staticIconView != null) { staticIconView.setColorFilter(filter); }
+        if (staticIconView != null) {
+            staticIconView.setColorFilter(filter);
+        }
         textView.setTextColor(colorText);
     }
 
@@ -406,6 +408,26 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         tab.updateColors();
         return tab;
     }
+  // Рисует иконку через прямой Path, без обращения к drawable-ресурсам.
+  // Это устраняет зависимость от компиляции vector drawable в aapt/gradle.
+  private static android.graphics.drawable.Drawable buildVectorIcon(@DrawableRes int iconRes) {
+        final String pathData;
+        if (iconRes == R.drawable.potok_tab_chats) {
+            pathData = "M240-400h320v-80H240v80Zm0-120h480v-80H240v80Zm0-120h480v-80H240v80ZM80-80v-720q0-33 23.5-56.5T160-880h640q33 0 56.5 23.5T880-800v480q0 33-23.5 56.5T800-240H240L80-80Zm126-240h594v-480H160v525l46-45Zm-46 0v-480 480Z";
+        } else if (iconRes == R.drawable.potok_tab_feed) {
+            pathData = "M200-280q-33 0-56.5-23.5T120-360v-240q0-33 23.5-56.5T200-680h560q33 0 56.5 23.5T840-600v240q0 33-23.5 56.5T760-280H200Zm0-80h560v-240H200v240Zm-80-400v-80h720v80H120Zm0 640v-80h720v80H120Zm80-480v240-240Z";
+        } else if (iconRes == R.drawable.potok_tab_traf) {
+            pathData = "M120-120q-33 0-56.5-23.5T40-200v-520h80v520h680v80H120Zm160-160q-33 0-56.5-23.5T200-360v-440q0-33 23.5-56.5T280-880h200l80 80h280q33 0 56.5 23.5T920-720v360q0 33-23.5 56.5T840-280H280Zm0-80h560v-360H527l-80-80H280v440Zm0 0v-440 440Z";
+        } else {
+            pathData = "M160-40v-80h640v80H160Zm0-800v-80h640v80H160Zm320 400q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h640q33 0 56.5 23.5T880-720v480q0 33-23.5 56.5T800-160H160Zm70-80q45-56 109-88t141-32q77 0 141 32t109 88h70v-480H160v480h70Zm118 0h264q-29-20-62.5-30T480-280q-36 0-69.5 10T348-240Zm103.5-291.5Q440-543 440-560t11.5-28.5Q463-600 480-600t28.5 11.5Q520-577 520-560t-11.5 28.5Q497-520 480-520t-28.5-11.5ZM480-480Z";
+        }
+        final android.graphics.Path path = androidx.core.graphics.PathParser.createPathFromPathData(pathData);
+        final android.graphics.drawable.ShapeDrawable drawable = new android.graphics.drawable.ShapeDrawable(new android.graphics.drawable.shapes.PathShape(path, 960, 960));
+        drawable.setIntrinsicWidth(24);
+        drawable.setIntrinsicHeight(24);
+        return drawable;
+    }
+
   public static GlassTabView createStaticTab(Context context, Theme.ResourcesProvider resourcesProvider, @DrawableRes int iconRes, @StringRes int stringRes) {
         GlassTabView tab = new GlassTabView(context);
         tab.resourcesProvider = resourcesProvider;
@@ -414,27 +436,9 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         tab.imageView.setVisibility(GONE);
 
         tab.staticIconView = new androidx.appcompat.widget.AppCompatImageView(context);
-        android.graphics.drawable.Drawable iconDrawable;
-        if (iconRes == R.drawable.potok_tab_chats) {
-            // Тест 1: программный drawable, без обращения к ресурсам вообще
-            android.graphics.drawable.ShapeDrawable sd = new android.graphics.drawable.ShapeDrawable(new android.graphics.drawable.shapes.OvalShape());
-            sd.getPaint().setColor(0xFF00FF00);
-            sd.setIntrinsicWidth(24);
-            sd.setIntrinsicHeight(24);
-            iconDrawable = sd;
-        } else if (iconRes == R.drawable.potok_tab_feed) {
-            // Тест 2: системная иконка через getDrawable (старый способ, без AppCompat)
-            iconDrawable = context.getResources().getDrawable(android.R.drawable.ic_menu_gallery);
-        } else if (iconRes == R.drawable.potok_tab_traf) {
-            // Тест 3: наш реальный ресурс через ResourcesCompat
-            iconDrawable = androidx.core.content.res.ResourcesCompat.getDrawable(context.getResources(), iconRes, null);
-        } else {
-            // Тест 4: наш реальный ресурс через AppCompatResources (правильный способ для vector drawable)
-            iconDrawable = androidx.appcompat.content.res.AppCompatResources.getDrawable(context, iconRes);
-        }
+        android.graphics.drawable.Drawable iconDrawable = buildVectorIcon(iconRes);
         tab.staticIconView.setImageDrawable(iconDrawable);
         tab.staticIconView.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
-        tab.staticIconView.setBackgroundColor(0x55FFFFFF);
         tab.addView(tab.staticIconView, LayoutHelper.createFrame(24, 24, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 8, 0, 0));
 
         tab.colorDefault = Theme.getColor(Theme.key_glass_tabUnselected, resourcesProvider);

@@ -452,10 +452,10 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
             public int getOpacity() { return android.graphics.PixelFormat.TRANSLUCENT; }
 
             @Override
-            public int getIntrinsicWidth() { return -1; }
+            public int getIntrinsicWidth() { return dp(24); }
 
             @Override
-            public int getIntrinsicHeight() { return -1; }
+            public int getIntrinsicHeight() { return dp(24); }
         };
     }
 

@@ -72,6 +72,12 @@ import java.util.ArrayList;
 
 public class FiltersSetupActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate, MainTabsActivity.TabFragmentDelegate {
 
+    private MainTabsActivityController mainTabsActivityController;
+
+    public void setMainTabsActivityController(MainTabsActivityController controller) {
+        mainTabsActivityController = controller;
+    }
+
     private RecyclerListView listView;
     private ListAdapter adapter;
     private ItemTouchHelper itemTouchHelper;
@@ -679,6 +685,9 @@ public boolean canParentTabsSlide(MotionEvent ev, boolean forward) {
         itemTouchHelper.attachToRecyclerView(listView);
         frameLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         listView.setAdapter(adapter = new ListAdapter(context));
+        if (mainTabsActivityController != null) {
+            listView.addOnScrollListener(new TabBarScrollHider(mainTabsActivityController));
+        }
         listView.setOnItemClickListener((view, position, x, y) -> {
             if (position < 0 || position >= items.size()) {
                 return;

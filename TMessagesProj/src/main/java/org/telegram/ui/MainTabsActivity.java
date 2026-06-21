@@ -627,7 +627,9 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
             contactsActivity.setMainTabsActivityController(new MainTabsActivityControllerImpl());
             return contactsActivity;
         } else if (position == POSITION_FEED) {
-            return new PotokFeedFragment();
+            PotokFeedFragment feedFragment = new PotokFeedFragment();
+            feedFragment.setMainTabsActivityController(new MainTabsActivityControllerImpl());
+            return feedFragment;
         } else if (position == POSITION_TRAF) {
             FiltersSetupActivity filtersSetupActivity = new FiltersSetupActivity();
             filtersSetupActivity.setMainTabsActivityController(new MainTabsActivityControllerImpl());

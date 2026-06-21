@@ -3,23 +3,18 @@ package org.telegram.ui.Cells;
 import static org.telegram.messenger.AndroidUtilities.dp;
 
 import android.content.Context;
-import android.graphics.Canvas;
-import android.text.Layout;
-import android.text.StaticLayout;
-import android.text.TextPaint;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.FileLoader;
+import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessageObject;
-import org.telegram.messenger.MessagesController;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.AvatarDrawable;
@@ -30,10 +25,11 @@ import java.util.ArrayList;
 
 /**
  * Карточка поста в Ленте — этап 1.
- * Шапка (аватар канала + название + время) — текст до 6-7 строк без раскрытия — одно фото — футер (просмотры + топ-реакция).
+ * Структура — вертикальный LinearLayout, блоки идут друг под другом естественно:
+ * шапка (аватар + название + время) -> текст (до 7 строк) -> медиа (если есть) -> футер (просмотры + топ-реакция).
  * Фон карточки совпадает с фоном остального UI (не серый).
  */
-public class PotokFeedPostCell extends FrameLayout {
+public class PotokFeedPostCell extends LinearLayout {
 
     private static final int MAX_TEXT_LINES = 7;
 
@@ -46,17 +42,24 @@ public class PotokFeedPostCell extends FrameLayout {
     private final TextView reactionView;
     private final ImageView viewsIcon;
 
-    private final Theme.ResourcesProvider resourcesProvider;
-
-    private MessageObject currentMessage;
-
     public PotokFeedPostCell(Context context, Theme.ResourcesProvider resourcesProvider) {
         super(context);
-        this.resourcesProvider = resourcesProvider;
+        setOrientation(VERTICAL);
+        setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
+
+        // --- Шапка: аватар + (название/время) ---
+        LinearLayout headerRow = new LinearLayout(context);
+        headerRow.setOrientation(HORIZONTAL);
+        headerRow.setGravity(Gravity.CENTER_VERTICAL);
+        addView(headerRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 12, 12, 0));
 
         avatarView = new BackupImageView(context);
         avatarView.setRoundRadius(dp(18));
-        addView(avatarView, LayoutHelper.createFrame(36, 36, Gravity.TOP | Gravity.LEFT, 12, 12, 0, 0));
+        headerRow.addView(avatarView, LayoutHelper.createLinear(36, 36));
+
+        LinearLayout titleColumn = new LinearLayout(context);
+        titleColumn.setOrientation(VERTICAL);
+        headerRow.addView(titleColumn, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, 10, 0, 0, 0));
 
         titleView = new TextView(context);
         titleView.setTextSize(15);
@@ -64,29 +67,32 @@ public class PotokFeedPostCell extends FrameLayout {
         titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider));
         titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
-        addView(titleView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP | Gravity.LEFT, 58, 12, 16, 0));
+        titleColumn.addView(titleView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
         timeView = new TextView(context);
         timeView.setTextSize(13);
         timeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
-        addView(timeView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP | Gravity.LEFT, 58, 32, 16, 0));
+        titleColumn.addView(timeView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
+        // --- Текст поста ---
         textView = new TextView(context);
         textView.setTextSize(15);
         textView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider));
         textView.setMaxLines(MAX_TEXT_LINES);
         textView.setEllipsize(TextUtils.TruncateAt.END);
         textView.setLineSpacing(dp(2), 1f);
-        addView(textView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP | Gravity.LEFT, 12, 58, 12, 0));
+        addView(textView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 8, 12, 0));
 
+        // --- Медиа ---
         mediaView = new BackupImageView(context);
         mediaView.setRoundRadius(dp(8));
-        addView(mediaView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 220, Gravity.TOP | Gravity.LEFT, 12, 0, 12, 0));
+        addView(mediaView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 220, 12, 10, 12, 0));
 
+        // --- Футер: просмотры + топ-реакция ---
         LinearLayout footer = new LinearLayout(context);
-        footer.setOrientation(LinearLayout.HORIZONTAL);
+        footer.setOrientation(HORIZONTAL);
         footer.setGravity(Gravity.CENTER_VERTICAL);
-        addView(footer, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 32, Gravity.TOP | Gravity.LEFT, 12, 0, 12, 8));
+        addView(footer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 10, 12, 12));
 
         viewsIcon = new ImageView(context);
         viewsIcon.setImageResource(org.telegram.messenger.R.drawable.msg_views);
@@ -103,12 +109,13 @@ public class PotokFeedPostCell extends FrameLayout {
         reactionView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
         footer.addView(reactionView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL));
 
-        setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
+        // тонкий разделитель между карточками
+        View divider = new View(context);
+        divider.setBackgroundColor(Theme.getColor(Theme.key_divider, resourcesProvider));
+        addView(divider, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 1));
     }
 
     public void setMessage(MessageObject messageObject, TLRPC.Chat channel) {
-        currentMessage = messageObject;
-
         AvatarDrawable avatarDrawable = new AvatarDrawable();
         avatarDrawable.setInfo(channel);
         avatarView.setForUserOrChat(channel, avatarDrawable);
@@ -120,7 +127,12 @@ public class PotokFeedPostCell extends FrameLayout {
         if (messageText == null) {
             messageText = "";
         }
-        textView.setText(messageText);
+        if (TextUtils.isEmpty(messageText)) {
+            textView.setVisibility(GONE);
+        } else {
+            textView.setVisibility(VISIBLE);
+            textView.setText(messageText);
+        }
 
         ArrayList<TLRPC.PhotoSize> sizes = messageObject.photoThumbs;
         boolean hasPhoto = sizes != null && !sizes.isEmpty();
@@ -129,9 +141,9 @@ public class PotokFeedPostCell extends FrameLayout {
             TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50);
             mediaView.setVisibility(VISIBLE);
             mediaView.setImage(
-                org.telegram.messenger.ImageLocation.getForObject(photoSize, messageObject.photoThumbsObject),
+                ImageLocation.getForObject(photoSize, messageObject.photoThumbsObject),
                 "300_220",
-                org.telegram.messenger.ImageLocation.getForObject(thumbSize, messageObject.photoThumbsObject),
+                ImageLocation.getForObject(thumbSize, messageObject.photoThumbsObject),
                 "50_50",
                 null,
                 messageObject
@@ -155,8 +167,6 @@ public class PotokFeedPostCell extends FrameLayout {
         } else {
             reactionView.setVisibility(GONE);
         }
-
-        requestLayout();
     }
 
     private TLRPC.ReactionCount getTopReaction(MessageObject messageObject) {
@@ -174,15 +184,5 @@ public class PotokFeedPostCell extends FrameLayout {
             }
         }
         return top;
-    }
-
-    @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        int width = MeasureSpec.getSize(widthMeasureSpec);
-        boolean hasPhoto = mediaView.getVisibility() == VISIBLE;
-        // примерная высота: шапка(58) + текст(до 7 строк ~ 24*7) + медиа(220, если есть) + футер(40) + отступы
-        int textHeight = textView.getLineCount() > 0 ? textView.getMeasuredHeight() : dp(24) * Math.min(MAX_TEXT_LINES, 3);
-        int height = dp(58) + dp(20) + textHeight + (hasPhoto ? dp(220) + dp(8) : dp(4)) + dp(40) + dp(8);
-        super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY));
     }
 }

@@ -116,7 +116,14 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         });
 
         if (listView != null && listView.getAdapter() != null) {
-            listView.getAdapter().notifyDataSetChanged();
+            // notifyDataSetChanged может вызваться из onResume() в момент анимации переключения таба —
+            // в этот момент RecyclerView выполняет layout/scroll и запрещает изменения синхронно.
+            // post() откладывает вызов на следующий кадр, когда RecyclerView точно свободен.
+            listView.post(() -> {
+                if (listView != null && listView.getAdapter() != null) {
+                    listView.getAdapter().notifyDataSetChanged();
+                }
+            });
         }
     }
 

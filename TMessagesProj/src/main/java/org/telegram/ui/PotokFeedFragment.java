@@ -27,7 +27,12 @@ import androidx.recyclerview.widget.RecyclerView;
 public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate {
 
     private RecyclerListView listView;
+    private MainTabsActivityController mainTabsActivityController;
     private final ArrayList<FeedItem> items = new ArrayList<>();
+
+    public void setMainTabsActivityController(MainTabsActivityController controller) {
+        mainTabsActivityController = controller;
+    }
 
     private static class FeedItem {
         TLRPC.Chat channel;
@@ -41,11 +46,14 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         listView = new RecyclerListView(context);
         listView.setLayoutManager(new LinearLayoutManager(context));
+        listView.setPadding(0, org.telegram.messenger.AndroidUtilities.statusBarHeight, 0, 0);
+        listView.setClipToPadding(false);
         listView.setAdapter(new RecyclerView.Adapter<RecyclerListView.Holder>() {
             @Override
             public RecyclerListView.Holder onCreateViewHolder(android.view.ViewGroup parent, int viewType) {
                 PotokFeedPostCell cell = new PotokFeedPostCell(context, null);
                 cell.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
+                cell.setParentActivity(getParentActivity());
                 return new RecyclerListView.Holder(cell);
             }
 
@@ -61,6 +69,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             }
         });
         frameLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        if (mainTabsActivityController != null) {
+            listView.addOnScrollListener(new TabBarScrollHider(mainTabsActivityController));
+        }
 
         loadFeed();
 

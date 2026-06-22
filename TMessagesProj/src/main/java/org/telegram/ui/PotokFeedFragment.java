@@ -7,6 +7,7 @@ import android.widget.FrameLayout;
 
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
+import org.telegram.messenger.NotificationCenter;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.Cells.PotokFeedPostCell;
@@ -14,29 +15,34 @@ import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 /**
- * Лента — этап 1: список постов (последнее сообщение) из подписанных каналов.
- * Каждая карточка — PotokFeedPostCell.
+ * Лента — этап 1 (тестовый режим).
+ * ВРЕМЕННО: показывает последние посты ОДНОГО тестового канала (TEST_CHANNEL_USERNAME),
+ * чтобы отладить все аспекты карточки поста до подключения полного фида по всем подпискам.
+ * Когда карточка будет полностью готова — заменить loadFeed() на сборку по всем dialogsChannelsOnly.
  */
-public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate {
+public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate, NotificationCenter.NotificationCenterDelegate {
+
+    private static final String TEST_CHANNEL_USERNAME = "komissariatforsvoix";
+    private static final int POSTS_TO_LOAD = 20;
 
     private RecyclerListView listView;
     private MainTabsActivityController mainTabsActivityController;
     private final ArrayList<FeedItem> items = new ArrayList<>();
-
-    public void setMainTabsActivityController(MainTabsActivityController controller) {
-        mainTabsActivityController = controller;
-    }
+    private TLRPC.Chat testChannel;
+    private boolean loadRequested;
 
     private static class FeedItem {
         TLRPC.Chat channel;
         MessageObject message;
+    }
+
+    public void setMainTabsActivityController(MainTabsActivityController controller) {
+        mainTabsActivityController = controller;
     }
 
     @Override
@@ -74,52 +80,71 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             listView.addOnScrollListener(new TabBarScrollHider(mainTabsActivityController));
         }
 
+        getNotificationCenter().addObserver(this, NotificationCenter.messagesDidLoad);
+
         loadFeed();
 
         return frameLayout;
     }
 
+    @Override
+    public void onFragmentDestroy() {
+        super.onFragmentDestroy();
+        getNotificationCenter().removeObserver(this, NotificationCenter.messagesDidLoad);
+    }
+
     private void loadFeed() {
-        items.clear();
-        MessagesController messagesController = getMessagesController();
-
-        for (TLRPC.Dialog dialog : messagesController.dialogsChannelsOnly) {
-            TLRPC.Chat chat = messagesController.getChat(-dialog.id);
-            if (chat == null || !chat.broadcast) {
-                continue; // только каналы, не супергруппы
-            }
-
-            ArrayList<MessageObject> messages = messagesController.dialogMessage.get(dialog.id);
-            if (messages == null || messages.isEmpty()) {
-                continue;
-            }
-
-            MessageObject lastMessage = messages.get(0);
-            if (lastMessage == null || lastMessage.messageOwner == null) {
-                continue;
-            }
-
-            FeedItem item = new FeedItem();
-            item.channel = chat;
-            item.message = lastMessage;
-            items.add(item);
+        if (loadRequested) {
+            return;
         }
 
-        // сортировка по дате поста, свежие сверху
-        Collections.sort(items, new Comparator<FeedItem>() {
-            @Override
-            public int compare(FeedItem a, FeedItem b) {
-                int dateA = a.message.messageOwner != null ? a.message.messageOwner.date : 0;
-                int dateB = b.message.messageOwner != null ? b.message.messageOwner.date : 0;
-                return dateB - dateA;
-            }
-        });
+        MessagesController messagesController = getMessagesController();
 
-        if (listView != null && listView.getAdapter() != null) {
-            // notifyDataSetChanged может вызваться из onResume() в момент анимации переключения таба —
-            // в этот момент RecyclerView выполняет layout/scroll и запрещает изменения.
-            // Анимация может длиться дольше одного кадра, поэтому проверяем isComputingLayout()
-            // и откладываем снова, пока RecyclerView точно не освободится.
+        // ищем тестовый канал среди подписок пользователя по username
+        testChannel = null;
+        for (TLRPC.Dialog dialog : messagesController.dialogsChannelsOnly) {
+            TLRPC.Chat chat = messagesController.getChat(-dialog.id);
+            if (chat != null && chat.username != null && chat.username.equalsIgnoreCase(TEST_CHANNEL_USERNAME)) {
+                testChannel = chat;
+                break;
+            }
+        }
+
+        if (testChannel == null) {
+            // канал не найден среди подписок — нечего грузить
+            return;
+        }
+
+        loadRequested = true;
+        long dialogId = -testChannel.id;
+        messagesController.loadMessages(dialogId, 0, false, POSTS_TO_LOAD, 0, 0, true, 0, getClassGuid(), 0, 0, 0, 0, 0, 0, false);
+    }
+
+    @Override
+    public void didReceivedNotification(int id, int account, Object... args) {
+        if (id == NotificationCenter.messagesDidLoad) {
+            int guid = (Integer) args[10];
+            if (guid != getClassGuid()) {
+                return;
+            }
+            if (testChannel == null) {
+                return;
+            }
+
+            @SuppressWarnings("unchecked")
+            ArrayList<MessageObject> messageObjects = (ArrayList<MessageObject>) args[2];
+
+            items.clear();
+            for (MessageObject messageObject : messageObjects) {
+                if (messageObject == null || messageObject.messageOwner == null) {
+                    continue;
+                }
+                FeedItem item = new FeedItem();
+                item.channel = testChannel;
+                item.message = messageObject;
+                items.add(item);
+            }
+
             notifyWhenReady();
         }
     }
@@ -143,6 +168,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     @Override
     public void onResume() {
         super.onResume();
+        loadRequested = false;
         loadFeed();
     }
 }

@@ -103,6 +103,7 @@ public class PotokFeedPostCell extends LinearLayout {
 
         // --- Аудио: готовая ячейка Telegram (play/pause, длительность, прогресс) ---
         audioCell = new SharedAudioCell(context, resourcesProvider);
+        audioCell.setVisibility(GONE);
         addView(audioCell, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 8, 10, 8, 0));
         audioCell.setOnClickListener(v -> {
             if (currentMessage != null) {
@@ -157,7 +158,16 @@ public class PotokFeedPostCell extends LinearLayout {
             textView.setVisibility(GONE);
         } else {
             textView.setVisibility(VISIBLE);
+            if (caption instanceof android.text.Spannable) {
+                AndroidUtilities.addLinksSafe((android.text.Spannable) caption, android.text.util.Linkify.WEB_URLS, false, true);
+            } else {
+                android.text.SpannableString spannable = new android.text.SpannableString(caption);
+                AndroidUtilities.addLinksSafe(spannable, android.text.util.Linkify.WEB_URLS, false, true);
+                caption = spannable;
+            }
             textView.setText(caption);
+            textView.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
+            textView.setLinksClickable(true);
         }
 
         boolean isVoiceOrMusic = messageObject.isVoice() || messageObject.isMusic();
@@ -168,8 +178,8 @@ public class PotokFeedPostCell extends LinearLayout {
         if (isVoiceOrMusic) {
             mediaView.setVisibility(GONE);
             mediaView.setImageDrawable(null);
-            audioCell.setVisibility(VISIBLE);
             audioCell.setMessageObject(messageObject, false);
+            audioCell.setVisibility(VISIBLE);
         } else if (hasPhotoOrVideoThumb) {
             audioCell.setVisibility(GONE);
 

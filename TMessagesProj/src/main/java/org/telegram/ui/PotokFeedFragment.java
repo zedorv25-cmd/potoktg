@@ -146,7 +146,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
             ArrayList<MessageObject> messageObjects = new ArrayList<>();
             for (TLRPC.Message message : res.messages) {
-                messageObjects.add(new MessageObject(currentAccount, message, false));
+                messageObjects.add(new MessageObject(currentAccount, message, true, true));
             }
             buildItems(messageObjects);
         }));

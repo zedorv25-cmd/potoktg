@@ -21,21 +21,94 @@ import java.io.InputStreamReader;
  */
 public class PotokDebugLog {
 
+    private static final String CRASH_FILE_NAME = "potok_last_crash.txt";
+
+    /**
+     * Вызывать один раз при старте приложения (например в Application.onCreate()).
+     * Перехватывает необработанные краши и сохраняет полный стектрейс в файл —
+     * надёжнее logcat, потому что не зависит от системного буфера, который
+     * может вымыть строки до того как успеешь открыть диалог логов.
+     */
+    public static void installCrashHandler(Context context) {
+        final Thread.UncaughtExceptionHandler previousHandler = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            try {
+                java.io.File file = new java.io.File(context.getFilesDir(), CRASH_FILE_NAME);
+                java.io.FileWriter writer = new java.io.FileWriter(file, false);
+                writer.write("Время краша: " + new java.util.Date() + "\n\n");
+                writer.write(android.util.Log.getStackTraceString(throwable));
+                writer.close();
+            } catch (Exception ignored) {
+                // если даже запись в файл не удалась — отдаём дальше системному обработчику как есть
+            }
+            if (previousHandler != null) {
+                previousHandler.uncaughtException(thread, throwable);
+            } else {
+                System.exit(2);
+            }
+        });
+    }
+
+    /** Показывает сохранённый файл краша (если он есть) — самый надёжный источник, не зависит от logcat. */
+    public static void showLastCrash(Context context) {
+        java.io.File file = new java.io.File(context.getFilesDir(), CRASH_FILE_NAME);
+        String content;
+        if (!file.exists()) {
+            content = "Сохранённого краша нет (файл " + CRASH_FILE_NAME + " не найден).";
+        } else {
+            StringBuilder sb = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new java.io.FileReader(file))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line).append("\n");
+                }
+            } catch (Exception e) {
+                sb.append("Ошибка чтения файла краша: ").append(e.getMessage());
+            }
+            content = sb.toString();
+        }
+        showTextDialog(context, "Последний краш (из файла)", content);
+    }
+
+    private static void showTextDialog(Context context, String title, String content) {
+        TextView textView = new TextView(context);
+        textView.setText(content);
+        textView.setTextIsSelectable(true);
+        textView.setTextSize(11);
+        textView.setPadding(24, 24, 24, 24);
+
+        ScrollView scrollView = new ScrollView(context);
+        scrollView.addView(textView);
+
+        new AlertDialog.Builder(context)
+            .setTitle(title)
+            .setView(scrollView)
+            .setPositiveButton("Скопировать всё", (dialog, which) -> {
+                ClipboardManager clipboard = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+                ClipData clip = ClipData.newPlainText("potok_logs", content);
+                clipboard.setPrimaryClip(clip);
+                Toast.makeText(context, "Скопировано в буфер обмена", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("Закрыть", null)
+            .show();
+    }
+
     public static void show(Context context) {
         String logs;
         try {
-            Process process = Runtime.getRuntime().exec(new String[]{"logcat", "-d", "-v", "time"});
+            // -b main,crash,system: crash-буфер хранит FATAL EXCEPTION отдельно и дольше,
+            // даже если main уже вымыло другими событиями после перезапуска процесса.
+            Process process = Runtime.getRuntime().exec(new String[]{"logcat", "-d", "-v", "time", "-b", "main", "-b", "crash", "-b", "system"});
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             StringBuilder sb = new StringBuilder();
             String line;
-            int lineCount = 0;
             java.util.List<String> allLines = new java.util.ArrayList<>();
             while ((line = reader.readLine()) != null) {
                 allLines.add(line);
             }
             reader.close();
-            // Берём последние 300 строк, чтобы не перегружать диалог
-            int start = Math.max(0, allLines.size() - 300);
+            // Берём последние 1500 строк вместо 300 — краш и события до него чаще остаются видны
+            int start = Math.max(0, allLines.size() - 1500);
             for (int i = start; i < allLines.size(); i++) {
                 sb.append(allLines.get(i)).append("\n");
             }

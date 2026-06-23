@@ -3,17 +3,9 @@ package org.telegram.ui.Cells;
 import static org.telegram.messenger.AndroidUtilities.dp;
 
 import android.content.Context;
-import android.graphics.Canvas;
-import android.graphics.ColorFilter;
-import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.PixelFormat;
-import android.graphics.Rect;
-import android.graphics.drawable.Drawable;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -35,11 +27,13 @@ import java.util.ArrayList;
 
 /**
  * Карточка поста в Ленте — этап 1.
- * Структура — вертикальный LinearLayout: шапка -> текст (полный, без обрезки) -> медиа (фото/видео/аудио) -> футер.
- * Просмотр фото/видео и проигрывание аудио — через готовые компоненты Telegram (PhotoViewer, SharedAudioCell).
+ * Структура — вертикальный LinearLayout: шапка -> текст -> медиа (фото/видео/аудио) -> футер.
+ * Просмотр фото/видео и проигрывание аудио — через готовые компоненты Telegram (PhotoViewer, SharedAudioCell),
+ * не написаны с нуля.
  */
 public class PotokFeedPostCell extends LinearLayout {
 
+    private static final int MAX_TEXT_LINES = 7;
     private static final int MAX_MEDIA_HEIGHT_DP = 360;
     private static final int MIN_MEDIA_HEIGHT_DP = 140;
 
@@ -47,17 +41,13 @@ public class PotokFeedPostCell extends LinearLayout {
     private final TextView titleView;
     private final TextView timeView;
     private final TextView textView;
-    private final FrameLayout mediaContainer;
     private final BackupImageView mediaView;
-    private final ImageView playIconView;
-    private final TextView durationView;
     private final SharedAudioCell audioCell;
     private final TextView viewsView;
     private final TextView reactionView;
     private final ImageView viewsIcon;
 
     private MessageObject currentMessage;
-    private TLRPC.Chat currentChannel;
     private android.app.Activity parentActivity;
 
     public void setParentActivity(android.app.Activity activity) {
@@ -96,39 +86,26 @@ public class PotokFeedPostCell extends LinearLayout {
         timeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
         titleColumn.addView(timeView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
-        // --- Текст поста: показывается ПОЛНОСТЬЮ, без обрезки (раскрытие "ещё" — отдельный этап) ---
+        // --- Текст поста (подпись к медиа или текстовый пост) ---
         textView = new TextView(context);
         textView.setTextSize(15);
         textView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider));
+        textView.setMaxLines(MAX_TEXT_LINES);
+        textView.setEllipsize(TextUtils.TruncateAt.END);
         textView.setLineSpacing(dp(2), 1f);
         addView(textView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 8, 12, 0));
 
-        // --- Медиа: фото/видео в контейнере (play-иконка и длительность — для видео) ---
-        mediaContainer = new FrameLayout(context);
-        addView(mediaContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, MIN_MEDIA_HEIGHT_DP, 12, 10, 12, 0));
-        mediaContainer.setOnClickListener(v -> openMediaViewer());
-
+        // --- Медиа: фото/видео (без обрезки, по реальному соотношению сторон) ---
         mediaView = new BackupImageView(context);
         mediaView.setRoundRadius(dp(8));
-        mediaContainer.addView(mediaView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-
-        playIconView = new ImageView(context);
-        playIconView.setImageDrawable(buildPlayDrawable());
-        playIconView.setVisibility(GONE);
-        mediaContainer.addView(playIconView, LayoutHelper.createFrame(48, 48, Gravity.CENTER));
-
-        durationView = new TextView(context);
-        durationView.setTextColor(0xFFFFFFFF);
-        durationView.setTextSize(12);
-        durationView.setBackgroundColor(0x66000000);
-        durationView.setPadding(dp(6), dp(2), dp(6), dp(2));
-        durationView.setVisibility(GONE);
-        mediaContainer.addView(durationView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 8, 8));
+        addView(mediaView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, MIN_MEDIA_HEIGHT_DP, 12, 10, 12, 0));
+        mediaView.setOnClickListener(v -> openMediaViewer());
 
         // --- Аудио: готовая ячейка Telegram (play/pause, длительность, прогресс) ---
+        // ВАЖНО: не добавляем в иерархию здесь — SharedAudioCell.onAttachedToWindow()
+        // безусловно вызывает updateButtonState(), которая крашится на messageObject == null.
+        // addView происходит в setMessage(), только когда есть реальные данные.
         audioCell = new SharedAudioCell(context, resourcesProvider);
-        audioCell.setVisibility(GONE);
-        addView(audioCell, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 8, 10, 8, 0));
         audioCell.setOnClickListener(v -> {
             if (currentMessage != null) {
                 MediaController.getInstance().playMessage(currentMessage);
@@ -164,7 +141,6 @@ public class PotokFeedPostCell extends LinearLayout {
 
     public void setMessage(MessageObject messageObject, TLRPC.Chat channel) {
         currentMessage = messageObject;
-        currentChannel = channel;
 
         AvatarDrawable avatarDrawable = new AvatarDrawable();
         avatarDrawable.setInfo(channel);
@@ -173,6 +149,8 @@ public class PotokFeedPostCell extends LinearLayout {
         titleView.setText(channel != null ? channel.title : "");
         timeView.setText(LocaleController.formatDate(messageObject.messageOwner.date));
 
+        // caption (подпись к медиа) — приоритетнее messageText, который для медиа без подписи
+        // содержит служебное описание типа ("Фотография", "Видео" и т.п.)
         CharSequence caption = messageObject.caption;
         if (TextUtils.isEmpty(caption) && messageObject.type == MessageObject.TYPE_TEXT) {
             caption = messageObject.messageText;
@@ -199,31 +177,38 @@ public class PotokFeedPostCell extends LinearLayout {
         boolean hasPhotoOrVideoThumb = !isVoiceOrMusic && sizes != null && !sizes.isEmpty();
 
         if (isVoiceOrMusic) {
-            mediaContainer.setVisibility(GONE);
+            mediaView.setVisibility(GONE);
             mediaView.setImageDrawable(null);
-            playIconView.setVisibility(GONE);
-            durationView.setVisibility(GONE);
+            // важно: setMessageObject ДО того как ячейка попадёт в иерархию окна —
+            // SharedAudioCell.onAttachedToWindow() безусловно дёргает currentMessageObject,
+            // падает на null если addView вызван раньше (или в конструкторе).
             audioCell.setMessageObject(messageObject, false);
+            if (audioCell.getParent() == null) {
+                addView(audioCell, indexOfChild(mediaView) + 1, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 8, 10, 8, 0));
+            }
             audioCell.setVisibility(VISIBLE);
         } else if (hasPhotoOrVideoThumb) {
-            audioCell.setVisibility(GONE);
+            if (audioCell.getParent() != null) {
+                audioCell.setVisibility(GONE);
+            }
 
             TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, AndroidUtilities.getPhotoSize());
             TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50);
 
+            // считаем реальное соотношение сторон, чтобы показать медиа целиком, без обрезки
             int w = photoSize != null ? photoSize.w : 0;
             int h = photoSize != null ? photoSize.h : 0;
             int mediaHeight = MIN_MEDIA_HEIGHT_DP;
             if (w > 0 && h > 0) {
-                int screenWidthDp = (int) (AndroidUtilities.displaySize.x / AndroidUtilities.density) - 24;
+                int screenWidthDp = (int) (AndroidUtilities.displaySize.x / AndroidUtilities.density) - 24; // минус левый/правый отступ 12+12
                 mediaHeight = Math.round(screenWidthDp * (h / (float) w));
                 mediaHeight = Math.max(MIN_MEDIA_HEIGHT_DP, Math.min(MAX_MEDIA_HEIGHT_DP, mediaHeight));
             }
-            LayoutParams containerParams = (LayoutParams) mediaContainer.getLayoutParams();
-            containerParams.height = dp(mediaHeight);
-            mediaContainer.setLayoutParams(containerParams);
+            LayoutParams params = (LayoutParams) mediaView.getLayoutParams();
+            params.height = dp(mediaHeight);
+            mediaView.setLayoutParams(params);
 
-            mediaContainer.setVisibility(VISIBLE);
+            mediaView.setVisibility(VISIBLE);
             mediaView.setImage(
                 ImageLocation.getForObject(photoSize, messageObject.photoThumbsObject),
                 "300_" + mediaHeight,
@@ -232,21 +217,12 @@ public class PotokFeedPostCell extends LinearLayout {
                 null,
                 messageObject
             );
-
-            if (isVideo) {
-                playIconView.setVisibility(VISIBLE);
-                durationView.setText(formatDuration((int) messageObject.getDuration()));
-                durationView.setVisibility(VISIBLE);
-            } else {
-                playIconView.setVisibility(GONE);
-                durationView.setVisibility(GONE);
-            }
         } else {
-            mediaContainer.setVisibility(GONE);
+            mediaView.setVisibility(GONE);
             mediaView.setImageDrawable(null);
-            playIconView.setVisibility(GONE);
-            durationView.setVisibility(GONE);
-            audioCell.setVisibility(GONE);
+            if (audioCell.getParent() != null) {
+                audioCell.setVisibility(GONE);
+            }
         }
 
         int views = messageObject.messageOwner != null ? messageObject.messageOwner.views : 0;
@@ -269,80 +245,9 @@ public class PotokFeedPostCell extends LinearLayout {
         if (currentMessage == null || parentActivity == null) {
             return;
         }
-        // родной полноэкранный просмотрщик Telegram — та же механика, что и в чатах:
-        // зум, свайп, видео со звуком по умолчанию. Никакой своей реализации.
+        // открываем родной полноэкранный просмотрщик Telegram — зум, свайп, видео со звуком по тапу
         PhotoViewer.getInstance().setParentActivity(parentActivity);
-        long dialogId = currentChannel != null ? -currentChannel.id : 0;
-        PhotoViewer.getInstance().openPhoto(currentMessage, dialogId, 0, 0, photoViewerProvider, true);
-    }
-
-    private final PhotoViewer.PhotoViewerProvider photoViewerProvider = new PhotoViewer.EmptyPhotoViewerProvider() {
-        @Override
-        public PhotoViewer.PlaceProviderObject getPlaceForPhoto(MessageObject messageObject, TLRPC.FileLocation fileLocation, int index, boolean needPreview, boolean closing) {
-            if (messageObject != currentMessage || mediaView.getVisibility() != VISIBLE) {
-                return null;
-            }
-            int[] coords = new int[2];
-            mediaView.getLocationInWindow(coords);
-            PhotoViewer.PlaceProviderObject object = new PhotoViewer.PlaceProviderObject();
-            object.viewX = coords[0];
-            object.viewY = coords[1];
-            object.parentView = mediaView;
-            object.imageReceiver = mediaView.getImageReceiver();
-            object.dialogId = currentChannel != null ? -currentChannel.id : 0;
-            return object;
-        }
-    };
-
-    private static String formatDuration(int seconds) {
-        if (seconds < 0) {
-            seconds = 0;
-        }
-        int m = seconds / 60;
-        int s = seconds % 60;
-        return m + ":" + (s < 10 ? "0" + s : String.valueOf(s));
-    }
-
-    private static Drawable buildPlayDrawable() {
-        return new Drawable() {
-            private final Paint circlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            private final Paint trianglePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            {
-                circlePaint.setColor(0x80000000);
-                trianglePaint.setColor(0xFFFFFFFF);
-            }
-
-            @Override
-            public void draw(Canvas canvas) {
-                Rect b = getBounds();
-                float cx = b.centerX();
-                float cy = b.centerY();
-                float r = Math.min(b.width(), b.height()) / 2f;
-                canvas.drawCircle(cx, cy, r, circlePaint);
-                float triR = r * 0.45f;
-                Path path = new Path();
-                path.moveTo(cx - triR * 0.6f, cy - triR);
-                path.lineTo(cx - triR * 0.6f, cy + triR);
-                path.lineTo(cx + triR, cy);
-                path.close();
-                canvas.drawPath(path, trianglePaint);
-            }
-
-            @Override
-            public void setAlpha(int alpha) {
-                circlePaint.setAlpha((int) (0x80 * (alpha / 255f)));
-                trianglePaint.setAlpha(alpha);
-            }
-
-            @Override
-            public void setColorFilter(ColorFilter colorFilter) {
-            }
-
-            @Override
-            public int getOpacity() {
-                return PixelFormat.TRANSLUCENT;
-            }
-        };
+        PhotoViewer.getInstance().openPhoto(currentMessage, 0, 0, 0, null, true);
     }
 
     private TLRPC.ReactionCount getTopReaction(MessageObject messageObject) {

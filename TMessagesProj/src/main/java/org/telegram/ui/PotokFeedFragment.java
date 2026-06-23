@@ -5,9 +5,8 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
 
+import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.MessageObject;
-import org.telegram.messenger.MessagesController;
-import org.telegram.messenger.NotificationCenter;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.Cells.PotokFeedPostCell;
@@ -15,30 +14,37 @@ import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
 
 import java.util.ArrayList;
+import java.util.Collections;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 /**
- * Лента — этап 1 (тестовый режим).
- * ВРЕМЕННО: показывает последние посты ОДНОГО тестового канала (TEST_CHANNEL_USERNAME),
- * чтобы отладить все аспекты карточки поста до подключения полного фида по всем подпискам.
- * Когда карточка будет полностью готова — заменить loadFeed() на сборку по всем dialogsChannelsOnly.
+ * Лента — этап 1.
+ * Показывает 10-15 последних постов одного канала (TEST_CHANNEL_USERNAME).
+ * Канал резолвится через contacts.resolveUsername — не зависит от подписки аккаунта.
+ * История грузится прямым TL-запросом messages.getHistory (а не через MessagesController.loadMessages +
+ * NotificationCenter) — так мы явно контролируем, сколько сообщений запрошено и сколько пришло,
+ * без скрытой кэш-логики чата, которая давала непредсказуемый результат (показывался 1 пост).
+ * Сообщения с одинаковым grouped_id объединяются в один пост (альбом) — рендерится каруселью в карточке.
+ * Когда карточка будет полностью готова — заменить TEST_CHANNEL_USERNAME на сборку по всем подпискам.
  */
-public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate, NotificationCenter.NotificationCenterDelegate {
+public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate {
 
     private static final String TEST_CHANNEL_USERNAME = "komissariatforsvoix";
-    private static final int POSTS_TO_LOAD = 20;
+    private static final int MESSAGES_TO_LOAD = 60; // запас на альбомы, чтобы набрать MAX_POSTS постов
+    private static final int MAX_POSTS = 15;
 
     private RecyclerListView listView;
     private MainTabsActivityController mainTabsActivityController;
     private final ArrayList<FeedItem> items = new ArrayList<>();
     private TLRPC.Chat testChannel;
-    private boolean loadRequested;
+    private boolean resolveRequested;
+    private boolean historyRequested;
 
     private static class FeedItem {
         TLRPC.Chat channel;
-        MessageObject message;
+        ArrayList<MessageObject> messages = new ArrayList<>();
     }
 
     public void setMainTabsActivityController(MainTabsActivityController controller) {
@@ -52,7 +58,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         listView = new RecyclerListView(context);
         listView.setLayoutManager(new LinearLayoutManager(context));
-        listView.setPadding(0, org.telegram.messenger.AndroidUtilities.statusBarHeight, 0, 0);
+        listView.setPadding(0, AndroidUtilities.statusBarHeight, 0, 0);
         listView.setClipToPadding(false);
         listView.setAdapter(new RecyclerView.Adapter<RecyclerListView.Holder>() {
             @Override
@@ -66,7 +72,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             @Override
             public void onBindViewHolder(RecyclerListView.Holder holder, int position) {
                 FeedItem item = items.get(position);
-                ((PotokFeedPostCell) holder.itemView).setMessage(item.message, item.channel);
+                ((PotokFeedPostCell) holder.itemView).setPost(item.messages, item.channel);
             }
 
             @Override
@@ -80,76 +86,112 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             listView.addOnScrollListener(new TabBarScrollHider(mainTabsActivityController));
         }
 
-        getNotificationCenter().addObserver(this, NotificationCenter.messagesDidLoad);
-
         loadFeed();
 
         return frameLayout;
     }
 
-    @Override
-    public void onFragmentDestroy() {
-        super.onFragmentDestroy();
-        getNotificationCenter().removeObserver(this, NotificationCenter.messagesDidLoad);
-    }
-
     private void loadFeed() {
-        if (loadRequested) {
+        if (testChannel != null) {
+            loadHistory();
             return;
         }
+        if (resolveRequested) {
+            return;
+        }
+        resolveRequested = true;
 
-        MessagesController messagesController = getMessagesController();
+        TLRPC.TL_contacts_resolveUsername req = new TLRPC.TL_contacts_resolveUsername();
+        req.username = TEST_CHANNEL_USERNAME;
+        getConnectionsManager().sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
+            resolveRequested = false;
+            if (error != null || !(response instanceof TLRPC.TL_contacts_resolvedPeer)) {
+                return;
+            }
+            TLRPC.TL_contacts_resolvedPeer resolvedPeer = (TLRPC.TL_contacts_resolvedPeer) response;
+            if (resolvedPeer.chats.isEmpty()) {
+                return;
+            }
+            testChannel = resolvedPeer.chats.get(0);
+            getMessagesController().putChat(testChannel, false);
+            loadHistory();
+        }));
+    }
 
-        // ищем тестовый канал среди подписок пользователя по username
-        testChannel = null;
-        for (TLRPC.Dialog dialog : messagesController.dialogsChannelsOnly) {
-            TLRPC.Chat chat = messagesController.getChat(-dialog.id);
-            if (chat != null && chat.username != null && chat.username.equalsIgnoreCase(TEST_CHANNEL_USERNAME)) {
-                testChannel = chat;
+    private void loadHistory() {
+        if (historyRequested) {
+            return;
+        }
+        historyRequested = true;
+
+        long dialogId = -testChannel.id;
+        TLRPC.TL_messages_getHistory req = new TLRPC.TL_messages_getHistory();
+        req.peer = getMessagesController().getInputPeer(dialogId);
+        req.limit = MESSAGES_TO_LOAD;
+        req.offset_id = 0;
+        req.offset_date = 0;
+        req.add_offset = 0;
+        req.max_id = 0;
+        req.min_id = 0;
+        req.hash = 0;
+
+        getConnectionsManager().sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
+            historyRequested = false;
+            if (error != null || !(response instanceof TLRPC.messages_Messages)) {
+                return;
+            }
+            TLRPC.messages_Messages res = (TLRPC.messages_Messages) response;
+            getMessagesController().putUsers(res.users, false);
+            getMessagesController().putChats(res.chats, false);
+
+            ArrayList<MessageObject> messageObjects = new ArrayList<>();
+            for (TLRPC.Message message : res.messages) {
+                messageObjects.add(new MessageObject(currentAccount, message, false));
+            }
+            buildItems(messageObjects);
+        }));
+    }
+
+    // messages.getHistory отдаёт сообщения от новых к старым.
+    // Альбомы (общий grouped_id) объединяются в один FeedItem; новые посты не создаются после MAX_POSTS,
+    // но текущий уже начатый альбом докомплектовывается полностью (чтобы не обрезать его медиа).
+    private void buildItems(ArrayList<MessageObject> messageObjects) {
+        items.clear();
+
+        FeedItem currentItem = null;
+        long currentGroupId = 0;
+
+        for (MessageObject mo : messageObjects) {
+            if (mo == null || mo.messageOwner == null) {
+                continue;
+            }
+            long groupId = mo.messageOwner.grouped_id;
+            boolean continuesCurrentGroup = groupId != 0 && currentItem != null && currentGroupId == groupId;
+
+            if (!continuesCurrentGroup && items.size() >= MAX_POSTS) {
                 break;
             }
+
+            if (continuesCurrentGroup) {
+                currentItem.messages.add(mo);
+            } else {
+                currentItem = new FeedItem();
+                currentItem.channel = testChannel;
+                currentItem.messages.add(mo);
+                items.add(currentItem);
+                currentGroupId = groupId;
+            }
         }
 
-        if (testChannel == null) {
-            android.util.Log.d("POTOK_FEED", "loadFeed: test channel @" + TEST_CHANNEL_USERNAME + " NOT FOUND in dialogsChannelsOnly (count=" + messagesController.dialogsChannelsOnly.size() + ")");
-            return;
+        // внутри альбома сообщения должны идти в порядке отправки (id по возрастанию),
+        // а не в порядке "от новых к старым", в котором их отдаёт messages.getHistory
+        for (FeedItem item : items) {
+            if (item.messages.size() > 1) {
+                Collections.sort(item.messages, (a, b) -> Integer.compare(a.getId(), b.getId()));
+            }
         }
 
-        loadRequested = true;
-        long dialogId = -testChannel.id;
-        android.util.Log.d("POTOK_FEED", "loadFeed: found channel " + testChannel.title + " dialogId=" + dialogId + " requesting " + POSTS_TO_LOAD + " messages, classGuid=" + getClassGuid());
-        messagesController.loadMessages(dialogId, 0, false, POSTS_TO_LOAD, 0, 0, true, 0, getClassGuid(), 0, 0, 0, 0, 0, 0, false);
-    }
-
-    @Override
-    public void didReceivedNotification(int id, int account, Object... args) {
-        if (id == NotificationCenter.messagesDidLoad) {
-            int guid = (Integer) args[10];
-            if (guid != getClassGuid()) {
-                return;
-            }
-            if (testChannel == null) {
-                return;
-            }
-
-            @SuppressWarnings("unchecked")
-            ArrayList<MessageObject> messageObjects = (ArrayList<MessageObject>) args[2];
-            android.util.Log.d("POTOK_FEED", "didReceivedNotification: got " + (messageObjects != null ? messageObjects.size() : -1) + " messages, testChannel=" + testChannel.title + " id=" + testChannel.id);
-
-            items.clear();
-            for (MessageObject messageObject : messageObjects) {
-                if (messageObject == null || messageObject.messageOwner == null) {
-                    continue;
-                }
-                FeedItem item = new FeedItem();
-                item.channel = testChannel;
-                item.message = messageObject;
-                items.add(item);
-            }
-            android.util.Log.d("POTOK_FEED", "items after filtering: " + items.size());
-
-            notifyWhenReady();
-        }
+        notifyWhenReady();
     }
 
     private void notifyWhenReady() {
@@ -171,7 +213,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     @Override
     public void onResume() {
         super.onResume();
-        loadRequested = false;
         loadFeed();
     }
 }

@@ -5,7 +5,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
 
-import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
@@ -21,13 +20,10 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 /**
- * Лента — этап 1.
- * Показывает последние посты одного канала (TEST_CHANNEL_USERNAME).
- * Канал резолвится через contacts.resolveUsername — НЕ зависит от того, подписан ли
- * текущий аккаунт на канал (раньше искалось только среди dialogsChannelsOnly, из-за
- * чего лента была пустой, если аккаунт не подписан).
- * Когда карточка будет полностью готова — заменить TEST_CHANNEL_USERNAME на сборку
- * по всем подпискам пользователя.
+ * Лента — этап 1 (тестовый режим).
+ * ВРЕМЕННО: показывает последние посты ОДНОГО тестового канала (TEST_CHANNEL_USERNAME),
+ * чтобы отладить все аспекты карточки поста до подключения полного фида по всем подпискам.
+ * Когда карточка будет полностью готова — заменить loadFeed() на сборку по всем dialogsChannelsOnly.
  */
 public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate, NotificationCenter.NotificationCenterDelegate {
 
@@ -38,7 +34,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private MainTabsActivityController mainTabsActivityController;
     private final ArrayList<FeedItem> items = new ArrayList<>();
     private TLRPC.Chat testChannel;
-    private boolean resolveRequested;
+    private boolean loadRequested;
 
     private static class FeedItem {
         TLRPC.Chat channel;
@@ -56,7 +52,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         listView = new RecyclerListView(context);
         listView.setLayoutManager(new LinearLayoutManager(context));
-        listView.setPadding(0, AndroidUtilities.statusBarHeight, 0, 0);
+        listView.setPadding(0, org.telegram.messenger.AndroidUtilities.statusBarHeight, 0, 0);
         listView.setClipToPadding(false);
         listView.setAdapter(new RecyclerView.Adapter<RecyclerListView.Holder>() {
             @Override
@@ -98,35 +94,31 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     }
 
     private void loadFeed() {
-        if (testChannel != null) {
-            loadHistory();
+        if (loadRequested) {
             return;
         }
-        if (resolveRequested) {
+
+        MessagesController messagesController = getMessagesController();
+
+        // ищем тестовый канал среди подписок пользователя по username
+        testChannel = null;
+        for (TLRPC.Dialog dialog : messagesController.dialogsChannelsOnly) {
+            TLRPC.Chat chat = messagesController.getChat(-dialog.id);
+            if (chat != null && chat.username != null && chat.username.equalsIgnoreCase(TEST_CHANNEL_USERNAME)) {
+                testChannel = chat;
+                break;
+            }
+        }
+
+        if (testChannel == null) {
+            android.util.Log.d("POTOK_FEED", "loadFeed: test channel @" + TEST_CHANNEL_USERNAME + " NOT FOUND in dialogsChannelsOnly (count=" + messagesController.dialogsChannelsOnly.size() + ")");
             return;
         }
-        resolveRequested = true;
 
-        TLRPC.TL_contacts_resolveUsername req = new TLRPC.TL_contacts_resolveUsername();
-        req.username = TEST_CHANNEL_USERNAME;
-        getConnectionsManager().sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
-            resolveRequested = false;
-            if (error != null || !(response instanceof TLRPC.TL_contacts_resolvedPeer)) {
-                return;
-            }
-            TLRPC.TL_contacts_resolvedPeer resolvedPeer = (TLRPC.TL_contacts_resolvedPeer) response;
-            if (resolvedPeer.chats.isEmpty()) {
-                return;
-            }
-            testChannel = resolvedPeer.chats.get(0);
-            getMessagesController().putChat(testChannel, false);
-            loadHistory();
-        }));
-    }
-
-    private void loadHistory() {
+        loadRequested = true;
         long dialogId = -testChannel.id;
-        getMessagesController().loadMessages(dialogId, 0, false, POSTS_TO_LOAD, 0, 0, true, 0, getClassGuid(), 0, 0, 0, 0, 0, 0, false);
+        android.util.Log.d("POTOK_FEED", "loadFeed: found channel " + testChannel.title + " dialogId=" + dialogId + " requesting " + POSTS_TO_LOAD + " messages, classGuid=" + getClassGuid());
+        messagesController.loadMessages(dialogId, 0, false, POSTS_TO_LOAD, 0, 0, true, 0, getClassGuid(), 0, 0, 0, 0, 0, 0, false);
     }
 
     @Override
@@ -142,6 +134,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
             @SuppressWarnings("unchecked")
             ArrayList<MessageObject> messageObjects = (ArrayList<MessageObject>) args[2];
+            android.util.Log.d("POTOK_FEED", "didReceivedNotification: got " + (messageObjects != null ? messageObjects.size() : -1) + " messages, testChannel=" + testChannel.title + " id=" + testChannel.id);
 
             items.clear();
             for (MessageObject messageObject : messageObjects) {
@@ -153,6 +146,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 item.message = messageObject;
                 items.add(item);
             }
+            android.util.Log.d("POTOK_FEED", "items after filtering: " + items.size());
 
             notifyWhenReady();
         }
@@ -177,6 +171,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     @Override
     public void onResume() {
         super.onResume();
+        loadRequested = false;
         loadFeed();
     }
 }

@@ -247,7 +247,7 @@ public class PotokFeedPostCell extends LinearLayout {
         }
         // открываем родной полноэкранный просмотрщик Telegram — зум, свайп, видео со звуком по тапу
         PhotoViewer.getInstance().setParentActivity(parentActivity);
-        PhotoViewer.getInstance().openPhoto(currentMessage, 0, 0, 0, null, true);
+        PhotoViewer.getInstance().openPhoto(currentMessage, 0, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
     }
 
     private TLRPC.ReactionCount getTopReaction(MessageObject messageObject) {

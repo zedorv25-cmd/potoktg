@@ -287,6 +287,12 @@ public class ApplicationLoader extends Application {
 
         }
 
+        try {
+            org.telegram.ui.PotokDebugLog.installCrashHandler(applicationContext != null ? applicationContext : this);
+        } catch (Throwable ignore) {
+            // не даём сбою установки crash handler сломать запуск приложения
+        }
+
         super.onCreate();
 
         if (BuildVars.LOGS_ENABLED) {

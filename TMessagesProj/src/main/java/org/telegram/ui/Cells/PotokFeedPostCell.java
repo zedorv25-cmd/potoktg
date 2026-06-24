@@ -33,7 +33,7 @@ import java.util.ArrayList;
 public class PotokFeedPostCell extends LinearLayout {
 
     private static final int MAX_TEXT_LINES = 7;
-    private static final int MAX_MEDIA_HEIGHT_DP = 360;
+    private static final int MAX_MEDIA_HEIGHT_DP = 480;
     private static final int MIN_MEDIA_HEIGHT_DP = 140;
 
     private final BackupImageView avatarView;
@@ -253,26 +253,6 @@ public class PotokFeedPostCell extends LinearLayout {
             }
             TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50, false, null, true);
 
-            // === DEBUG: логируем все sizes ===
-            StringBuilder dbg = new StringBuilder();
-            dbg.append("MSG_ID=").append(messageObject.getId()).append(" sizes_count=").append(sizes.size()).append("\n");
-            for (int di = 0; di < sizes.size(); di++) {
-                TLRPC.PhotoSize s = sizes.get(di);
-                dbg.append("  [").append(di).append("] type=").append(s.getClass().getSimpleName())
-                   .append(" w=").append(s.w).append(" h=").append(s.h).append(" type_letter=").append(s.type).append("\n");
-            }
-            TLRPC.MessageMedia dbgMedia = messageObject.messageOwner != null ? messageObject.messageOwner.media : null;
-            dbg.append("media=").append(dbgMedia != null ? dbgMedia.getClass().getSimpleName() : "null").append("\n");
-            if (dbgMedia instanceof TLRPC.TL_messageMediaDocument && dbgMedia.document != null) {
-                dbg.append("doc_attrs:\n");
-                for (TLRPC.DocumentAttribute attr : dbgMedia.document.attributes) {
-                    dbg.append("  attr=").append(attr.getClass().getSimpleName()).append(" w=").append(attr.w).append(" h=").append(attr.h).append("\n");
-                }
-            }
-            dbg.append("chosen photoSize=").append(photoSize != null ? photoSize.getClass().getSimpleName() + " " + photoSize.w + "x" + photoSize.h : "null").append("\n");
-            dbg.append("photoThumbsObject=").append(messageObject.photoThumbsObject != null ? messageObject.photoThumbsObject.getClass().getSimpleName() : "null");
-            android.util.Log.d("FEED_MEDIA", dbg.toString());
-            // === END DEBUG ===
 
             // Реальные размеры берём из медиа объекта (не из thumbnail — у него свои w/h)
             int w = 0, h = 0;
@@ -299,20 +279,35 @@ public class PotokFeedPostCell extends LinearLayout {
                 mediaHeightDp = (int) (calculatedHeightPx / AndroidUtilities.density);
                 mediaHeightDp = Math.max(MIN_MEDIA_HEIGHT_DP, Math.min(MAX_MEDIA_HEIGHT_DP, mediaHeightDp));
             }
-            android.util.Log.d("FEED_MEDIA", "w=" + w + " h=" + h + " mediaHeightDp=" + mediaHeightDp + " screenW=" + AndroidUtilities.displaySize.x + " density=" + AndroidUtilities.density);
             LayoutParams params = (LayoutParams) mediaView.getLayoutParams();
             params.height = dp(mediaHeightDp);
             mediaView.setLayoutParams(params);
 
             mediaView.setVisibility(VISIBLE);
-            mediaView.setImage(
-                ImageLocation.getForObject(photoSize, messageObject.photoThumbsObject),
-                null,
-                thumbSize != null ? ImageLocation.getForObject(thumbSize, messageObject.photoThumbsObject) : null,
-                "50_50",
-                null,
-                messageObject
-            );
+            // Для видео (TL_document) thumbnail всегда только 180x320 — больше нет.
+            // Чтобы получить чёткий кадр загружаем превью через getForDocument напрямую.
+            boolean isVideoDocument = media instanceof TLRPC.TL_messageMediaDocument
+                    && media.document != null
+                    && messageObject.isVideo();
+            if (isVideoDocument) {
+                mediaView.setImage(
+                    ImageLocation.getForDocument(media.document),
+                    "320_320_document",
+                    ImageLocation.getForObject(thumbSize, messageObject.photoThumbsObject),
+                    "50_50",
+                    null,
+                    messageObject
+                );
+            } else {
+                mediaView.setImage(
+                    ImageLocation.getForObject(photoSize, messageObject.photoThumbsObject),
+                    null,
+                    thumbSize != null ? ImageLocation.getForObject(thumbSize, messageObject.photoThumbsObject) : null,
+                    "50_50",
+                    null,
+                    messageObject
+                );
+            }
         } else {
             mediaView.setVisibility(GONE);
             mediaView.setImageDrawable(null);

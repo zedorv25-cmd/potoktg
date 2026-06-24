@@ -8,6 +8,7 @@ import android.widget.FrameLayout;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.MessageObject;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.Cells.PotokFeedPostCell;
 import org.telegram.ui.Components.LayoutHelper;
@@ -20,19 +21,12 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 /**
- * Лента — этап 1.
- * Показывает 10-15 последних постов одного канала (TEST_CHANNEL_USERNAME).
- * Канал резолвится через contacts.resolveUsername — не зависит от подписки аккаунта.
- * История грузится прямым TL-запросом messages.getHistory (а не через MessagesController.loadMessages +
- * NotificationCenter) — так мы явно контролируем, сколько сообщений запрошено и сколько пришло,
- * без скрытой кэш-логики чата, которая давала непредсказуемый результат (показывался 1 пост).
- * Сообщения с одинаковым grouped_id объединяются в один пост (альбом) — рендерится каруселью в карточке.
- * Когда карточка будет полностью готова — заменить TEST_CHANNEL_USERNAME на сборку по всем подпискам.
+ * Лента — этап 1 + 2.
  */
 public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate {
 
     private static final String TEST_CHANNEL_USERNAME = "komissariatforsvoix";
-    private static final int MESSAGES_TO_LOAD = 60; // запас на альбомы, чтобы набрать MAX_POSTS постов
+    private static final int MESSAGES_TO_LOAD = 60;
     private static final int MAX_POSTS = 15;
 
     private RecyclerListView listView;
@@ -58,8 +52,14 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         listView = new RecyclerListView(context);
         listView.setLayoutManager(new LinearLayoutManager(context));
-        listView.setPadding(0, AndroidUtilities.statusBarHeight, 0, 0);
+
+        // Отступ сверху = статусбар + высота таббара снизу MainTabsActivity (не тулбар — его нет)
+        // AndroidUtilities.statusBarHeight — высота статусбара в px
+        // dp(56) — высота шапки с названием "Лента" если она есть, или просто зазор сверху
+        int topPadding = AndroidUtilities.statusBarHeight + AndroidUtilities.dp(56);
+        listView.setPadding(0, topPadding, 0, AndroidUtilities.dp(56));
         listView.setClipToPadding(false);
+
         listView.setAdapter(new RecyclerView.Adapter<RecyclerListView.Holder>() {
             @Override
             public RecyclerListView.Holder onCreateViewHolder(android.view.ViewGroup parent, int viewType) {
@@ -152,9 +152,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         }));
     }
 
-    // messages.getHistory отдаёт сообщения от новых к старым.
-    // Альбомы (общий grouped_id) объединяются в один FeedItem; новые посты не создаются после MAX_POSTS,
-    // но текущий уже начатый альбом докомплектовывается полностью (чтобы не обрезать его медиа).
     private void buildItems(ArrayList<MessageObject> messageObjects) {
         items.clear();
 
@@ -183,8 +180,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             }
         }
 
-        // внутри альбома сообщения должны идти в порядке отправки (id по возрастанию),
-        // а не в порядке "от новых к старым", в котором их отдаёт messages.getHistory
         for (FeedItem item : items) {
             if (item.messages.size() > 1) {
                 Collections.sort(item.messages, (a, b) -> Integer.compare(a.getId(), b.getId()));

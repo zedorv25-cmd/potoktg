@@ -257,7 +257,7 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         tabs[INDEX_CONTACTS] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_contacts, R.string.PotokTabContacts);
         tabs[INDEX_CHATS].setOnLongClickListener(this::openFoldersSelector);
         tabs[INDEX_CONTACTS].setOnLongClickListener(v -> {
-            PotokDebugLog.showLastCrash(context);
+            PotokDebugLog.showFiltered(context, "FEED_MEDIA");
             return true;
         });
 

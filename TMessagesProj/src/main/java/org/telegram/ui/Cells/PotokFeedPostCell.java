@@ -123,7 +123,6 @@ public class PotokFeedPostCell extends LinearLayout {
         // --- Медиа: фото/видео ---
         mediaView = new BackupImageView(context);
         mediaView.setRoundRadius(dp(8));
-        mediaView.setScaleType(ImageView.ScaleType.FIT_CENTER);
         addView(mediaView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, MIN_MEDIA_HEIGHT_DP, 12, 10, 12, 0));
         mediaView.setOnClickListener(v -> openMediaViewer());
 

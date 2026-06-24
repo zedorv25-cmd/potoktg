@@ -33,7 +33,7 @@ import java.util.ArrayList;
 public class PotokFeedPostCell extends LinearLayout {
 
     private static final int MAX_TEXT_LINES = 7;
-    private static final int MAX_MEDIA_HEIGHT_DP = 480;
+    private static final int MAX_MEDIA_HEIGHT_DP = 560;
     private static final int MIN_MEDIA_HEIGHT_DP = 140;
 
     private final BackupImageView avatarView;
@@ -284,21 +284,51 @@ public class PotokFeedPostCell extends LinearLayout {
             mediaView.setLayoutParams(params);
 
             mediaView.setVisibility(VISIBLE);
-            // Для видео (TL_document) thumbnail всегда только 180x320 — больше нет.
-            // Чтобы получить чёткий кадр загружаем превью через getForDocument напрямую.
             boolean isVideoDocument = media instanceof TLRPC.TL_messageMediaDocument
                     && media.document != null
                     && messageObject.isVideo();
-            if (isVideoDocument) {
+            if (isVideoDocument && media.document.thumbs != null && !media.document.thumbs.isEmpty()) {
+                // Для видео грузим thumbnail через getForDocument(photoSize, document) —
+                // именно так делает ChatMessageCell, это даёт чёткий кадр.
+                // photoSize — это TL_photoSize из photoThumbs документа (не stripped).
+                TLRPC.PhotoSize videoThumb = FileLoader.getClosestPhotoSizeWithSize(media.document.thumbs, 320);
+                // Ищем не-stripped размер
+                if (videoThumb instanceof TLRPC.TL_photoStrippedSize) {
+                    for (TLRPC.PhotoSize s : media.document.thumbs) {
+                        if (!(s instanceof TLRPC.TL_photoStrippedSize) && !(s instanceof TLRPC.TL_photoPathSize)) {
+                            videoThumb = s;
+                            break;
+                        }
+                    }
+                }
+                TLRPC.PhotoSize videoThumbSmall = null;
+                for (TLRPC.PhotoSize s : media.document.thumbs) {
+                    if (s instanceof TLRPC.TL_photoStrippedSize) {
+                        videoThumbSmall = s;
+                        break;
+                    }
+                }
+                int screenW = AndroidUtilities.displaySize.x;
+                String filter = screenW + "_" + screenW;
                 mediaView.setImage(
-                    ImageLocation.getForDocument(media.document),
-                    "320_320_document",
-                    ImageLocation.getForObject(thumbSize, messageObject.photoThumbsObject),
+                    ImageLocation.getForDocument(videoThumb, media.document),
+                    filter,
+                    ImageLocation.getForDocument(videoThumbSmall, media.document),
+                    "b1",
+                    null,
+                    messageObject
+                );
+            } else {
+                mediaView.setImage(
+                    ImageLocation.getForObject(photoSize, messageObject.photoThumbsObject),
+                    null,
+                    thumbSize != null ? ImageLocation.getForObject(thumbSize, messageObject.photoThumbsObject) : null,
                     "50_50",
                     null,
                     messageObject
                 );
             } else {
+                // fallback: видео без thumbs или фото
                 mediaView.setImage(
                     ImageLocation.getForObject(photoSize, messageObject.photoThumbsObject),
                     null,

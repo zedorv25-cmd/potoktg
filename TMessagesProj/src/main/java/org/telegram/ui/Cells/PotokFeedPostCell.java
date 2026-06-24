@@ -6,6 +6,7 @@ import android.content.Context;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -144,7 +145,11 @@ public class PotokFeedPostCell extends LinearLayout {
         addView(divider, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 1));
     }
 
-    public void setMessage(MessageObject messageObject, TLRPC.Chat channel) {
+    public void setPost(ArrayList<MessageObject> messages, TLRPC.Chat channel) {
+        if (messages == null || messages.isEmpty()) {
+            return;
+        }
+        MessageObject messageObject = messages.get(0);
         currentMessage = messageObject;
 
         AvatarDrawable avatarDrawable = new AvatarDrawable();
@@ -154,10 +159,15 @@ public class PotokFeedPostCell extends LinearLayout {
         titleView.setText(channel != null ? channel.title : "");
         timeView.setText(LocaleController.formatDate(messageObject.messageOwner.date));
 
-        // caption (подпись к медиа) — приоритетнее messageText, который для медиа без подписи
-        // содержит служебное описание типа ("Фотография", "Видео" и т.п.)
-        CharSequence caption = messageObject.caption;
-        if (TextUtils.isEmpty(caption) && messageObject.type == MessageObject.TYPE_TEXT) {
+        // caption ищем по всей группе — у альбома подпись обычно только на одном из сообщений
+        CharSequence caption = null;
+        for (MessageObject mo : messages) {
+            if (!TextUtils.isEmpty(mo.caption)) {
+                caption = mo.caption;
+                break;
+            }
+        }
+        if (TextUtils.isEmpty(caption) && messages.size() == 1 && messageObject.type == MessageObject.TYPE_TEXT) {
             caption = messageObject.messageText;
         }
         if (TextUtils.isEmpty(caption)) {

@@ -246,17 +246,36 @@ public class PotokFeedPostCell extends LinearLayout {
             }
             audioContainer.setVisibility(GONE);
 
-            // Берём наибольший доступный размер для чёткого превью
-            TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
-            TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50);
+            // Для чёткого превью берём наибольший thumbnail, игнорируя stripped (мутный)
+            TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
+            if (photoSize == null) {
+                photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
+            }
+            TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50, false, null, true);
 
-            // Считаем реальное соотношение сторон — показываем медиа без обрезки
-            int w = photoSize != null ? photoSize.w : 0;
-            int h = photoSize != null ? photoSize.h : 0;
+            // Реальные размеры берём из медиа объекта (не из thumbnail — у него свои w/h)
+            int w = 0, h = 0;
+            TLRPC.MessageMedia media = messageObject.messageOwner != null ? messageObject.messageOwner.media : null;
+            if (media instanceof TLRPC.TL_messageMediaPhoto && media.photo != null) {
+                TLRPC.PhotoSize biggest = FileLoader.getClosestPhotoSizeWithSize(media.photo.sizes, 1280, false, null, true);
+                if (biggest != null) { w = biggest.w; h = biggest.h; }
+            } else if (media instanceof TLRPC.TL_messageMediaDocument && media.document != null) {
+                for (TLRPC.DocumentAttribute attr : media.document.attributes) {
+                    if (attr instanceof TLRPC.TL_documentAttributeVideo) {
+                        w = attr.w;
+                        h = attr.h;
+                        break;
+                    }
+                }
+            }
+            if (w == 0 && photoSize != null) { w = photoSize.w; h = photoSize.h; }
+
+            // Считаем высоту по реальному соотношению сторон
             int mediaHeightDp = MIN_MEDIA_HEIGHT_DP;
             if (w > 0 && h > 0) {
-                int screenWidthDp = (int) (AndroidUtilities.displaySize.x / AndroidUtilities.density) - 24;
-                mediaHeightDp = Math.round(screenWidthDp * (h / (float) w));
+                int screenWidthPx = AndroidUtilities.displaySize.x - dp(24);
+                int calculatedHeightPx = Math.round(screenWidthPx * (h / (float) w));
+                mediaHeightDp = (int) (calculatedHeightPx / AndroidUtilities.density);
                 mediaHeightDp = Math.max(MIN_MEDIA_HEIGHT_DP, Math.min(MAX_MEDIA_HEIGHT_DP, mediaHeightDp));
             }
             LayoutParams params = (LayoutParams) mediaView.getLayoutParams();
@@ -267,7 +286,7 @@ public class PotokFeedPostCell extends LinearLayout {
             mediaView.setImage(
                 ImageLocation.getForObject(photoSize, messageObject.photoThumbsObject),
                 null,
-                ImageLocation.getForObject(thumbSize, messageObject.photoThumbsObject),
+                thumbSize != null ? ImageLocation.getForObject(thumbSize, messageObject.photoThumbsObject) : null,
                 "50_50",
                 null,
                 messageObject

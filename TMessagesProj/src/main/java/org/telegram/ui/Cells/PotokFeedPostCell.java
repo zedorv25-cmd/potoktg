@@ -3,26 +3,12 @@ package org.telegram.ui.Cells;
 import static org.telegram.messenger.AndroidUtilities.dp;
 
 import android.content.Context;
-import android.graphics.Canvas;
-import android.graphics.ColorFilter;
-import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.PixelFormat;
-import android.graphics.Rect;
-import android.graphics.drawable.Drawable;
-import android.graphics.drawable.GradientDrawable;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.PagerSnapHelper;
-import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.FileLoader;
@@ -41,34 +27,28 @@ import java.util.ArrayList;
 
 /**
  * Карточка поста в Ленте — этап 1.
- * Шапка -> текст (полный, без обрезки) -> медиа (карусель фото/видео ИЛИ аудио) -> футер.
- * Медиа всегда рендерится через карусель (mediaPager); для одного медиа это просто
- * нескроллящаяся "карусель из одного слайда" — единая логика без частных случаев.
- * Высота медиа считается по соотношению сторон ПЕРВОГО слайда (как в Instagram) — без обрезки
- * для одиночного медиа; для альбомов остальные слайды могут немного обрезаться под эту высоту,
- * если их соотношение сторон отличается (так же ведёт себя Instagram-карусель).
- * Полноэкранный просмотр — родной PhotoViewer Telegram, с поддержкой свайпа между медиа альбома.
+ * Структура — вертикальный LinearLayout: шапка -> текст -> медиа (фото/видео/аудио) -> футер.
+ * Просмотр фото/видео и проигрывание аудио — через готовые компоненты Telegram (PhotoViewer, SharedAudioCell),
+ * не написаны с нуля.
  */
 public class PotokFeedPostCell extends LinearLayout {
 
+    private static final int MAX_TEXT_LINES = 7;
+    private static final int MAX_MEDIA_HEIGHT_DP = 360;
     private static final int MIN_MEDIA_HEIGHT_DP = 140;
 
     private final BackupImageView avatarView;
     private final TextView titleView;
     private final TextView timeView;
     private final TextView textView;
-    private final FrameLayout mediaContainer;
-    private final RecyclerView mediaPager;
-    private final MediaPagerAdapter mediaPagerAdapter;
-    private final LinearLayout dotsContainer;
+    private final BackupImageView mediaView;
     private final SharedAudioCell audioCell;
+    private final FrameLayout audioContainer;
     private final TextView viewsView;
     private final TextView reactionView;
     private final ImageView viewsIcon;
 
-    private ArrayList<MessageObject> currentMessages;
-    private MessageObject currentAudioMessage;
-    private TLRPC.Chat currentChannel;
+    private MessageObject currentMessage;
     private android.app.Activity parentActivity;
 
     public void setParentActivity(android.app.Activity activity) {
@@ -107,44 +87,33 @@ public class PotokFeedPostCell extends LinearLayout {
         timeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
         titleColumn.addView(timeView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
-        // --- Текст поста: показывается ПОЛНОСТЬЮ, без обрезки (раскрытие "ещё" — отдельный этап) ---
+        // --- Текст поста (подпись к медиа или текстовый пост) ---
         textView = new TextView(context);
         textView.setTextSize(15);
         textView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider));
+        textView.setMaxLines(MAX_TEXT_LINES);
+        textView.setEllipsize(TextUtils.TruncateAt.END);
         textView.setLineSpacing(dp(2), 1f);
         addView(textView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 8, 12, 0));
 
-        // --- Медиа: карусель во всю ширину экрана, без боковых отступов и без скругления ---
-        mediaContainer = new FrameLayout(context);
-        addView(mediaContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, MIN_MEDIA_HEIGHT_DP, 0, 10, 0, 0));
-
-        mediaPager = new RecyclerView(context);
-        mediaPager.setLayoutManager(new LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false));
-        mediaPagerAdapter = new MediaPagerAdapter();
-        mediaPager.setAdapter(mediaPagerAdapter);
-        new PagerSnapHelper().attachToRecyclerView(mediaPager);
-        mediaPager.addOnScrollListener(new RecyclerView.OnScrollListener() {
-            @Override
-            public void onScrollStateChanged(RecyclerView rv, int newState) {
-                if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-                    updateActiveDot();
-                }
-            }
-        });
-        mediaContainer.addView(mediaPager, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-
-        dotsContainer = new LinearLayout(context);
-        dotsContainer.setOrientation(HORIZONTAL);
-        dotsContainer.setVisibility(GONE);
-        mediaContainer.addView(dotsContainer, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 8));
+        // --- Медиа: фото/видео (без обрезки, по реальному соотношению сторон) ---
+        mediaView = new BackupImageView(context);
+        mediaView.setRoundRadius(dp(8));
+        addView(mediaView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, MIN_MEDIA_HEIGHT_DP, 12, 10, 12, 0));
+        mediaView.setOnClickListener(v -> openMediaViewer());
 
         // --- Аудио: готовая ячейка Telegram (play/pause, длительность, прогресс) ---
+        // ВАЖНО: audioCell сам добавляется/убирается ТОЛЬКО внутри контейнера audioContainer,
+        // который всегда в иерархии. SharedAudioCell.onAttachedToWindow() безусловно вызывает
+        // updateButtonState() и крашится на messageObject == null, поэтому сам SharedAudioCell
+        // никогда не должен быть в дереве View без уже установленных данных.
+        audioContainer = new FrameLayout(context);
+        addView(audioContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 8, 10, 8, 0));
+
         audioCell = new SharedAudioCell(context, resourcesProvider);
-        audioCell.setVisibility(GONE);
-        addView(audioCell, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 8, 10, 8, 0));
         audioCell.setOnClickListener(v -> {
-            if (currentAudioMessage != null) {
-                MediaController.getInstance().playMessage(currentAudioMessage);
+            if (currentMessage != null) {
+                MediaController.getInstance().playMessage(currentMessage);
             }
         });
 
@@ -175,31 +144,21 @@ public class PotokFeedPostCell extends LinearLayout {
         addView(divider, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 1));
     }
 
-    public void setPost(ArrayList<MessageObject> messages, TLRPC.Chat channel) {
-        if (messages == null || messages.isEmpty()) {
-            return;
-        }
-        currentMessages = messages;
-        currentChannel = channel;
-        MessageObject primary = messages.get(0);
+    public void setMessage(MessageObject messageObject, TLRPC.Chat channel) {
+        currentMessage = messageObject;
 
         AvatarDrawable avatarDrawable = new AvatarDrawable();
         avatarDrawable.setInfo(channel);
         avatarView.setForUserOrChat(channel, avatarDrawable);
 
         titleView.setText(channel != null ? channel.title : "");
-        timeView.setText(LocaleController.formatDate(primary.messageOwner.date));
+        timeView.setText(LocaleController.formatDate(messageObject.messageOwner.date));
 
-        // подпись — первая ненулевая среди сообщений альбома, либо messageText, если пост чисто текстовый
-        CharSequence caption = null;
-        for (MessageObject mo : messages) {
-            if (!TextUtils.isEmpty(mo.caption)) {
-                caption = mo.caption;
-                break;
-            }
-        }
-        if (caption == null && primary.type == MessageObject.TYPE_TEXT) {
-            caption = primary.messageText;
+        // caption (подпись к медиа) — приоритетнее messageText, который для медиа без подписи
+        // содержит служебное описание типа ("Фотография", "Видео" и т.п.)
+        CharSequence caption = messageObject.caption;
+        if (TextUtils.isEmpty(caption) && messageObject.type == MessageObject.TYPE_TEXT) {
+            caption = messageObject.messageText;
         }
         if (TextUtils.isEmpty(caption)) {
             textView.setVisibility(GONE);
@@ -217,53 +176,65 @@ public class PotokFeedPostCell extends LinearLayout {
             textView.setLinksClickable(true);
         }
 
-        boolean isVoiceOrMusic = primary.isVoice() || primary.isMusic();
+        boolean isVoiceOrMusic = messageObject.isVoice() || messageObject.isMusic();
+        boolean isVideo = messageObject.isVideo();
+        ArrayList<TLRPC.PhotoSize> sizes = messageObject.photoThumbs;
+        boolean hasPhotoOrVideoThumb = !isVoiceOrMusic && sizes != null && !sizes.isEmpty();
+
         if (isVoiceOrMusic) {
-            mediaContainer.setVisibility(GONE);
-            dotsContainer.setVisibility(GONE);
-            currentAudioMessage = primary;
-            audioCell.setMessageObject(primary, false);
-            audioCell.setVisibility(VISIBLE);
+            mediaView.setVisibility(GONE);
+            mediaView.setImageDrawable(null);
+            // setMessageObject ДО добавления в контейнер — гарантирует, что данные есть
+            // к моменту, когда сам audioCell физически появится в дереве View.
+            audioCell.setMessageObject(messageObject, false);
+            if (audioCell.getParent() == null) {
+                audioContainer.addView(audioCell, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+            }
+            audioContainer.setVisibility(VISIBLE);
+        } else if (hasPhotoOrVideoThumb) {
+            if (audioCell.getParent() != null) {
+                audioContainer.removeView(audioCell);
+            }
+            audioContainer.setVisibility(GONE);
+
+            TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, AndroidUtilities.getPhotoSize());
+            TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50);
+
+            // считаем реальное соотношение сторон, чтобы показать медиа целиком, без обрезки
+            int w = photoSize != null ? photoSize.w : 0;
+            int h = photoSize != null ? photoSize.h : 0;
+            int mediaHeight = MIN_MEDIA_HEIGHT_DP;
+            if (w > 0 && h > 0) {
+                int screenWidthDp = (int) (AndroidUtilities.displaySize.x / AndroidUtilities.density) - 24; // минус левый/правый отступ 12+12
+                mediaHeight = Math.round(screenWidthDp * (h / (float) w));
+                mediaHeight = Math.max(MIN_MEDIA_HEIGHT_DP, Math.min(MAX_MEDIA_HEIGHT_DP, mediaHeight));
+            }
+            LayoutParams params = (LayoutParams) mediaView.getLayoutParams();
+            params.height = dp(mediaHeight);
+            mediaView.setLayoutParams(params);
+
+            mediaView.setVisibility(VISIBLE);
+            mediaView.setImage(
+                ImageLocation.getForObject(photoSize, messageObject.photoThumbsObject),
+                "300_" + mediaHeight,
+                ImageLocation.getForObject(thumbSize, messageObject.photoThumbsObject),
+                "50_50",
+                null,
+                messageObject
+            );
         } else {
-            audioCell.setVisibility(GONE);
-
-            ArrayList<MessageObject> mediaSlides = new ArrayList<>();
-            for (MessageObject mo : messages) {
-                if (mo.photoThumbs != null && !mo.photoThumbs.isEmpty()) {
-                    mediaSlides.add(mo);
-                }
+            mediaView.setVisibility(GONE);
+            mediaView.setImageDrawable(null);
+            if (audioCell.getParent() != null) {
+                audioContainer.removeView(audioCell);
             }
-
-            if (mediaSlides.isEmpty()) {
-                mediaContainer.setVisibility(GONE);
-                dotsContainer.setVisibility(GONE);
-            } else {
-                mediaContainer.setVisibility(VISIBLE);
-
-                // высота — по соотношению сторон ПЕРВОГО медиа, без потолка (как в самом канале)
-                MessageObject firstSlide = mediaSlides.get(0);
-                TLRPC.PhotoSize firstSize = FileLoader.getClosestPhotoSizeWithSize(firstSlide.photoThumbs, AndroidUtilities.getPhotoSize());
-                int w = firstSize != null ? firstSize.w : 0;
-                int h = firstSize != null ? firstSize.h : 0;
-                int mediaHeight = MIN_MEDIA_HEIGHT_DP;
-                if (w > 0 && h > 0) {
-                    int screenWidthDp = (int) (AndroidUtilities.displaySize.x / AndroidUtilities.density);
-                    mediaHeight = Math.max(MIN_MEDIA_HEIGHT_DP, Math.round(screenWidthDp * (h / (float) w)));
-                }
-                LayoutParams containerParams = (LayoutParams) mediaContainer.getLayoutParams();
-                containerParams.height = dp(mediaHeight);
-                mediaContainer.setLayoutParams(containerParams);
-
-                mediaPagerAdapter.setSlides(mediaSlides);
-                mediaPager.scrollToPosition(0);
-                rebuildDots(mediaSlides.size());
-            }
+            audioContainer.setVisibility(GONE);
         }
 
-        int views = primary.messageOwner != null ? primary.messageOwner.views : 0;
+        int views = messageObject.messageOwner != null ? messageObject.messageOwner.views : 0;
         viewsView.setText(views > 0 ? LocaleController.formatShortNumber(views, null) : "0");
 
-        TLRPC.ReactionCount topReaction = getTopReaction(primary);
+        TLRPC.ReactionCount topReaction = getTopReaction(messageObject);
         if (topReaction != null) {
             String emoji = "";
             if (topReaction.reaction instanceof TLRPC.TL_reactionEmoji) {
@@ -276,212 +247,13 @@ public class PotokFeedPostCell extends LinearLayout {
         }
     }
 
-    private void rebuildDots(int count) {
-        dotsContainer.removeAllViews();
-        if (count <= 1) {
-            dotsContainer.setVisibility(GONE);
+    private void openMediaViewer() {
+        if (currentMessage == null || parentActivity == null) {
             return;
         }
-        dotsContainer.setVisibility(VISIBLE);
-        for (int i = 0; i < count; i++) {
-            View dot = new View(getContext());
-            GradientDrawable shape = new GradientDrawable();
-            shape.setShape(GradientDrawable.OVAL);
-            shape.setColor(0xFFFFFFFF);
-            dot.setBackground(shape);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(6), dp(6));
-            lp.leftMargin = dp(3);
-            lp.rightMargin = dp(3);
-            dot.setLayoutParams(lp);
-            dot.setAlpha(i == 0 ? 1f : 0.4f);
-            dotsContainer.addView(dot);
-        }
-    }
-
-    private void updateActiveDot() {
-        RecyclerView.LayoutManager lm = mediaPager.getLayoutManager();
-        if (!(lm instanceof LinearLayoutManager)) {
-            return;
-        }
-        int position = ((LinearLayoutManager) lm).findFirstVisibleItemPosition();
-        for (int i = 0; i < dotsContainer.getChildCount(); i++) {
-            dotsContainer.getChildAt(i).setAlpha(i == position ? 1f : 0.4f);
-        }
-    }
-
-    private void openMediaViewer(int index) {
-        if (currentMessages == null || currentMessages.isEmpty() || parentActivity == null || index < 0) {
-            return;
-        }
+        // открываем родной полноэкранный просмотрщик Telegram — зум, свайп, видео со звуком по тапу
         PhotoViewer.getInstance().setParentActivity(parentActivity);
-        long dialogId = currentChannel != null ? -currentChannel.id : 0;
-        PhotoViewer.getInstance().openPhoto(currentMessages, index, dialogId, 0, 0, photoViewerProvider);
-    }
-
-    private final PhotoViewer.PhotoViewerProvider photoViewerProvider = new PhotoViewer.EmptyPhotoViewerProvider() {
-        @Override
-        public PhotoViewer.PlaceProviderObject getPlaceForPhoto(MessageObject messageObject, TLRPC.FileLocation fileLocation, int index, boolean needPreview, boolean closing) {
-            if (currentMessages == null || index < 0 || index >= currentMessages.size() || messageObject != currentMessages.get(index)) {
-                return null;
-            }
-            RecyclerView.LayoutManager lm = mediaPager.getLayoutManager();
-            View child = lm != null ? lm.findViewByPosition(index) : null;
-            BackupImageView slideImageView = findImageView(child);
-            if (slideImageView == null) {
-                return null;
-            }
-            int[] coords = new int[2];
-            slideImageView.getLocationInWindow(coords);
-            PhotoViewer.PlaceProviderObject object = new PhotoViewer.PlaceProviderObject();
-            object.viewX = coords[0];
-            object.viewY = coords[1];
-            object.parentView = slideImageView;
-            object.imageReceiver = slideImageView.getImageReceiver();
-            object.dialogId = currentChannel != null ? -currentChannel.id : 0;
-            return object;
-        }
-    };
-
-    private static BackupImageView findImageView(View container) {
-        if (!(container instanceof ViewGroup)) {
-            return null;
-        }
-        ViewGroup group = (ViewGroup) container;
-        for (int i = 0; i < group.getChildCount(); i++) {
-            View child = group.getChildAt(i);
-            if (child instanceof BackupImageView) {
-                return (BackupImageView) child;
-            }
-        }
-        return null;
-    }
-
-    private class MediaPagerAdapter extends RecyclerView.Adapter<MediaSlideHolder> {
-        private final ArrayList<MessageObject> slides = new ArrayList<>();
-
-        void setSlides(ArrayList<MessageObject> newSlides) {
-            slides.clear();
-            slides.addAll(newSlides);
-            notifyDataSetChanged();
-        }
-
-        @Override
-        public MediaSlideHolder onCreateViewHolder(ViewGroup parent, int viewType) {
-            Context context = parent.getContext();
-            FrameLayout slideContainer = new FrameLayout(context);
-            slideContainer.setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-            BackupImageView imageView = new BackupImageView(context);
-            slideContainer.addView(imageView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-
-            ImageView playIcon = new ImageView(context);
-            playIcon.setImageDrawable(buildPlayDrawable());
-            slideContainer.addView(playIcon, LayoutHelper.createFrame(48, 48, Gravity.CENTER));
-
-            TextView durationView = new TextView(context);
-            durationView.setTextColor(0xFFFFFFFF);
-            durationView.setTextSize(12);
-            durationView.setBackgroundColor(0x66000000);
-            durationView.setPadding(dp(6), dp(2), dp(6), dp(2));
-            slideContainer.addView(durationView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 8, 8));
-
-            MediaSlideHolder holder = new MediaSlideHolder(slideContainer, imageView, playIcon, durationView);
-            slideContainer.setOnClickListener(v -> openMediaViewer(holder.getAdapterPosition()));
-            return holder;
-        }
-
-        @Override
-        public void onBindViewHolder(MediaSlideHolder holder, int position) {
-            MessageObject mo = slides.get(position);
-            ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;
-            TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, AndroidUtilities.getPhotoSize());
-            TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50);
-            holder.imageView.setImage(
-                ImageLocation.getForObject(photoSize, mo.photoThumbsObject),
-                "300_300",
-                ImageLocation.getForObject(thumbSize, mo.photoThumbsObject),
-                "50_50",
-                null,
-                mo
-            );
-            boolean slideIsVideo = mo.isVideo();
-            holder.playIcon.setVisibility(slideIsVideo ? VISIBLE : GONE);
-            if (slideIsVideo) {
-                holder.duration.setText(formatDuration((int) mo.getDuration()));
-                holder.duration.setVisibility(VISIBLE);
-            } else {
-                holder.duration.setVisibility(GONE);
-            }
-        }
-
-        @Override
-        public int getItemCount() {
-            return slides.size();
-        }
-    }
-
-    private static class MediaSlideHolder extends RecyclerView.ViewHolder {
-        final BackupImageView imageView;
-        final ImageView playIcon;
-        final TextView duration;
-
-        MediaSlideHolder(View itemView, BackupImageView imageView, ImageView playIcon, TextView duration) {
-            super(itemView);
-            this.imageView = imageView;
-            this.playIcon = playIcon;
-            this.duration = duration;
-        }
-    }
-
-    private static String formatDuration(int seconds) {
-        if (seconds < 0) {
-            seconds = 0;
-        }
-        int m = seconds / 60;
-        int s = seconds % 60;
-        return m + ":" + (s < 10 ? "0" + s : String.valueOf(s));
-    }
-
-    private static Drawable buildPlayDrawable() {
-        return new Drawable() {
-            private final Paint circlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            private final Paint trianglePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            {
-                circlePaint.setColor(0x80000000);
-                trianglePaint.setColor(0xFFFFFFFF);
-            }
-
-            @Override
-            public void draw(Canvas canvas) {
-                Rect b = getBounds();
-                float cx = b.centerX();
-                float cy = b.centerY();
-                float r = Math.min(b.width(), b.height()) / 2f;
-                canvas.drawCircle(cx, cy, r, circlePaint);
-                float triR = r * 0.45f;
-                Path path = new Path();
-                path.moveTo(cx - triR * 0.6f, cy - triR);
-                path.lineTo(cx - triR * 0.6f, cy + triR);
-                path.lineTo(cx + triR, cy);
-                path.close();
-                canvas.drawPath(path, trianglePaint);
-            }
-
-            @Override
-            public void setAlpha(int alpha) {
-                circlePaint.setAlpha((int) (0x80 * (alpha / 255f)));
-                trianglePaint.setAlpha(alpha);
-            }
-
-            @Override
-            public void setColorFilter(ColorFilter colorFilter) {
-            }
-
-            @Override
-            public int getOpacity() {
-                return PixelFormat.TRANSLUCENT;
-            }
-        };
+        PhotoViewer.getInstance().openPhoto(currentMessage, 0, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
     }
 
     private TLRPC.ReactionCount getTopReaction(MessageObject messageObject) {

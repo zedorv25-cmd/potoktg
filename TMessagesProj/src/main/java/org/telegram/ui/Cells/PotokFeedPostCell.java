@@ -141,10 +141,28 @@ public class PotokFeedPostCell extends LinearLayout {
 
         // --- Карусель ---
         carouselView = new RecyclerView(context) {
+            private float startX, startY;
+
             @Override
             public boolean onInterceptTouchEvent(MotionEvent e) {
-                // Разрешаем горизонтальный скролл внутри вертикального RecyclerView
-                getParent().requestDisallowInterceptTouchEvent(true);
+                switch (e.getAction()) {
+                    case MotionEvent.ACTION_DOWN:
+                        startX = e.getX();
+                        startY = e.getY();
+                        getParent().requestDisallowInterceptTouchEvent(false);
+                        break;
+                    case MotionEvent.ACTION_MOVE:
+                        float dx = Math.abs(e.getX() - startX);
+                        float dy = Math.abs(e.getY() - startY);
+                        if (dx > dy) {
+                            // Горизонтальный — блокируем родителя
+                            getParent().requestDisallowInterceptTouchEvent(true);
+                        } else {
+                            // Вертикальный — отдаём родителю
+                            getParent().requestDisallowInterceptTouchEvent(false);
+                        }
+                        break;
+                }
                 return super.onInterceptTouchEvent(e);
             }
         };
@@ -369,7 +387,12 @@ public class PotokFeedPostCell extends LinearLayout {
     private void openMediaViewer(MessageObject mo, int index, ArrayList<MessageObject> all) {
         if (mo == null || parentActivity == null) return;
         PhotoViewer.getInstance().setParentActivity(parentActivity);
-        PhotoViewer.getInstance().openPhoto(mo, 0, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
+        if (all != null && all.size() > 1) {
+            // Альбом — передаём весь список и индекс текущего слайда
+            PhotoViewer.getInstance().openPhoto(all, index, 0L, 0L, 0L, new PhotoViewer.EmptyPhotoViewerProvider());
+        } else {
+            PhotoViewer.getInstance().openPhoto(mo, 0, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
+        }
     }
 
     private TLRPC.ReactionCount getTopReaction(MessageObject messageObject) {
@@ -418,25 +441,37 @@ public class PotokFeedPostCell extends LinearLayout {
             boolean isVideo = mo.isVideo();
 
             if (isVideo && media instanceof TLRPC.TL_messageMediaDocument
-                    && media.document != null
-                    && media.document.thumbs != null && !media.document.thumbs.isEmpty()) {
-                // Видео — грузим лучший thumb из document.thumbs
-                TLRPC.PhotoSize videoThumb = null;
-                TLRPC.PhotoSize videoThumbStripped = null;
-                for (TLRPC.PhotoSize s : media.document.thumbs) {
-                    if (s instanceof TLRPC.TL_photoStrippedSize) {
-                        videoThumbStripped = s;
-                    } else if (!(s instanceof TLRPC.TL_photoPathSize)) {
-                        if (videoThumb == null || s.w > videoThumb.w) videoThumb = s;
-                    }
-                }
+                    && media.document != null) {
+                // Quality thumb — заставляет ImageReceiver сгенерировать чёткий кадр из видео
+                // Именно так работает ChatMessageCell для превью видео в канале
+                img.getImageReceiver().setNeedsQualityThumb(true);
+                img.getImageReceiver().setShouldGenerateQualityThumb(true);
+
+                // Берём photoThumbs через стандартный механизм MessageObject
+                ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;
+                TLRPC.PhotoSize photoSize = sizes != null
+                    ? FileLoader.getClosestPhotoSizeWithSize(sizes, AndroidUtilities.getPhotoSize())
+                    : null;
+                TLRPC.PhotoSize thumbSize = sizes != null
+                    ? FileLoader.getClosestPhotoSizeWithSize(sizes, 40)
+                    : null;
+
                 int screenW = AndroidUtilities.displaySize.x;
                 String filter = screenW + "_" + screenW;
-                img.setImage(
-                    ImageLocation.getForDocument(videoThumb, media.document), filter,
-                    ImageLocation.getForDocument(videoThumbStripped, media.document), "b1",
-                    null, mo
-                );
+
+                if (thumbSize != null) {
+                    img.setImage(
+                        ImageLocation.getForObject(photoSize, mo.photoThumbsObject), filter,
+                        ImageLocation.getForObject(thumbSize, mo.photoThumbsObject), "b1",
+                        null, mo
+                    );
+                } else {
+                    img.setImage(
+                        ImageLocation.getForObject(photoSize, mo.photoThumbsObject), filter,
+                        null, null,
+                        null, mo
+                    );
+                }
             } else {
                 // Фото — стандартный путь
                 ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;

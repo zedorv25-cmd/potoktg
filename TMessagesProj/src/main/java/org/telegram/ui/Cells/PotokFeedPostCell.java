@@ -387,8 +387,10 @@ public class PotokFeedPostCell extends LinearLayout {
     private void openMediaViewer(MessageObject mo, int index, ArrayList<MessageObject> all) {
         if (mo == null || parentActivity == null) return;
         PhotoViewer.getInstance().setParentActivity(parentActivity);
-        if (all != null && all.size() > 1) {
-            // Альбом — передаём весь список и индекс текущего слайда
+        // Видео открываем напрямую — PhotoViewer не воспроизводит видео через openPhoto(ArrayList)
+        if (mo.isVideo()) {
+            PhotoViewer.getInstance().openPhoto(mo, 0, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
+        } else if (all != null && all.size() > 1) {
             PhotoViewer.getInstance().openPhoto(all, index, 0L, 0L, 0L, new PhotoViewer.EmptyPhotoViewerProvider());
         } else {
             PhotoViewer.getInstance().openPhoto(mo, 0, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
@@ -442,33 +444,43 @@ public class PotokFeedPostCell extends LinearLayout {
 
             if (isVideo && media instanceof TLRPC.TL_messageMediaDocument
                     && media.document != null) {
-                // Quality thumb — заставляет ImageReceiver сгенерировать чёткий кадр из видео
-                // Именно так работает ChatMessageCell для превью видео в канале
                 img.getImageReceiver().setNeedsQualityThumb(true);
                 img.getImageReceiver().setShouldGenerateQualityThumb(true);
 
-                // Берём photoThumbs через стандартный механизм MessageObject
+                // video_thumbs — это motion thumbnail (короткий видеоклип-превью).
+                // ImageReceiver умеет его воспроизводить и он чёткий.
+                TLRPC.VideoSize videoThumb = MessageObject.getDocumentVideoThumb(media.document);
+
+                // Статичный thumbnail для плейсхолдера пока грузится motion thumb
                 ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;
-                TLRPC.PhotoSize photoSize = sizes != null
-                    ? FileLoader.getClosestPhotoSizeWithSize(sizes, AndroidUtilities.getPhotoSize())
-                    : null;
-                TLRPC.PhotoSize thumbSize = sizes != null
-                    ? FileLoader.getClosestPhotoSizeWithSize(sizes, 40)
-                    : null;
+                TLRPC.PhotoSize photoSize = null;
+                TLRPC.PhotoSize thumbSize = null;
+                if (sizes != null && !sizes.isEmpty()) {
+                    for (TLRPC.PhotoSize s : sizes) {
+                        if (!(s instanceof TLRPC.TL_photoStrippedSize) && !(s instanceof TLRPC.TL_photoPathSize)) {
+                            if (photoSize == null || s.w > photoSize.w) photoSize = s;
+                        }
+                        if (s instanceof TLRPC.TL_photoStrippedSize) thumbSize = s;
+                    }
+                    if (photoSize == null) photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
+                }
 
                 int screenW = AndroidUtilities.displaySize.x;
                 String filter = screenW + "_" + screenW;
 
-                if (thumbSize != null) {
+                if (videoThumb != null) {
+                    // motion thumbnail — чёткое видео-превью как в канале
+                    img.setImage(
+                        ImageLocation.getForDocument(videoThumb, media.document), filter,
+                        ImageLocation.getForObject(photoSize, mo.photoThumbsObject), filter,
+                        ImageLocation.getForObject(thumbSize, mo.photoThumbsObject), "b1",
+                        null, 0, 0, mo
+                    );
+                } else {
+                    // Fallback: статичный thumbnail
                     img.setImage(
                         ImageLocation.getForObject(photoSize, mo.photoThumbsObject), filter,
                         ImageLocation.getForObject(thumbSize, mo.photoThumbsObject), "b1",
-                        null, mo
-                    );
-                } else {
-                    img.setImage(
-                        ImageLocation.getForObject(photoSize, mo.photoThumbsObject), filter,
-                        null, null,
                         null, mo
                     );
                 }

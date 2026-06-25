@@ -24,7 +24,6 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.FileLoader;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.LocaleController;
-import org.telegram.messenger.MediaController;
 import org.telegram.messenger.MessageObject;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.Theme;
@@ -191,11 +190,8 @@ public class PotokFeedPostCell extends LinearLayout {
         audioContainer = new FrameLayout(context);
         addView(audioContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 8, 10, 8, 0));
         audioCell = new SharedAudioCell(context, resourcesProvider);
-        audioCell.setOnClickListener(v -> {
-            if (currentMessage != null) {
-                MediaController.getInstance().playMessage(currentMessage);
-            }
-        });
+        // SharedAudioCell воспроизводит сам через onTouchEvent → didPressedButton()
+        // Не нужен setOnClickListener — он только мешает
 
         // --- Футер ---
         LinearLayout footer = new LinearLayout(context);
@@ -387,7 +383,17 @@ public class PotokFeedPostCell extends LinearLayout {
     private void openMediaViewer(MessageObject mo, int index, ArrayList<MessageObject> all) {
         if (mo == null || parentActivity == null) return;
         PhotoViewer.getInstance().setParentActivity(parentActivity);
-        // Видео открываем напрямую — PhotoViewer не воспроизводит видео через openPhoto(ArrayList)
+
+        // === DEBUG ===
+        android.util.Log.d("FEED_MEDIA", "openMediaViewer: id=" + mo.getId()
+            + " isVideo=" + mo.isVideo()
+            + " isRoundVideo=" + mo.isRoundVideo()
+            + " type=" + mo.type
+            + " media=" + (mo.messageOwner != null && mo.messageOwner.media != null ? mo.messageOwner.media.getClass().getSimpleName() : "null")
+            + " index=" + index
+            + " allSize=" + (all != null ? all.size() : 0));
+        // === END DEBUG ===
+
         if (mo.isVideo()) {
             PhotoViewer.getInstance().openPhoto(mo, 0, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
         } else if (all != null && all.size() > 1) {

@@ -499,7 +499,7 @@ public class PotokFeedPostCell extends LinearLayout {
                         ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER_NONLOOP,
                         ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
                         ImageLocation.getForObject(currentPhotoObjectThumb, document), currentPhotoFilterThumb,
-                        strippedThumb, document.size, null, mo, 0
+                        strippedThumb, document.size, (String) null, mo, 0
                     );
                 } else if (currentPhotoObjectThumb != null || strippedThumb != null) {
                     // 10-param: mediaLocation, mediaFilter, imageLocation, imageFilter, thumbLocation, thumbFilter, ext, size, cacheType, parentObject

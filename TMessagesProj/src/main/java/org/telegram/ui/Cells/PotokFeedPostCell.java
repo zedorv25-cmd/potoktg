@@ -373,6 +373,13 @@ public class PotokFeedPostCell extends LinearLayout {
             for (TLRPC.DocumentAttribute attr : media.document.attributes) {
                 if (attr instanceof TLRPC.TL_documentAttributeVideo) { w = attr.w; h = attr.h; break; }
             }
+            // Если у видео нет атрибута с размерами (или они нулевые) — берём размер
+            // из миниатюры самого документа (document.thumbs), а не photoThumbs:
+            // photoThumbs относится к фото-сообщениям и у видео почти всегда пуст.
+            if (w <= 0 || h <= 0) {
+                TLRPC.PhotoSize ps = FileLoader.getClosestPhotoSizeWithSize(media.document.thumbs, 1280, false, null, true);
+                if (ps != null) { w = ps.w; h = ps.h; }
+            }
         }
         if (w == 0 && mo.photoThumbs != null) {
             TLRPC.PhotoSize ps = FileLoader.getClosestPhotoSizeWithSize(mo.photoThumbs, 1280, false, null, true);
@@ -389,11 +396,13 @@ public class PotokFeedPostCell extends LinearLayout {
         if (mo == null || parentActivity == null) return;
         PhotoViewer.getInstance().setParentActivity(parentActivity);
         long dialogId = mo.getDialogId();
-        if (mo.isVideo()) {
-            PhotoViewer.getInstance().openPhoto(mo, dialogId, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
-        } else if (all != null && all.size() > 1) {
+        if (all != null && all.size() > 1) {
+            // Группа из нескольких медиа (альбом) — открываем со списком и индексом,
+            // независимо от того видео это или фото, чтобы PhotoViewer мог свайпать
+            // между элементами и правильно инициализировать видеоплеер в контексте группы.
             PhotoViewer.getInstance().openPhoto(all, index, dialogId, 0L, 0L, new PhotoViewer.EmptyPhotoViewerProvider());
         } else {
+            // Одиночное медиа — старая логика подходит, отдельный путь для видео не нужен
             PhotoViewer.getInstance().openPhoto(mo, dialogId, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
         }
     }
@@ -445,21 +454,15 @@ public class PotokFeedPostCell extends LinearLayout {
 
             if (isVideo && media instanceof TLRPC.TL_messageMediaDocument
                     && media.document != null) {
-                img.getImageReceiver().setNeedsQualityThumb(true);
-                img.getImageReceiver().setShouldGenerateQualityThumb(true);
-
-                // Точный паттерн ChatMessageCell для видео:
-                // currentPhotoObject из document.thumbs, photoParentObject = document
                 TLRPC.Document document = media.document;
+
                 TLRPC.PhotoSize currentPhotoObject = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, AndroidUtilities.getPhotoSize());
                 TLRPC.PhotoSize currentPhotoObjectThumb = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, 40);
                 if (currentPhotoObject == currentPhotoObjectThumb) currentPhotoObjectThumb = null;
 
-                // Если stripped — используем strippedThumb из MessageObject
                 BitmapDrawable strippedThumb = mo.strippedThumb;
                 if (strippedThumb != null) currentPhotoObjectThumb = null;
 
-                // Если w/h нулевые или stripped — берём из TL_documentAttributeVideo
                 if (currentPhotoObject != null && (currentPhotoObject.w == 0 || currentPhotoObject.h == 0
                         || currentPhotoObject instanceof TLRPC.TL_photoStrippedSize)) {
                     for (TLRPC.DocumentAttribute attr : document.attributes) {
@@ -477,14 +480,28 @@ public class PotokFeedPostCell extends LinearLayout {
                     }
                 }
 
-                // Фильтр по реальному размеру
                 int pw = currentPhotoObject != null ? currentPhotoObject.w : AndroidUtilities.displaySize.x;
                 int ph = currentPhotoObject != null ? currentPhotoObject.h : AndroidUtilities.displaySize.x;
                 String currentPhotoFilter = pw + "_" + ph;
                 String currentPhotoFilterThumb = currentPhotoObjectThumb != null
                     ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h + "_b" : "b1";
 
-                if (currentPhotoObjectThumb != null || strippedThumb != null) {
+                // Точный паттерн ChatMessageCell (DOCUMENT_ATTACH_TYPE_VIDEO, автоплей-ветка):
+                // mediaLocation = сам видеодокумент → ImageReceiver декодирует реальный кадр
+                // через стриминг (canStreamVideo), а не довольствуется маленьким серверным
+                // thumbnail — отсюда чёткость, как в самом чате. currentPhotoObject остаётся
+                // как thumb на время, пока кадр из видео не декодирован.
+                boolean canDecodeFromVideo = !mo.isRepostPreview && mo.canStreamVideo();
+                if (canDecodeFromVideo) {
+                    img.getImageReceiver().setAllowDecodeSingleFrame(true);
+                    img.getImageReceiver().setAllowStartAnimation(false);
+                    img.setImage(
+                        ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER_NONLOOP,
+                        ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
+                        ImageLocation.getForObject(currentPhotoObjectThumb, document), currentPhotoFilterThumb,
+                        strippedThumb, document.size, null, mo, 0
+                    );
+                } else if (currentPhotoObjectThumb != null || strippedThumb != null) {
                     // 10-param: mediaLocation, mediaFilter, imageLocation, imageFilter, thumbLocation, thumbFilter, ext, size, cacheType, parentObject
                     img.setImage(
                         ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,

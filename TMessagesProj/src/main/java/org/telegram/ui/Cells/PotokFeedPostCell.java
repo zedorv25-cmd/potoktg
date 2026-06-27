@@ -34,6 +34,12 @@ import org.telegram.ui.Components.AvatarDrawable;
 import org.telegram.ui.Components.BackupImageView;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.PhotoViewer;
+import org.telegram.ui.DialogsActivity;
+import org.telegram.ui.ActionBar.ActionBarPopupWindow;
+import org.telegram.ui.ActionBar.ActionBarMenuSubItem;
+import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Components.TranslateAlert2;
+import org.telegram.ui.ReportBottomSheet;
 
 import java.util.ArrayList;
 
@@ -75,6 +81,17 @@ public class PotokFeedPostCell extends LinearLayout {
     private android.app.Activity parentActivity;
     private TLRPC.Chat currentChannel;
     private TextView menuButton;
+    private org.telegram.ui.ActionBar.BaseFragment parentFragment;
+
+    public void setParentFragment(org.telegram.ui.ActionBar.BaseFragment fragment) {
+        parentFragment = fragment;
+    }
+
+    // Temporary holder for forward
+    private static class PotokForwardHolder {
+        static MessageObject message;
+        static boolean noAuthor;
+    }
 
     public void setParentActivity(android.app.Activity activity) {
         parentActivity = activity;
@@ -206,17 +223,9 @@ public class PotokFeedPostCell extends LinearLayout {
         addView(audioContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 8, 10, 8, 0));
         audioCell = new SharedAudioCell(context, resourcesProvider);
         // Без этого listener needPlayMessage() возвращает false и воспроизведение не запускается
-        audioCell.setNeedPlayMessageListener(messageObject -> {
-            android.util.Log.d("POTOK_AUDIO", "needPlayMessageListener: messageObject=" + messageObject
-                + " isMusic=" + (messageObject != null && messageObject.isMusic())
-                + " isVoice=" + (messageObject != null && messageObject.isVoice())
-                + " canStream=" + (messageObject != null && messageObject.canStreamVideo())
-                + " attachPathExists=" + (messageObject != null && messageObject.attachPathExists)
-                + " mediaExists=" + (messageObject != null && messageObject.mediaExists));
-            boolean result = MediaController.getInstance().playMessage(messageObject);
-            android.util.Log.d("POTOK_AUDIO", "playMessage result=" + result);
-            return result;
-        });
+        audioCell.setCheckForButtonPress(true);
+        audioCell.setNeedPlayMessageListener(messageObject ->
+            MediaController.getInstance().playMessage(messageObject));
 
         // --- Футер ---
         LinearLayout footer = new LinearLayout(context);
@@ -243,6 +252,13 @@ public class PotokFeedPostCell extends LinearLayout {
         View divider = new View(context);
         divider.setBackgroundColor(Theme.getColor(Theme.key_graySection, resourcesProvider));
         addView(divider, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 8));
+
+        // Долгое нажатие по карточке -> открыть пост в канале
+        setLongClickable(true);
+        setOnLongClickListener(v -> {
+            openPostInChannel();
+            return true;
+        });
     }
 
     // ------------------------------------------------------------------ setPost
@@ -428,52 +444,184 @@ public class PotokFeedPostCell extends LinearLayout {
         }
     }
 
+    private ActionBarPopupWindow postMenuWindow;
+
+    private void openPostInChannel() {
+        if (currentMessage == null || currentChannel == null) return;
+        String username = currentChannel.username;
+        if (username == null || username.isEmpty()) return;
+        int msgId = currentMessage.getId();
+        try {
+            android.content.Intent intent = new android.content.Intent(
+                android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse("https://t.me/" + username + "/" + msgId));
+            getContext().startActivity(intent);
+        } catch (Exception e) {
+            android.widget.Toast.makeText(getContext(), "Не удалось открыть", android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void showPostMenu(View anchor) {
-        if (getContext() == null || currentMessage == null) return;
-        android.widget.PopupMenu popup = new android.widget.PopupMenu(getContext(), anchor);
-        popup.getMenu().add(0, 1, 0, "Открыть в канале");
-        popup.getMenu().add(0, 2, 0, "Скопировать ссылку");
-        popup.getMenu().add(0, 3, 0, "Поделиться");
-        popup.setOnMenuItemClickListener(item -> {
-            if (currentMessage == null) return false;
-            String username = currentChannel != null ? currentChannel.username : null;
-            int msgId = currentMessage.getId();
-            switch (item.getItemId()) {
-                case 1: // Открыть в канале
-                    if (username != null) {
-                        try {
-                            android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse("https://t.me/" + username + "/" + msgId));
-                            getContext().startActivity(intent);
-                        } catch (Exception e) {
-                            android.widget.Toast.makeText(getContext(), "Не удалось открыть", android.widget.Toast.LENGTH_SHORT).show();
-                        }
-                    }
-                    return true;
-                case 2: // Скопировать ссылку
-                    if (username != null) {
-                        android.content.ClipboardManager cm = (android.content.ClipboardManager)
-                            getContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
-                        if (cm != null) {
-                            cm.setPrimaryClip(android.content.ClipData.newPlainText("link",
-                                "https://t.me/" + username + "/" + msgId));
-                            android.widget.Toast.makeText(getContext(), "Ссылка скопирована", android.widget.Toast.LENGTH_SHORT).show();
-                        }
-                    }
-                    return true;
-                case 3: // Поделиться
-                    if (username != null) {
-                        android.content.Intent shareIntent = new android.content.Intent(android.content.Intent.ACTION_SEND);
-                        shareIntent.setType("text/plain");
-                        shareIntent.putExtra(android.content.Intent.EXTRA_TEXT,
-                            "https://t.me/" + username + "/" + msgId);
-                        getContext().startActivity(android.content.Intent.createChooser(shareIntent, "Поделиться"));
-                    }
-                    return true;
-            }
-            return false;
+        if (getContext() == null || currentMessage == null || parentActivity == null) return;
+        if (postMenuWindow != null) {
+            postMenuWindow.dismiss();
+            postMenuWindow = null;
+        }
+
+        String username = currentChannel != null ? currentChannel.username : null;
+        int msgId = currentMessage.getId();
+        String postUrl = (username != null) ? "https://t.me/" + username + "/" + msgId : null;
+        CharSequence msgText = currentMessage.messageText;
+        if (android.text.TextUtils.isEmpty(msgText)) msgText = currentMessage.caption;
+
+        ActionBarPopupWindow.ActionBarPopupWindowLayout layout =
+            new ActionBarPopupWindow.ActionBarPopupWindowLayout(getContext(), org.telegram.messenger.R.drawable.popup_fixed_alert4, null);
+        layout.setMinimumWidth(AndroidUtilities.dp(200));
+        layout.setBackgroundColor(Theme.getColor(Theme.key_actionBarDefaultSubmenuBackground));
+
+        int idx = 0;
+
+        // Копировать текст
+        if (!android.text.TextUtils.isEmpty(msgText)) {
+            final CharSequence finalText = msgText;
+            ActionBarMenuSubItem copyText = new ActionBarMenuSubItem(getContext(), idx == 0, false, null);
+            copyText.setMinimumWidth(AndroidUtilities.dp(200));
+            copyText.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.Copy), org.telegram.messenger.R.drawable.msg_copy);
+            layout.addView(copyText);
+            copyText.setOnClickListener(v -> {
+                AndroidUtilities.addToClipboard(finalText);
+                android.widget.Toast.makeText(getContext(), org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.TextCopied), android.widget.Toast.LENGTH_SHORT).show();
+                if (postMenuWindow != null) postMenuWindow.dismiss();
+            });
+            idx++;
+        }
+
+        // Скопировать ссылку
+        if (postUrl != null) {
+            final String finalUrl = postUrl;
+            ActionBarMenuSubItem copyLink = new ActionBarMenuSubItem(getContext(), idx == 0, false, null);
+            copyLink.setMinimumWidth(AndroidUtilities.dp(200));
+            copyLink.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.CopyLink), org.telegram.messenger.R.drawable.msg_link);
+            layout.addView(copyLink);
+            copyLink.setOnClickListener(v -> {
+                AndroidUtilities.addToClipboard(finalUrl);
+                android.widget.Toast.makeText(getContext(), org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.LinkCopied), android.widget.Toast.LENGTH_SHORT).show();
+                if (postMenuWindow != null) postMenuWindow.dismiss();
+            });
+            idx++;
+        }
+
+        // Переслать
+        layout.addView(new ActionBarPopupWindow.GapView(getContext(), null), LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 8));
+        ActionBarMenuSubItem forward = new ActionBarMenuSubItem(getContext(), true, false, null);
+        forward.setMinimumWidth(AndroidUtilities.dp(200));
+        forward.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.Forward), org.telegram.messenger.R.drawable.msg_forward);
+        layout.addView(forward);
+        forward.setOnClickListener(v -> {
+            if (postMenuWindow != null) postMenuWindow.dismiss();
+            openForwardDialog(false);
         });
-        popup.show();
+
+        // Переслать без автора
+        ActionBarMenuSubItem forwardNoAuthor = new ActionBarMenuSubItem(getContext(), false, false, null);
+        forwardNoAuthor.setMinimumWidth(AndroidUtilities.dp(200));
+        forwardNoAuthor.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.ForwardNoAuthor), org.telegram.messenger.R.drawable.msg_forward_noquote);
+        layout.addView(forwardNoAuthor);
+        forwardNoAuthor.setOnClickListener(v -> {
+            if (postMenuWindow != null) postMenuWindow.dismiss();
+            openForwardDialog(true);
+        });
+
+        // Перевести
+        layout.addView(new ActionBarPopupWindow.GapView(getContext(), null), LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 8));
+        ActionBarMenuSubItem translate = new ActionBarMenuSubItem(getContext(), true, false, null);
+        translate.setMinimumWidth(AndroidUtilities.dp(200));
+        translate.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.TranslateMessage), org.telegram.messenger.R.drawable.msg_translate);
+        layout.addView(translate);
+        final CharSequence finalMsgText = msgText;
+        translate.setOnClickListener(v -> {
+            if (postMenuWindow != null) postMenuWindow.dismiss();
+            if (parentActivity != null && !android.text.TextUtils.isEmpty(finalMsgText)) {
+                String toLang = TranslateAlert2.getToLanguage();
+                TranslateAlert2.showAlert(parentActivity, null,
+                    org.telegram.messenger.UserConfig.selectedAccount,
+                    null, toLang, finalMsgText, null, false, null, null);
+            }
+        });
+
+        // Сохранить в избранное
+        ActionBarMenuSubItem saveFav = new ActionBarMenuSubItem(getContext(), false, false, null);
+        saveFav.setMinimumWidth(AndroidUtilities.dp(200));
+        saveFav.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.AddToFavorites), org.telegram.messenger.R.drawable.msg_saved);
+        layout.addView(saveFav);
+        saveFav.setOnClickListener(v -> {
+            if (postMenuWindow != null) postMenuWindow.dismiss();
+            // Пересылаем в Избранное (Saved Messages)
+            long selfId = org.telegram.messenger.UserConfig.getInstance(org.telegram.messenger.UserConfig.selectedAccount).getClientUserId();
+            ArrayList<MessageObject> msgs = new ArrayList<>();
+            if (currentMessages != null) msgs.addAll(currentMessages); else msgs.add(currentMessage);
+            org.telegram.messenger.SendMessagesHelper.getInstance(org.telegram.messenger.UserConfig.selectedAccount)
+                .sendMessage(msgs, selfId, false, false, true, 0, 0);
+            android.widget.Toast.makeText(getContext(), org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.MessageSavedToFavorites), android.widget.Toast.LENGTH_SHORT).show();
+        });
+
+        // Пожаловаться
+        layout.addView(new ActionBarPopupWindow.GapView(getContext(), null), LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 8));
+        ActionBarMenuSubItem report = new ActionBarMenuSubItem(getContext(), true, true, null);
+        report.setMinimumWidth(AndroidUtilities.dp(200));
+        report.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.ReportChat), org.telegram.messenger.R.drawable.msg_report);
+        report.setColors(Theme.getColor(Theme.key_text_RedRegular), Theme.getColor(Theme.key_text_RedRegular));
+        layout.addView(report);
+        report.setOnClickListener(v -> {
+            if (postMenuWindow != null) postMenuWindow.dismiss();
+            if (parentFragment != null) {
+                ReportBottomSheet.openMessage(parentFragment, currentMessage);
+            }
+        });
+
+        postMenuWindow = new ActionBarPopupWindow(layout, LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT);
+        postMenuWindow.setFocusable(true);
+        postMenuWindow.setOutsideTouchable(true);
+        postMenuWindow.setClippingEnabled(true);
+        postMenuWindow.setAnimationStyle(org.telegram.messenger.R.style.PopupAnimation);
+        postMenuWindow.setOnDismissListener(() -> postMenuWindow = null);
+
+        layout.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED),
+            android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED)
+        );
+
+        int[] location = new int[2];
+        anchor.getLocationInWindow(location);
+        int x = location[0] + anchor.getWidth() - layout.getMeasuredWidth();
+        int y = location[1] + anchor.getHeight();
+        postMenuWindow.showAtLocation(anchor, android.view.Gravity.LEFT | android.view.Gravity.TOP, x, y);
+        ActionBarPopupWindow.startAnimation(layout);
+    }
+
+    private void openForwardDialog(boolean noAuthor) {
+        if (currentMessage == null || parentActivity == null) return;
+        android.os.Bundle args = new android.os.Bundle();
+        args.putBoolean("onlySelect", true);
+        args.putInt("dialogsType", DialogsActivity.DIALOGS_TYPE_FORWARD);
+        args.putInt("messagesCount", 1);
+        args.putBoolean("canSelectTopics", true);
+        // Store message for forward; use intent or static holder
+        PotokForwardHolder.message = currentMessage;
+        PotokForwardHolder.noAuthor = noAuthor;
+        DialogsActivity fragment = new DialogsActivity(args);
+        fragment.setDelegate((fragment1, dids, message2, notify, scheduleDate, topicsId, forceDocument, notifyNewThread, quick) -> {
+            if (dids.isEmpty()) return;
+            long targetId = dids.get(0);
+            ArrayList<MessageObject> msgs = new ArrayList<>();
+            if (currentMessages != null) msgs.addAll(currentMessages); else msgs.add(currentMessage);
+            org.telegram.messenger.SendMessagesHelper.getInstance(org.telegram.messenger.UserConfig.selectedAccount)
+                .sendMessage(msgs, targetId, noAuthor, false, true, 0, 0);
+            fragment1.finishFragment();
+        });
+        if (parentFragment != null) {
+            parentFragment.presentFragment(fragment);
+        }
     }
 
     private TLRPC.ReactionCount getTopReaction(MessageObject messageObject) {

@@ -21,20 +21,13 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 /**
- * Лента — этап 1 + 2 (тестовый режим, несколько каналов).
- * Показывает посты из списка TEST_CHANNEL_USERNAMES, смешанные и отсортированные по дате.
- * Каждый канал резолвится и грузится независимо (параллельно), результат объединяется
- * по готовности всех каналов.
+ * Лента — показывает посты из всех каналов на которые подписан пользователь,
+ * смешанные и отсортированные по дате (свежие сверху).
  */
 public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate {
 
-    private static final String[] TEST_CHANNEL_USERNAMES = {
-        "komissariatforsvoix",
-        "news_unitedm",
-        "daysmad"
-    };
-    private static final int MESSAGES_TO_LOAD_PER_CHANNEL = 60;
-    private static final int MAX_POSTS_PER_CHANNEL = 15;
+    private static final int MESSAGES_TO_LOAD_PER_CHANNEL = 30;
+    private static final int MAX_POSTS_PER_CHANNEL = 10;
 
     private RecyclerListView listView;
     private MainTabsActivityController mainTabsActivityController;
@@ -43,7 +36,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private final java.util.Map<String, TLRPC.Chat> resolvedChannels = new java.util.HashMap<>();
     // username -> посты этого канала, уже собранные в FeedItem (альбомы объединены)
     private final java.util.Map<String, ArrayList<FeedItem>> channelItems = new java.util.HashMap<>();
-    private final java.util.Set<String> resolveInFlight = new java.util.HashSet<>();
     private final java.util.Set<String> historyInFlight = new java.util.HashSet<>();
 
     private static class FeedItem {
@@ -100,45 +92,37 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     }
 
     private void loadFeed() {
-        for (String username : TEST_CHANNEL_USERNAMES) {
-            TLRPC.Chat channel = resolvedChannels.get(username);
-            if (channel != null) {
-                loadHistory(username, channel);
-            } else {
-                resolveChannel(username);
+        // Берём все диалоги пользователя и фильтруем: только каналы (не группы, не боты)
+        ArrayList<TLRPC.Dialog> dialogs = getMessagesController().getAllDialogs();
+        ArrayList<TLRPC.Chat> channels = new ArrayList<>();
+        for (TLRPC.Dialog dialog : dialogs) {
+            if (!(dialog instanceof TLRPC.TL_dialog)) continue;
+            long did = dialog.id;
+            if (did >= 0) continue; // не чат/канал
+            TLRPC.Chat chat = getMessagesController().getChat(-did);
+            if (chat == null) continue;
+            // Канал (broadcast), не мегагруппа и не деактивирован
+            if (chat.broadcast && !chat.megagroup && !chat.deactivated && !chat.left && !chat.kicked) {
+                channels.add(chat);
             }
+        }
+        if (channels.isEmpty()) {
+            // Диалоги ещё не загружены — ждём и пробуем снова
+            AndroidUtilities.runOnUIThread(this::loadFeed, 1500);
+            return;
+        }
+        for (TLRPC.Chat channel : channels) {
+            String key = String.valueOf(channel.id);
+            resolvedChannels.put(key, channel);
+            loadHistory(key, channel);
         }
     }
 
-    private void resolveChannel(String username) {
-        if (resolveInFlight.contains(username)) {
+    private void loadHistory(String key, TLRPC.Chat channel) {
+        if (historyInFlight.contains(key)) {
             return;
         }
-        resolveInFlight.add(username);
-
-        TLRPC.TL_contacts_resolveUsername req = new TLRPC.TL_contacts_resolveUsername();
-        req.username = username;
-        getConnectionsManager().sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
-            resolveInFlight.remove(username);
-            if (error != null || !(response instanceof TLRPC.TL_contacts_resolvedPeer)) {
-                return;
-            }
-            TLRPC.TL_contacts_resolvedPeer resolvedPeer = (TLRPC.TL_contacts_resolvedPeer) response;
-            if (resolvedPeer.chats.isEmpty()) {
-                return;
-            }
-            TLRPC.Chat channel = resolvedPeer.chats.get(0);
-            resolvedChannels.put(username, channel);
-            getMessagesController().putChat(channel, false);
-            loadHistory(username, channel);
-        }));
-    }
-
-    private void loadHistory(String username, TLRPC.Chat channel) {
-        if (historyInFlight.contains(username)) {
-            return;
-        }
-        historyInFlight.add(username);
+        historyInFlight.add(key);
 
         long dialogId = -channel.id;
         TLRPC.TL_messages_getHistory req = new TLRPC.TL_messages_getHistory();
@@ -152,7 +136,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         req.hash = 0;
 
         getConnectionsManager().sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
-            historyInFlight.remove(username);
+            historyInFlight.remove(key);
             if (error != null || !(response instanceof TLRPC.messages_Messages)) {
                 return;
             }
@@ -164,7 +148,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             for (TLRPC.Message message : res.messages) {
                 messageObjects.add(new MessageObject(currentAccount, message, true, true));
             }
-            channelItems.put(username, buildChannelItems(messageObjects, channel));
+            channelItems.put(key, buildChannelItems(messageObjects, channel));
             rebuildAndShowAllItems();
         }));
     }

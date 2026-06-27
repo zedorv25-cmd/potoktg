@@ -1,15 +1,20 @@
 package org.telegram.ui;
 
 import android.content.Context;
+import android.graphics.drawable.GradientDrawable;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.MessageObject;
+import org.telegram.messenger.NotificationCenter;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.BaseFragment;
+import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.PotokFeedPostCell;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
@@ -24,12 +29,13 @@ import androidx.recyclerview.widget.RecyclerView;
  * Лента — показывает посты из всех каналов на которые подписан пользователь,
  * смешанные и отсортированные по дате (свежие сверху).
  */
-public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate {
+public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate, NotificationCenter.NotificationCenterDelegate {
 
     private static final int MESSAGES_TO_LOAD_PER_CHANNEL = 30;
     private static final int MAX_POSTS_PER_CHANNEL = 10;
 
     private RecyclerListView listView;
+    private FrameLayout scrollToTopButton;
     private MainTabsActivityController mainTabsActivityController;
     private final ArrayList<FeedItem> items = new ArrayList<>();
     // username -> уже резолвленный канал (или null, если ещё не резолвлен)
@@ -82,6 +88,45 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             }
         });
         frameLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        // --- Кнопка "наверх" ---
+        scrollToTopButton = new FrameLayout(context);
+        GradientDrawable circleBg = new GradientDrawable();
+        circleBg.setShape(GradientDrawable.OVAL);
+        circleBg.setColor(Theme.getColor(Theme.key_dialogFloatingButton));
+        scrollToTopButton.setBackground(circleBg);
+        scrollToTopButton.setElevation(AndroidUtilities.dp(4));
+        scrollToTopButton.setVisibility(View.GONE);
+        scrollToTopButton.setAlpha(0f);
+
+        ImageView arrowUp = new ImageView(context);
+        arrowUp.setImageResource(android.R.drawable.arrow_up_float);
+        arrowUp.setColorFilter(Theme.getColor(Theme.key_dialogFloatingIcon));
+        scrollToTopButton.addView(arrowUp, LayoutHelper.createFrame(24, 24, Gravity.CENTER));
+
+        scrollToTopButton.setOnClickListener(v -> {
+            if (listView != null) {
+                listView.smoothScrollToPosition(0);
+            }
+        });
+
+        frameLayout.addView(scrollToTopButton, LayoutHelper.createFrame(48, 48, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 16, 56 + 16));
+
+        listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(RecyclerView rv, int dx, int dy) {
+                LinearLayoutManager lm = (LinearLayoutManager) rv.getLayoutManager();
+                if (lm == null) return;
+                boolean shouldShow = lm.findFirstVisibleItemPosition() > 1;
+                if (shouldShow && scrollToTopButton.getVisibility() != View.VISIBLE) {
+                    scrollToTopButton.setVisibility(View.VISIBLE);
+                    scrollToTopButton.animate().alpha(1f).setDuration(150).start();
+                } else if (!shouldShow && scrollToTopButton.getVisibility() == View.VISIBLE) {
+                    scrollToTopButton.animate().alpha(0f).setDuration(150)
+                        .withEndAction(() -> scrollToTopButton.setVisibility(View.GONE)).start();
+                }
+            }
+        });
 
         if (mainTabsActivityController != null) {
             listView.addOnScrollListener(new TabBarScrollHider(mainTabsActivityController));
@@ -221,6 +266,33 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     @Override
     public boolean canParentTabsSlide(MotionEvent ev, boolean forward) {
         return true;
+    }
+
+    @Override
+    public boolean onFragmentCreate() {
+        getNotificationCenter().addObserver(this, NotificationCenter.messagePlayingProgressDidChanged);
+        return super.onFragmentCreate();
+    }
+
+    @Override
+    public void onFragmentDestroy() {
+        getNotificationCenter().removeObserver(this, NotificationCenter.messagePlayingProgressDidChanged);
+        super.onFragmentDestroy();
+    }
+
+    @Override
+    public void didReceivedNotification(int id, int account, Object... args) {
+        if (id == NotificationCenter.messagePlayingProgressDidChanged) {
+            if (listView == null) return;
+            int mid = (Integer) args[0];
+            int count = listView.getChildCount();
+            for (int a = 0; a < count; a++) {
+                View child = listView.getChildAt(a);
+                if (child instanceof PotokFeedPostCell) {
+                    ((PotokFeedPostCell) child).updateAudioProgressIfPlaying(mid);
+                }
+            }
+        }
     }
 
     @Override

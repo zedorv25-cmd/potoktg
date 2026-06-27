@@ -33,11 +33,12 @@ import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.AvatarDrawable;
 import org.telegram.ui.Components.BackupImageView;
 import org.telegram.ui.Components.LayoutHelper;
+import org.telegram.ui.Components.SeekBar;
 import org.telegram.ui.PhotoViewer;
+import org.telegram.ui.ChatActivity;
 import org.telegram.ui.DialogsActivity;
 import org.telegram.ui.ActionBar.ActionBarPopupWindow;
 import org.telegram.ui.ActionBar.ActionBarMenuSubItem;
-import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.TranslateAlert2;
 import org.telegram.ui.ReportBottomSheet;
 
@@ -70,6 +71,9 @@ public class PotokFeedPostCell extends LinearLayout {
     // --- Аудио ---
     private final SharedAudioCell audioCell;
     private final FrameLayout audioContainer;
+    private final AudioSeekBarView audioSeekBarView;
+    private final TextView audioTimeView;
+    private final LinearLayout audioSeekRow;
 
     // --- Футер ---
     private final ImageView viewsIcon;
@@ -227,6 +231,24 @@ public class PotokFeedPostCell extends LinearLayout {
         audioCell.setNeedPlayMessageListener(messageObject ->
             MediaController.getInstance().playMessage(messageObject));
 
+        // Ползунок прогресса воспроизведения — SharedAudioCell сам по себе его не рисует
+        // (это просто строка play/pause + длительность), поэтому добавляем отдельным View
+        // под ним, по тому же паттерну, что и ChatMessageCell (SeekBar + NotificationCenter
+        // messagePlayingProgressDidChanged для обновления, см. setAudioMessageObjectForSeek).
+        audioSeekBarView = new AudioSeekBarView(context, resourcesProvider);
+        audioTimeView = new TextView(context);
+        audioTimeView.setTextSize(12);
+        audioTimeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
+
+        LinearLayout audioSeekRow = new LinearLayout(context);
+        audioSeekRow.setOrientation(HORIZONTAL);
+        audioSeekRow.setGravity(Gravity.CENTER_VERTICAL);
+        audioSeekRow.setVisibility(GONE);
+        addView(audioSeekRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 16, 0, 8, 0));
+        audioSeekRow.addView(audioSeekBarView, LayoutHelper.createLinear(0, 24, 1f));
+        audioSeekRow.addView(audioTimeView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL, 8, 0, 0, 0));
+        this.audioSeekRow = audioSeekRow;
+
         // --- Футер ---
         LinearLayout footer = new LinearLayout(context);
         footer.setOrientation(HORIZONTAL);
@@ -339,9 +361,14 @@ public class PotokFeedPostCell extends LinearLayout {
             }
             audioContainer.setVisibility(VISIBLE);
             audioCell.setMessageObject(messageObject, false);
+            audioSeekRow.setVisibility(VISIBLE);
+            audioSeekBarView.setMessageObject(messageObject);
+            updateAudioTimeText(messageObject);
         } else if (!mediaMessages.isEmpty()) {
             if (audioCell.getParent() != null) audioContainer.removeView(audioCell);
             audioContainer.setVisibility(GONE);
+            audioSeekRow.setVisibility(GONE);
+            audioSeekBarView.setMessageObject(null);
 
             // Вычисляем высоту по первому медиа
             MessageObject firstMedia = mediaMessages.get(0);
@@ -374,6 +401,8 @@ public class PotokFeedPostCell extends LinearLayout {
             hideCarousel();
             if (audioCell.getParent() != null) audioContainer.removeView(audioCell);
             audioContainer.setVisibility(GONE);
+            audioSeekRow.setVisibility(GONE);
+            audioSeekBarView.setMessageObject(null);
         }
 
         // Футер
@@ -396,6 +425,31 @@ public class PotokFeedPostCell extends LinearLayout {
     private void hideCarousel() {
         carouselView.setVisibility(GONE);
         dotsIndicator.setVisibility(GONE);
+    }
+
+    private void updateAudioTimeText(MessageObject mo) {
+        int durationSec = (int) mo.getDuration();
+        int playedSec = MediaController.getInstance().isPlayingMessage(mo)
+            ? mo.audioProgressSec : (int) (mo.audioProgress * durationSec);
+        audioTimeView.setText(AndroidUtilities.formatShortDuration(playedSec, durationSec));
+    }
+
+    /**
+     * Вызывается извне (PotokFeedFragment) по NotificationCenter.messagePlayingProgressDidChanged,
+     * когда играющее сейчас сообщение совпадает с тем, что показано в этой карточке.
+     * Без этого вызова ползунок и время не двигались бы во время воспроизведения —
+     * SeekBar обновляется только когда ему явно передают новый progress.
+     */
+    public void updateAudioProgressIfPlaying(int messageId) {
+        if (currentMessage == null || currentMessage.getId() != messageId) return;
+        if (audioContainer.getVisibility() != VISIBLE) return;
+        MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
+        if (playing == null) return;
+        currentMessage.audioProgress = playing.audioProgress;
+        currentMessage.audioProgressSec = playing.audioProgressSec;
+        currentMessage.bufferedProgress = playing.bufferedProgress;
+        audioSeekBarView.updateProgress();
+        updateAudioTimeText(currentMessage);
     }
 
     // ------------------------------------------------------------------ helpers
@@ -447,18 +501,11 @@ public class PotokFeedPostCell extends LinearLayout {
     private ActionBarPopupWindow postMenuWindow;
 
     private void openPostInChannel() {
-        if (currentMessage == null || currentChannel == null) return;
-        String username = currentChannel.username;
-        if (username == null || username.isEmpty()) return;
-        int msgId = currentMessage.getId();
-        try {
-            android.content.Intent intent = new android.content.Intent(
-                android.content.Intent.ACTION_VIEW,
-                android.net.Uri.parse("https://t.me/" + username + "/" + msgId));
-            getContext().startActivity(intent);
-        } catch (Exception e) {
-            android.widget.Toast.makeText(getContext(), "Не удалось открыть", android.widget.Toast.LENGTH_SHORT).show();
-        }
+        if (currentMessage == null || currentChannel == null || parentFragment == null) return;
+        android.os.Bundle args = new android.os.Bundle();
+        args.putLong("chat_id", currentChannel.id);
+        args.putInt("message_id", currentMessage.getId());
+        parentFragment.presentFragment(new ChatActivity(args));
     }
 
     private void showPostMenu(View anchor) {
@@ -651,24 +698,43 @@ public class PotokFeedPostCell extends LinearLayout {
 
         @Override
         public MediaHolder onCreateViewHolder(ViewGroup parent, int viewType) {
-            BackupImageView img = new BackupImageView(parent.getContext());
-            img.setRoundRadius(dp(8));
-            // Каждый слайд занимает полную ширину карусели
-            RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(
+            FrameLayout wrapper = new FrameLayout(parent.getContext());
+            RecyclerView.LayoutParams wrapperLp = new RecyclerView.LayoutParams(
                 RecyclerView.LayoutParams.MATCH_PARENT,
                 RecyclerView.LayoutParams.MATCH_PARENT
             );
-            img.setLayoutParams(lp);
-            return new MediaHolder(img);
+            wrapper.setLayoutParams(wrapperLp);
+
+            BackupImageView img = new BackupImageView(parent.getContext());
+            img.setRoundRadius(dp(8));
+            wrapper.addView(img, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+            // Значок play поверх превью — единственный способ в Ленте отличить видео
+            // от фото на глаз, так как сама карусель показывает только статичный кадр.
+            ImageView playOverlay = new ImageView(parent.getContext());
+            playOverlay.setVisibility(GONE);
+            android.graphics.drawable.GradientDrawable circleBg = new android.graphics.drawable.GradientDrawable();
+            circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+            circleBg.setColor(0x66000000);
+            playOverlay.setBackground(circleBg);
+            playOverlay.setImageResource(org.telegram.messenger.R.drawable.play_mini_video);
+            playOverlay.setScaleType(ImageView.ScaleType.CENTER);
+            playOverlay.setScaleX(1.8f);
+            playOverlay.setScaleY(1.8f);
+            playOverlay.setPadding(dp(4), dp(4), dp(4), dp(4));
+            wrapper.addView(playOverlay, LayoutHelper.createFrame(48, 48, Gravity.CENTER));
+
+            return new MediaHolder(wrapper, img, playOverlay);
         }
 
         @Override
         public void onBindViewHolder(MediaHolder holder, int position) {
             MessageObject mo = items.get(position);
-            BackupImageView img = (BackupImageView) holder.itemView;
+            BackupImageView img = holder.img;
 
             TLRPC.MessageMedia media = mo.messageOwner != null ? mo.messageOwner.media : null;
             boolean isVideo = mo.isVideo();
+            holder.playOverlay.setVisibility(isVideo ? VISIBLE : GONE);
 
             if (isVideo && media instanceof TLRPC.TL_messageMediaDocument
                     && media.document != null) {
@@ -755,7 +821,85 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override public int getItemCount() { return items.size(); }
 
         class MediaHolder extends RecyclerView.ViewHolder {
-            MediaHolder(View v) { super(v); }
+            final BackupImageView img;
+            final ImageView playOverlay;
+            MediaHolder(View wrapper, BackupImageView img, ImageView playOverlay) {
+                super(wrapper);
+                this.img = img;
+                this.playOverlay = playOverlay;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ AudioSeekBarView
+
+    /**
+     * Обёртка-View вокруг компонента SeekBar (org.telegram.ui.Components.SeekBar).
+     * SeekBar сам по себе не является View — он рисует себя и обрабатывает touch
+     * через переданный родительский View, ровно как это сделано в ChatMessageCell.
+     */
+    private static class AudioSeekBarView extends View implements SeekBar.SeekBarDelegate {
+        private final SeekBar seekBar;
+        private MessageObject messageObject;
+
+        AudioSeekBarView(Context context, Theme.ResourcesProvider rp) {
+            super(context);
+            seekBar = new SeekBar(this);
+            seekBar.setDelegate(this);
+            seekBar.setColors(
+                Theme.getColor(Theme.key_chat_inAudioSeekbar, rp),
+                Theme.getColor(Theme.key_chat_inAudioCacheSeekbar, rp),
+                Theme.getColor(Theme.key_chat_inAudioSeekbarFill, rp),
+                Theme.getColor(Theme.key_chat_inAudioSeekbarFill, rp),
+                Theme.getColor(Theme.key_chat_inAudioSeekbarSelected, rp)
+            );
+        }
+
+        void setMessageObject(MessageObject mo) {
+            messageObject = mo;
+            seekBar.setProgress(mo != null ? mo.audioProgress : 0f);
+            invalidate();
+        }
+
+        void updateProgress() {
+            if (messageObject == null || seekBar.isDragging()) return;
+            seekBar.setProgress(messageObject.audioProgress);
+            seekBar.setBufferedProgress(messageObject.bufferedProgress);
+            invalidate();
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            seekBar.setSize(w, h);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            seekBar.draw(canvas);
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            boolean result = seekBar.onTouch(event.getAction(), event.getX(), event.getY());
+            if (result) invalidate();
+            return result || super.onTouchEvent(event);
+        }
+
+        @Override
+        public void onSeekBarDrag(float progress) {
+            if (messageObject == null) return;
+            messageObject.audioProgress = progress;
+            MediaController.getInstance().seekToProgress(messageObject, progress);
+            invalidate();
+        }
+
+        @Override
+        public void onSeekBarContinuousDrag(float progress) {
+            if (messageObject == null) return;
+            messageObject.audioProgress = progress;
+            messageObject.audioProgressSec = (int) (messageObject.getDuration() * progress);
+            invalidate();
         }
     }
 

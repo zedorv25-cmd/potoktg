@@ -2,11 +2,13 @@ package org.telegram.ui;
 
 import android.content.Context;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.MessageObject;
@@ -99,9 +101,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         scrollToTopButton.setVisibility(View.GONE);
         scrollToTopButton.setAlpha(0f);
 
-        ImageView arrowUp = new ImageView(context);
-        arrowUp.setImageResource(android.R.drawable.arrow_up_float);
-        arrowUp.setColorFilter(Theme.getColor(Theme.key_dialogFloatingIcon));
+        // Векторная стрелка-шеврон + стержень — рисуется через Path, поэтому одинаково
+        // чёткая на любом dpi (системный android.R.drawable.arrow_up_float — низкого
+        // разрешения и визуально выглядит как треугольник, а не как стрелка).
+        ArrowUpView arrowUp = new ArrowUpView(context);
+        arrowUp.setColor(Theme.getColor(Theme.key_dialogFloatingIcon));
         scrollToTopButton.addView(arrowUp, LayoutHelper.createFrame(24, 24, Gravity.CENTER));
 
         scrollToTopButton.setOnClickListener(v -> {
@@ -110,7 +114,15 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             }
         });
 
-        frameLayout.addView(scrollToTopButton, LayoutHelper.createFrame(48, 48, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 16, 56 + 16));
+        // Отступ снизу должен учитывать реальную высоту плавающего таббара
+        // (DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS = 56 + 8*2 = 72dp, не 56dp)
+        // и системный navigationBarHeight (жестовая панель/кнопки) — без него
+        // кнопка уходит под таббар на части устройств, см. AndroidUtilities.navigationBarHeight.
+        int scrollButtonBottomMarginPx = AndroidUtilities.navigationBarHeight
+            + AndroidUtilities.dp(DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS)
+            + AndroidUtilities.dp(16);
+        int scrollButtonBottomMarginDp = (int) (scrollButtonBottomMarginPx / AndroidUtilities.density);
+        frameLayout.addView(scrollToTopButton, LayoutHelper.createFrame(48, 48, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 16, scrollButtonBottomMarginDp));
 
         listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
@@ -299,5 +311,54 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     public void onResume() {
         super.onResume();
         loadFeed();
+    }
+
+    /**
+     * Чёткая на любом dpi стрелка "вверх": стержень + шеврон (галочка), отрисованные
+     * через Path с круглыми соединениями — визуально аккуратнее системной
+     * android.R.drawable.arrow_up_float, которая на деле выглядит как треугольник.
+     */
+    private static class ArrowUpView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+
+        ArrowUpView(Context context) {
+            super(context);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(AndroidUtilities.dp(2));
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeJoin(Paint.Join.ROUND);
+        }
+
+        void setColor(int color) {
+            paint.setColor(color);
+            invalidate();
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            path.reset();
+            float cx = w / 2f;
+            float top = h * 0.16f;
+            float bottom = h * 0.82f;
+            float chevronHalfWidth = w * 0.30f;
+            float chevronTop = top;
+            float chevronBottom = top + (bottom - top) * 0.46f;
+
+            // Стержень стрелки
+            path.moveTo(cx, chevronBottom - AndroidUtilities.dp(1));
+            path.lineTo(cx, bottom);
+
+            // Шеврон (галочка) поверх стержня
+            path.moveTo(cx - chevronHalfWidth, chevronBottom);
+            path.lineTo(cx, chevronTop);
+            path.lineTo(cx + chevronHalfWidth, chevronBottom);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            canvas.drawPath(path, paint);
+        }
     }
 }

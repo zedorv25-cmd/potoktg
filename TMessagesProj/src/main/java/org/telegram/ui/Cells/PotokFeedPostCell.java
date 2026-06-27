@@ -307,13 +307,7 @@ public class PotokFeedPostCell extends LinearLayout {
         timeView.setText(LocaleController.formatDate(messageObject.messageOwner.date));
 
         // Текст / caption
-        CharSequence caption = null;
-        for (MessageObject mo : messages) {
-            if (!TextUtils.isEmpty(mo.caption)) { caption = mo.caption; break; }
-        }
-        if (TextUtils.isEmpty(caption) && messages.size() == 1 && messageObject.type == MessageObject.TYPE_TEXT) {
-            caption = messageObject.messageText;
-        }
+        CharSequence caption = findPostCaption(messages, messageObject);
         if (TextUtils.isEmpty(caption)) {
             textView.setVisibility(GONE);
             expandButton.setVisibility(GONE);
@@ -427,6 +421,28 @@ public class PotokFeedPostCell extends LinearLayout {
         dotsIndicator.setVisibility(GONE);
     }
 
+    /**
+     * Реальный текст поста: сначала ищем caption среди всех сообщений альбома
+     * (caption у альбома хранится только на одном из сообщений группы, обычно
+     * первом с непустой подписью), и только если это одиночное текстовое
+     * сообщение без медиа — берём messageText. Этот метод — единая точка входа
+     * для текста поста, используется и в setPost (отображение), и в showPostMenu
+     * (копирование), чтобы они не могли разойтись.
+     *
+     * Раньше "Копировать" в меню брал currentMessage.messageText напрямую: для
+     * первого сообщения альбома без своего caption это служебная строка вида
+     * "Альбом" (так Telegram обозначает медиагруппу в списках), а не реальный текст.
+     */
+    private CharSequence findPostCaption(ArrayList<MessageObject> messages, MessageObject firstMessage) {
+        for (MessageObject mo : messages) {
+            if (!TextUtils.isEmpty(mo.caption)) return mo.caption;
+        }
+        if (messages.size() == 1 && firstMessage.type == MessageObject.TYPE_TEXT) {
+            return firstMessage.messageText;
+        }
+        return null;
+    }
+
     private void updateAudioTimeText(MessageObject mo) {
         int durationSec = (int) mo.getDuration();
         int playedSec = MediaController.getInstance().isPlayingMessage(mo)
@@ -518,8 +534,8 @@ public class PotokFeedPostCell extends LinearLayout {
         String username = currentChannel != null ? currentChannel.username : null;
         int msgId = currentMessage.getId();
         String postUrl = (username != null) ? "https://t.me/" + username + "/" + msgId : null;
-        CharSequence msgText = currentMessage.messageText;
-        if (android.text.TextUtils.isEmpty(msgText)) msgText = currentMessage.caption;
+        ArrayList<MessageObject> groupMessages = currentMessages != null ? currentMessages : new ArrayList<>(java.util.Collections.singletonList(currentMessage));
+        CharSequence msgText = findPostCaption(groupMessages, currentMessage);
 
         ActionBarPopupWindow.ActionBarPopupWindowLayout layout =
             new ActionBarPopupWindow.ActionBarPopupWindowLayout(getContext(), org.telegram.messenger.R.drawable.popup_fixed_alert4, null);
@@ -554,6 +570,34 @@ public class PotokFeedPostCell extends LinearLayout {
                 AndroidUtilities.addToClipboard(finalUrl);
                 android.widget.Toast.makeText(getContext(), org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.LinkCopied), android.widget.Toast.LENGTH_SHORT).show();
                 if (postMenuWindow != null) postMenuWindow.dismiss();
+            });
+            idx++;
+        }
+
+        // Скачать медиа (фото/видео/аудио поста)
+        ArrayList<MessageObject> mediaToSave = new ArrayList<>();
+        for (MessageObject mo : groupMessages) {
+            boolean hasMedia = mo.isVoice() || mo.isMusic() || mo.isVideo()
+                || (mo.photoThumbs != null && !mo.photoThumbs.isEmpty());
+            if (hasMedia) mediaToSave.add(mo);
+        }
+        if (!mediaToSave.isEmpty() && parentFragment != null) {
+            boolean isMusicOnly = mediaToSave.size() == 1 && mediaToSave.get(0).isMusic();
+            ActionBarMenuSubItem downloadMedia = new ActionBarMenuSubItem(getContext(), idx == 0, false, null);
+            downloadMedia.setMinimumWidth(AndroidUtilities.dp(200));
+            downloadMedia.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.SaveToGallery), org.telegram.messenger.R.drawable.msg_gallery);
+            layout.addView(downloadMedia);
+            downloadMedia.setOnClickListener(v -> {
+                if (postMenuWindow != null) postMenuWindow.dismiss();
+                MediaController.saveFilesFromMessages(parentActivity, parentFragment.getAccountInstance(), mediaToSave, count -> {
+                    if (count > 0 && parentActivity != null && parentFragment != null) {
+                        org.telegram.ui.Components.BulletinFactory.of(parentFragment)
+                            .createDownloadBulletin(isMusicOnly
+                                ? org.telegram.ui.Components.BulletinFactory.FileType.AUDIOS
+                                : org.telegram.ui.Components.BulletinFactory.FileType.UNKNOWNS, count, null)
+                            .show();
+                    }
+                });
             });
             idx++;
         }
@@ -711,18 +755,19 @@ public class PotokFeedPostCell extends LinearLayout {
 
             // Значок play поверх превью — единственный способ в Ленте отличить видео
             // от фото на глаз, так как сама карусель показывает только статичный кадр.
+            // Размер и положение — как в оригинальном превью видео в самом Telegram
+            // (компактный кружок в левом верхнем углу), а не крупный треугольник
+            // на весь центр слайда.
             ImageView playOverlay = new ImageView(parent.getContext());
             playOverlay.setVisibility(GONE);
             android.graphics.drawable.GradientDrawable circleBg = new android.graphics.drawable.GradientDrawable();
             circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-            circleBg.setColor(0x66000000);
+            circleBg.setColor(0x4D000000);
             playOverlay.setBackground(circleBg);
             playOverlay.setImageResource(org.telegram.messenger.R.drawable.play_mini_video);
             playOverlay.setScaleType(ImageView.ScaleType.CENTER);
-            playOverlay.setScaleX(1.8f);
-            playOverlay.setScaleY(1.8f);
-            playOverlay.setPadding(dp(4), dp(4), dp(4), dp(4));
-            wrapper.addView(playOverlay, LayoutHelper.createFrame(48, 48, Gravity.CENTER));
+            playOverlay.setPadding(dp(2), dp(2), dp(2), dp(2));
+            wrapper.addView(playOverlay, LayoutHelper.createFrame(28, 28, Gravity.TOP | Gravity.START, 8, 8, 0, 0));
 
             return new MediaHolder(wrapper, img, playOverlay);
         }

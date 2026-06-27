@@ -525,7 +525,7 @@ public class PotokFeedPostCell extends LinearLayout {
         // Переслать без автора
         ActionBarMenuSubItem forwardNoAuthor = new ActionBarMenuSubItem(getContext(), false, false, null);
         forwardNoAuthor.setMinimumWidth(AndroidUtilities.dp(200));
-        forwardNoAuthor.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.ForwardNoAuthor), org.telegram.messenger.R.drawable.msg_forward_noquote);
+        forwardNoAuthor.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.HideSendersName), org.telegram.messenger.R.drawable.msg_forward_replace);
         layout.addView(forwardNoAuthor);
         forwardNoAuthor.setOnClickListener(v -> {
             if (postMenuWindow != null) postMenuWindow.dismiss();
@@ -562,7 +562,7 @@ public class PotokFeedPostCell extends LinearLayout {
             if (currentMessages != null) msgs.addAll(currentMessages); else msgs.add(currentMessage);
             org.telegram.messenger.SendMessagesHelper.getInstance(org.telegram.messenger.UserConfig.selectedAccount)
                 .sendMessage(msgs, selfId, false, false, true, 0, 0);
-            android.widget.Toast.makeText(getContext(), org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.MessageSavedToFavorites), android.widget.Toast.LENGTH_SHORT).show();
+            android.widget.Toast.makeText(getContext(), org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.FwdMessageToSavedMessages), android.widget.Toast.LENGTH_SHORT).show();
         });
 
         // Пожаловаться
@@ -610,14 +610,15 @@ public class PotokFeedPostCell extends LinearLayout {
         PotokForwardHolder.message = currentMessage;
         PotokForwardHolder.noAuthor = noAuthor;
         DialogsActivity fragment = new DialogsActivity(args);
-        fragment.setDelegate((fragment1, dids, message2, notify, scheduleDate, topicsId, forceDocument, notifyNewThread, quick) -> {
-            if (dids.isEmpty()) return;
-            long targetId = dids.get(0);
+        fragment.setDelegate((fragment1, dids, message2, param, notify, scheduleDate, scheduleRepeatPeriod, topicsFragment) -> {
+            if (dids == null || dids.isEmpty()) return false;
+            long targetId = dids.get(0).dialogId;
             ArrayList<MessageObject> msgs = new ArrayList<>();
             if (currentMessages != null) msgs.addAll(currentMessages); else msgs.add(currentMessage);
             org.telegram.messenger.SendMessagesHelper.getInstance(org.telegram.messenger.UserConfig.selectedAccount)
                 .sendMessage(msgs, targetId, noAuthor, false, true, 0, 0);
             fragment1.finishFragment();
+            return true;
         });
         if (parentFragment != null) {
             parentFragment.presentFragment(fragment);

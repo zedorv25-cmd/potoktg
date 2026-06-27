@@ -195,8 +195,15 @@ public class PotokFeedPostCell extends LinearLayout {
         audioCell = new SharedAudioCell(context, resourcesProvider);
         // Без этого listener needPlayMessage() возвращает false и воспроизведение не запускается
         audioCell.setNeedPlayMessageListener(messageObject -> {
-            MediaController.getInstance().setPlaylist(null, messageObject, 0);
-            return MediaController.getInstance().playMessage(messageObject);
+            android.util.Log.d("POTOK_AUDIO", "needPlayMessageListener: messageObject=" + messageObject
+                + " isMusic=" + (messageObject != null && messageObject.isMusic())
+                + " isVoice=" + (messageObject != null && messageObject.isVoice())
+                + " canStream=" + (messageObject != null && messageObject.canStreamVideo())
+                + " attachPathExists=" + (messageObject != null && messageObject.attachPathExists)
+                + " mediaExists=" + (messageObject != null && messageObject.mediaExists));
+            boolean result = MediaController.getInstance().playMessage(messageObject);
+            android.util.Log.d("POTOK_AUDIO", "playMessage result=" + result);
+            return result;
         });
 
         // --- Футер ---

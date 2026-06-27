@@ -66,6 +66,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 PotokFeedPostCell cell = new PotokFeedPostCell(context, null);
                 cell.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
                 cell.setParentActivity(getParentActivity());
+                cell.setParentFragment(PotokFeedFragment.this);
                 return new RecyclerListView.Holder(cell);
             }
 

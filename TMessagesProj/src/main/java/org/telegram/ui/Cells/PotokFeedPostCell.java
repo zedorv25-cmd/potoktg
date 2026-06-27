@@ -73,6 +73,8 @@ public class PotokFeedPostCell extends LinearLayout {
     private MessageObject currentMessage;
     private ArrayList<MessageObject> currentMessages;
     private android.app.Activity parentActivity;
+    private TLRPC.Chat currentChannel;
+    private TextView menuButton;
 
     public void setParentActivity(android.app.Activity activity) {
         parentActivity = activity;
@@ -109,6 +111,16 @@ public class PotokFeedPostCell extends LinearLayout {
         timeView.setTextSize(13);
         timeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
         titleColumn.addView(timeView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+
+        // --- Кнопка меню "⋮" ---
+        menuButton = new TextView(context);
+        menuButton.setText("⋮");
+        menuButton.setTextSize(20);
+        menuButton.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
+        menuButton.setGravity(Gravity.CENTER);
+        menuButton.setPadding(dp(8), 0, dp(4), 0);
+        menuButton.setOnClickListener(v -> showPostMenu(v));
+        headerRow.addView(menuButton, LayoutHelper.createLinear(32, 36, Gravity.CENTER_VERTICAL));
 
         // --- Текст ---
         textView = new TextView(context);
@@ -238,6 +250,7 @@ public class PotokFeedPostCell extends LinearLayout {
     public void setPost(ArrayList<MessageObject> messages, TLRPC.Chat channel) {
         if (messages == null || messages.isEmpty()) return;
         currentMessages = messages;
+        currentChannel = channel;
         MessageObject messageObject = messages.get(0);
         currentMessage = messageObject;
 
@@ -305,11 +318,11 @@ public class PotokFeedPostCell extends LinearLayout {
 
         if (isVoiceOrMusic) {
             hideCarousel();
-            audioCell.setMessageObject(messageObject, false);
             if (audioCell.getParent() == null) {
                 audioContainer.addView(audioCell, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
             }
             audioContainer.setVisibility(VISIBLE);
+            audioCell.setMessageObject(messageObject, false);
         } else if (!mediaMessages.isEmpty()) {
             if (audioCell.getParent() != null) audioContainer.removeView(audioCell);
             audioContainer.setVisibility(GONE);
@@ -413,6 +426,54 @@ public class PotokFeedPostCell extends LinearLayout {
             // Одиночное медиа — старая логика подходит, отдельный путь для видео не нужен
             PhotoViewer.getInstance().openPhoto(mo, dialogId, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
         }
+    }
+
+    private void showPostMenu(View anchor) {
+        if (getContext() == null || currentMessage == null) return;
+        android.widget.PopupMenu popup = new android.widget.PopupMenu(getContext(), anchor);
+        popup.getMenu().add(0, 1, 0, "Открыть в канале");
+        popup.getMenu().add(0, 2, 0, "Скопировать ссылку");
+        popup.getMenu().add(0, 3, 0, "Поделиться");
+        popup.setOnMenuItemClickListener(item -> {
+            if (currentMessage == null) return false;
+            String username = currentChannel != null ? currentChannel.username : null;
+            int msgId = currentMessage.getId();
+            switch (item.getItemId()) {
+                case 1: // Открыть в канале
+                    if (username != null) {
+                        try {
+                            android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://t.me/" + username + "/" + msgId));
+                            getContext().startActivity(intent);
+                        } catch (Exception e) {
+                            android.widget.Toast.makeText(getContext(), "Не удалось открыть", android.widget.Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    return true;
+                case 2: // Скопировать ссылку
+                    if (username != null) {
+                        android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                            getContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                        if (cm != null) {
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("link",
+                                "https://t.me/" + username + "/" + msgId));
+                            android.widget.Toast.makeText(getContext(), "Ссылка скопирована", android.widget.Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    return true;
+                case 3: // Поделиться
+                    if (username != null) {
+                        android.content.Intent shareIntent = new android.content.Intent(android.content.Intent.ACTION_SEND);
+                        shareIntent.setType("text/plain");
+                        shareIntent.putExtra(android.content.Intent.EXTRA_TEXT,
+                            "https://t.me/" + username + "/" + msgId);
+                        getContext().startActivity(android.content.Intent.createChooser(shareIntent, "Поделиться"));
+                    }
+                    return true;
+            }
+            return false;
+        });
+        popup.show();
     }
 
     private TLRPC.ReactionCount getTopReaction(MessageObject messageObject) {

@@ -24,6 +24,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.FileLoader;
+import org.telegram.messenger.FileLog;
 import org.telegram.messenger.MediaController;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.LocaleController;
@@ -79,6 +80,8 @@ public class PotokFeedPostCell extends LinearLayout {
     private final ImageView viewsIcon;
     private final TextView viewsView;
     private final TextView reactionView;
+    private final LinearLayout commentsRow;
+    private final TextView commentsView;
 
     private MessageObject currentMessage;
     private ArrayList<MessageObject> currentMessages;
@@ -228,8 +231,16 @@ public class PotokFeedPostCell extends LinearLayout {
         audioCell = new SharedAudioCell(context, resourcesProvider);
         // Без этого listener needPlayMessage() возвращает false и воспроизведение не запускается
         audioCell.setCheckForButtonPress(true);
-        audioCell.setNeedPlayMessageListener(messageObject ->
-            MediaController.getInstance().playMessage(messageObject));
+        audioCell.setNeedPlayMessageListener(messageObject -> {
+            boolean started = MediaController.getInstance().playMessage(messageObject);
+            // Показываем ползунок сразу в момент запуска, не дожидаясь первого тика
+            // messagePlayingProgressDidChanged — иначе на долю секунды видно
+            // play-кнопку без сикбара под ней.
+            if (started && currentMessage == messageObject) {
+                updateAudioSeekVisibility(messageObject);
+            }
+            return started;
+        });
 
         // Ползунок прогресса воспроизведения — SharedAudioCell сам по себе его не рисует
         // (это просто строка play/pause + длительность), поэтому добавляем отдельным View
@@ -269,6 +280,28 @@ public class PotokFeedPostCell extends LinearLayout {
         reactionView.setTextSize(13);
         reactionView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
         footer.addView(reactionView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL));
+
+        // --- Комментарии ---
+        // Видна только если у поста есть привязанная группа обсуждений
+        // (messageOwner.replies.comments == true — то же поле, по которому
+        // ChatMessageCell решает, рисовать ли кнопку комментариев в обычном чате).
+        commentsRow = new LinearLayout(context);
+        commentsRow.setOrientation(HORIZONTAL);
+        commentsRow.setGravity(Gravity.CENTER_VERTICAL);
+        commentsRow.setVisibility(GONE);
+        footer.addView(commentsRow, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL, 16, 0, 0, 0));
+
+        ImageView commentsIcon = new ImageView(context);
+        commentsIcon.setImageResource(org.telegram.messenger.R.drawable.msg_discussion);
+        commentsIcon.setColorFilter(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider));
+        commentsRow.addView(commentsIcon, LayoutHelper.createLinear(16, 16, 0, Gravity.CENTER_VERTICAL, 0, 0, 4, 0));
+
+        commentsView = new TextView(context);
+        commentsView.setTextSize(13);
+        commentsView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider));
+        commentsRow.addView(commentsView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL));
+
+        commentsRow.setOnClickListener(v -> openComments());
 
         // --- Разделитель ---
         View divider = new View(context);
@@ -355,9 +388,12 @@ public class PotokFeedPostCell extends LinearLayout {
             }
             audioContainer.setVisibility(VISIBLE);
             audioCell.setMessageObject(messageObject, false);
-            audioSeekRow.setVisibility(VISIBLE);
+            // Раньше audioSeekRow показывался безусловно при каждом setPost — то есть
+            // ползунок был виден даже для аудио, которое никто не запускал. Теперь
+            // видимость зависит от того, реально ли это сообщение сейчас в плеере
+            // (играет или на паузе) — см. updateAudioSeekVisibility().
             audioSeekBarView.setMessageObject(messageObject);
-            updateAudioTimeText(messageObject);
+            updateAudioSeekVisibility(messageObject);
         } else if (!mediaMessages.isEmpty()) {
             if (audioCell.getParent() != null) audioContainer.removeView(audioCell);
             audioContainer.setVisibility(GONE);
@@ -414,11 +450,81 @@ public class PotokFeedPostCell extends LinearLayout {
         } else {
             reactionView.setVisibility(GONE);
         }
+
+        // Комментарии — та же проверка, что ChatMessageCell использует для своей
+        // кнопки комментариев в обычном чате: replies.comments означает, что
+        // у этого конкретного поста есть привязанное обсуждение (не у каждого
+        // поста канала оно обязательно есть, даже если у канала в целом
+        // подключена группа обсуждений).
+        TLRPC.MessageReplies replies = messageObject.messageOwner != null ? messageObject.messageOwner.replies : null;
+        if (replies != null && replies.comments) {
+            commentsView.setText(replies.replies > 0
+                ? LocaleController.formatPluralString("CommentsCount", replies.replies)
+                : LocaleController.getString(org.telegram.messenger.R.string.LeaveAComment));
+            commentsRow.setVisibility(VISIBLE);
+        } else {
+            commentsRow.setVisibility(GONE);
+        }
     }
 
-    private void hideCarousel() {
-        carouselView.setVisibility(GONE);
-        dotsIndicator.setVisibility(GONE);
+    /**
+     * Открыть тред комментариев поста — переиспользует тот же TL-запрос и тот же
+     * публичный ChatActivity.setThreadMessages(...), которыми ChatActivity открывает
+     * обсуждение по нажатию кнопки комментариев в обычном чате (см.
+     * ChatActivity.openDiscussionMessageChat / processLoadedDiscussionMessage).
+     * Упрощено: без хореографии загрузки-индикаторов самого ChatActivity (она
+     * привязана к его внутренним полям типа commentLoadingMessageId/chatListView,
+     * которые не имеют смысла здесь) — ChatActivity сам подгрузит остальную
+     * историю комментариев своим обычным механизмом при открытии.
+     */
+    private void openComments() {
+        if (currentMessage == null || currentChannel == null || parentFragment == null) return;
+        TLRPC.MessageReplies replies = currentMessage.messageOwner != null ? currentMessage.messageOwner.replies : null;
+        if (replies == null || !replies.comments) return;
+
+        final int originalMsgId = currentMessage.getId();
+        final TLRPC.Chat originalChat = currentChannel;
+        final int maxReadId = replies.read_max_id;
+
+        TLRPC.TL_messages_getDiscussionMessage req = new TLRPC.TL_messages_getDiscussionMessage();
+        req.peer = org.telegram.messenger.MessagesController.getInputPeer(originalChat);
+        req.msg_id = originalMsgId;
+
+        org.telegram.messenger.MessagesController controller = parentFragment.getMessagesController();
+        parentFragment.getConnectionsManager().sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
+            if (parentFragment == null || parentFragment.getParentActivity() == null) return;
+            if (!(response instanceof TLRPC.TL_messages_discussionMessage)) {
+                FileLog.e("PotokFeedPostCell: getDiscussionMessage failed, error=" + (error != null ? error.text : "null response"));
+                return;
+            }
+            TLRPC.TL_messages_discussionMessage discussionMessage = (TLRPC.TL_messages_discussionMessage) response;
+            controller.putUsers(discussionMessage.users, false);
+            controller.putChats(discussionMessage.chats, false);
+
+            ArrayList<MessageObject> threadMessages = new ArrayList<>();
+            for (TLRPC.Message message : discussionMessage.messages) {
+                if (message instanceof TLRPC.TL_messageEmpty) continue;
+                message.isThreadMessage = true;
+                threadMessages.add(new MessageObject(org.telegram.messenger.UserConfig.selectedAccount, message, true, true));
+            }
+            if (threadMessages.isEmpty()) {
+                if (parentFragment.getParentActivity() != null) {
+                    org.telegram.ui.Components.BulletinFactory.of(parentFragment)
+                        .createErrorBulletin(LocaleController.getString(org.telegram.messenger.R.string.ChannelPostDeleted))
+                        .show();
+                }
+                return;
+            }
+
+            long dialogId = threadMessages.get(0).getDialogId();
+            android.os.Bundle args = new android.os.Bundle();
+            args.putLong("chat_id", -dialogId);
+            args.putInt("message_id", Math.max(1, discussionMessage.read_inbox_max_id));
+            args.putInt("unread_count", discussionMessage.unread_count);
+            ChatActivity chatActivity = new ChatActivity(args);
+            chatActivity.setThreadMessages(threadMessages, originalChat, originalMsgId, discussionMessage.read_inbox_max_id, discussionMessage.read_outbox_max_id, null);
+            parentFragment.presentFragment(chatActivity);
+        }));
     }
 
     /**
@@ -443,6 +549,22 @@ public class PotokFeedPostCell extends LinearLayout {
         return null;
     }
 
+    /**
+     * Ползунок прогресса должен быть виден только когда ЭТО аудио реально
+     * выбрано текущим плеером (играет или стоит на паузе) — isPlayingMessage
+     * остаётся true и на паузе, что нам и нужно: пользователь поставил
+     * на паузу, но прогресс должен остаться виден, а не исчезнуть.
+     * Если плеер не трогали или играет другой трек — сикбара не должно быть,
+     * только строка play/pause из SharedAudioCell.
+     */
+    private void updateAudioSeekVisibility(MessageObject mo) {
+        boolean shouldShow = mo != null && MediaController.getInstance().isPlayingMessage(mo);
+        audioSeekRow.setVisibility(shouldShow ? VISIBLE : GONE);
+        if (shouldShow) {
+            updateAudioTimeText(mo);
+        }
+    }
+
     private void updateAudioTimeText(MessageObject mo) {
         int durationSec = (int) mo.getDuration();
         int playedSec = MediaController.getInstance().isPlayingMessage(mo)
@@ -464,6 +586,9 @@ public class PotokFeedPostCell extends LinearLayout {
         currentMessage.audioProgress = playing.audioProgress;
         currentMessage.audioProgressSec = playing.audioProgressSec;
         currentMessage.bufferedProgress = playing.bufferedProgress;
+        if (audioSeekRow.getVisibility() != VISIBLE) {
+            updateAudioSeekVisibility(currentMessage);
+        }
         audioSeekBarView.updateProgress();
         updateAudioTimeText(currentMessage);
     }
@@ -582,22 +707,48 @@ public class PotokFeedPostCell extends LinearLayout {
             if (hasMedia) mediaToSave.add(mo);
         }
         if (!mediaToSave.isEmpty() && parentFragment != null) {
-            boolean isMusicOnly = mediaToSave.size() == 1 && mediaToSave.get(0).isMusic();
+            // Раньше кнопка всегда была "Сохранить в галерею" с иконкой галереи —
+            // для чисто аудио-поста это и звучало, и выглядело неуместно (видна
+            // была "кнопка для фото-видео"). Теперь текст/иконка зависят от
+            // реального типа: музыка -> "Сохранить в музыку", остальное -> галерея.
+            boolean isMusicOnly = true;
+            for (MessageObject mo : mediaToSave) {
+                if (!mo.isMusic() && !mo.isVoice()) { isMusicOnly = false; break; }
+            }
+            final boolean finalIsMusicOnly = isMusicOnly;
             ActionBarMenuSubItem downloadMedia = new ActionBarMenuSubItem(getContext(), idx == 0, false, null);
             downloadMedia.setMinimumWidth(AndroidUtilities.dp(200));
-            downloadMedia.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.SaveToGallery), org.telegram.messenger.R.drawable.msg_gallery);
+            downloadMedia.setTextAndIcon(
+                org.telegram.messenger.LocaleController.getString(finalIsMusicOnly
+                    ? org.telegram.messenger.R.string.SaveToMusic
+                    : org.telegram.messenger.R.string.SaveToGallery),
+                finalIsMusicOnly ? org.telegram.messenger.R.drawable.msg_download : org.telegram.messenger.R.drawable.msg_gallery
+            );
             layout.addView(downloadMedia);
             downloadMedia.setOnClickListener(v -> {
                 if (postMenuWindow != null) postMenuWindow.dismiss();
-                MediaController.saveFilesFromMessages(parentActivity, parentFragment.getAccountInstance(), mediaToSave, count -> {
-                    if (count > 0 && parentActivity != null && parentFragment != null) {
-                        org.telegram.ui.Components.BulletinFactory.of(parentFragment)
-                            .createDownloadBulletin(isMusicOnly
-                                ? org.telegram.ui.Components.BulletinFactory.FileType.AUDIOS
-                                : org.telegram.ui.Components.BulletinFactory.FileType.UNKNOWNS, count, null)
-                            .show();
-                    }
-                });
+                if (parentActivity == null) {
+                    // saveFilesFromMessages требует Context для прогресс-диалога —
+                    // без него MediaLoader падает с NPE внутри фонового потока,
+                    // что выглядит как "молча не скачалось".
+                    FileLog.e("PotokFeedPostCell: cannot save media, parentActivity is null");
+                    return;
+                }
+                try {
+                    MediaController.saveFilesFromMessages(parentActivity, parentFragment.getAccountInstance(), mediaToSave, count -> {
+                        if (count > 0 && parentActivity != null && parentFragment != null) {
+                            org.telegram.ui.Components.BulletinFactory.of(parentFragment)
+                                .createDownloadBulletin(finalIsMusicOnly
+                                    ? org.telegram.ui.Components.BulletinFactory.FileType.AUDIOS
+                                    : org.telegram.ui.Components.BulletinFactory.FileType.UNKNOWNS, count, null)
+                                .show();
+                        } else {
+                            FileLog.e("PotokFeedPostCell: saveFilesFromMessages finished with count=" + count);
+                        }
+                    });
+                } catch (Exception e) {
+                    FileLog.e("PotokFeedPostCell: saveFilesFromMessages threw", e);
+                }
             });
             idx++;
         }
@@ -755,19 +906,20 @@ public class PotokFeedPostCell extends LinearLayout {
 
             // Значок play поверх превью — единственный способ в Ленте отличить видео
             // от фото на глаз, так как сама карусель показывает только статичный кадр.
-            // Размер и положение — как в оригинальном превью видео в самом Telegram
-            // (компактный кружок в левом верхнем углу), а не крупный треугольник
-            // на весь центр слайда.
-            ImageView playOverlay = new ImageView(parent.getContext());
+            // По центру, компактный, векторный (PlayTriangleView рисует треугольник
+            // через Path) — растровый play_mini_video всего 24x30px даже в xxhdpi,
+            // поэтому при увеличении выглядит мутным; свой Path даёт чёткость на
+            // любом размере и densities.
+            FrameLayout playOverlay = new FrameLayout(parent.getContext());
             playOverlay.setVisibility(GONE);
             android.graphics.drawable.GradientDrawable circleBg = new android.graphics.drawable.GradientDrawable();
             circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
             circleBg.setColor(0x4D000000);
             playOverlay.setBackground(circleBg);
-            playOverlay.setImageResource(org.telegram.messenger.R.drawable.play_mini_video);
-            playOverlay.setScaleType(ImageView.ScaleType.CENTER);
-            playOverlay.setPadding(dp(2), dp(2), dp(2), dp(2));
-            wrapper.addView(playOverlay, LayoutHelper.createFrame(28, 28, Gravity.TOP | Gravity.START, 8, 8, 0, 0));
+            PlayTriangleView playTriangle = new PlayTriangleView(parent.getContext());
+            playTriangle.setColor(0xFFFFFFFF);
+            playOverlay.addView(playTriangle, LayoutHelper.createFrame(16, 16, Gravity.CENTER, 2, 0, 0, 0));
+            wrapper.addView(playOverlay, LayoutHelper.createFrame(36, 36, Gravity.CENTER));
 
             return new MediaHolder(wrapper, img, playOverlay);
         }
@@ -867,8 +1019,8 @@ public class PotokFeedPostCell extends LinearLayout {
 
         class MediaHolder extends RecyclerView.ViewHolder {
             final BackupImageView img;
-            final ImageView playOverlay;
-            MediaHolder(View wrapper, BackupImageView img, ImageView playOverlay) {
+            final FrameLayout playOverlay;
+            MediaHolder(View wrapper, BackupImageView img, FrameLayout playOverlay) {
                 super(wrapper);
                 this.img = img;
                 this.playOverlay = playOverlay;
@@ -945,6 +1097,46 @@ public class PotokFeedPostCell extends LinearLayout {
             messageObject.audioProgress = progress;
             messageObject.audioProgressSec = (int) (messageObject.getDuration() * progress);
             invalidate();
+        }
+    }
+
+    // ------------------------------------------------------------------ PlayTriangleView
+
+    /**
+     * Чистый треугольник play, нарисованный через Path — чёткий на любом dpi.
+     * Растровый play_mini_video всего 24x30px даже в xxhdpi, поэтому при
+     * увеличении (как было раньше, scale 1.8) выглядит размытым.
+     */
+    private static class PlayTriangleView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+
+        PlayTriangleView(Context context) {
+            super(context);
+            paint.setStyle(Paint.Style.FILL);
+        }
+
+        void setColor(int color) {
+            paint.setColor(color);
+            invalidate();
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            path.reset();
+            // Равносторонний треугольник вершиной вправо, по центру view
+            float r = Math.min(w, h) / 2f;
+            float cx = w / 2f, cy = h / 2f;
+            path.moveTo(cx - r * 0.55f, cy - r * 0.85f);
+            path.lineTo(cx - r * 0.55f, cy + r * 0.85f);
+            path.lineTo(cx + r * 0.85f, cy);
+            path.close();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            canvas.drawPath(path, paint);
         }
     }
 

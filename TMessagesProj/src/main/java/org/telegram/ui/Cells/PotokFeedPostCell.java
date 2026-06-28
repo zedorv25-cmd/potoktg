@@ -7,6 +7,7 @@ import android.graphics.Canvas;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -525,6 +526,11 @@ public class PotokFeedPostCell extends LinearLayout {
             chatActivity.setThreadMessages(threadMessages, originalChat, originalMsgId, discussionMessage.read_inbox_max_id, discussionMessage.read_outbox_max_id, null);
             parentFragment.presentFragment(chatActivity);
         }));
+    }
+
+    private void hideCarousel() {
+        carouselView.setVisibility(GONE);
+        dotsIndicator.setVisibility(GONE);
     }
 
     /**

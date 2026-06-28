@@ -37,6 +37,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private static final int MAX_POSTS_PER_CHANNEL = 10;
 
     private RecyclerListView listView;
+    private LinearLayoutManager listViewLayoutManager;
+    private org.telegram.ui.Components.RecyclerAnimationScrollHelper scrollHelper;
     private FrameLayout scrollToTopButton;
     private MainTabsActivityController mainTabsActivityController;
     private final ArrayList<FeedItem> items = new ArrayList<>();
@@ -61,7 +63,9 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         fragmentView = frameLayout;
 
         listView = new RecyclerListView(context);
-        listView.setLayoutManager(new LinearLayoutManager(context));
+        listViewLayoutManager = new LinearLayoutManager(context);
+        listView.setLayoutManager(listViewLayoutManager);
+        scrollHelper = new org.telegram.ui.Components.RecyclerAnimationScrollHelper(listView, listViewLayoutManager);
 
         // Отступ сверху = статусбар + высота таббара снизу MainTabsActivity (не тулбар — его нет)
         int topPadding = AndroidUtilities.statusBarHeight + AndroidUtilities.dp(56);
@@ -109,9 +113,17 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         scrollToTopButton.addView(arrowUp, LayoutHelper.createFrame(24, 24, Gravity.CENTER));
 
         scrollToTopButton.setOnClickListener(v -> {
-            if (listView != null) {
-                listView.smoothScrollToPosition(0);
+            if (listView == null || scrollHelper == null) {
+                return;
             }
+            // Раньше здесь был smoothScrollToPosition(0) — он прокручивает
+            // последовательно через ВСЕ посты между текущей позицией и началом,
+            // что на длинной ленте выглядит как долгое пролистывание. scrollHelper
+            // (тот же паттерн, что у кнопки "к началу" в DialogsActivity) мгновенно
+            // переносит layout к позиции 0 и красиво доезжают только элементы,
+            // уже видимые на экране — без полного перебора истории.
+            scrollHelper.setScrollDirection(org.telegram.ui.Components.RecyclerAnimationScrollHelper.SCROLL_DIRECTION_UP);
+            scrollHelper.scrollToPosition(0, 0, false, true);
         });
 
         // Отступ снизу должен учитывать реальную высоту плавающего таббара

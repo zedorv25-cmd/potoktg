@@ -263,4 +263,14 @@
     <string name="RemindTodayAt">\'Отправить сегодня в\' HH:mm</string>
     <string name="RemindDayAt">\'Отправить\' d MMM \'в\' HH:mm</string>
     <string name="RemindDayYearAt">\'Напомнить\' d MMM yyyy \'в\' HH:mm</string>
+    <!--potok drawer-->
+    <string name="MyProfile">Мой профиль</string>
+    <string name="PotokWallet">Кошелёк</string>
+    <string name="NewGroup">Создать группу</string>
+    <string name="NewChannel">Создать канал</string>
+    <string name="Contacts">Контакты</string>
+    <string name="Filters">Папки с чатами</string>
+    <string name="SavedMessages">Избранное</string>
+    <string name="Calls">Звонки</string>
+    <string name="Settings">Настройки</string>
 </resources>

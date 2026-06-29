@@ -37,6 +37,8 @@ public class PotokDrawerView extends FrameLayout {
     public static final int ID_NEW_GROUP = 5;
     public static final int ID_NEW_CHANNEL = 6;
     public static final int ID_FOLDERS = 7;
+    public static final int ID_MY_PROFILE = 8;
+    public static final int ID_WALLET = 9;
 
     public PotokDrawerView(Context context, BaseFragment fragment) {
         super(context);
@@ -80,6 +82,11 @@ public class PotokDrawerView extends FrameLayout {
         header.addView(phoneView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.BOTTOM, 16, 0, 52, 9));
 
         content.addView(header, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+
+        // Профиль и кошелёк
+        content.addView(createMenuItem(context, ID_MY_PROFILE, R.drawable.settings_account, LocaleController.getString("MyProfile", R.string.MyProfile)));
+        content.addView(createMenuItem(context, ID_WALLET, R.drawable.settings_wallet, LocaleController.getString("PotokWallet", R.string.PotokWallet)));
+        content.addView(createDivider(context));
 
         // Пункты меню
         content.addView(createMenuItem(context, ID_NEW_GROUP, R.drawable.msg_groups, LocaleController.getString("NewGroup", R.string.NewGroup)));

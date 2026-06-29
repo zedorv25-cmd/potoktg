@@ -551,6 +551,13 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
     
     } else if (id == org.telegram.ui.PotokDrawerView.ID_FOLDERS) {
     actionBarLayout.presentFragment(new FiltersSetupActivity());
+    } else if (id == org.telegram.ui.PotokDrawerView.ID_MY_PROFILE) {
+        Bundle args = new Bundle();
+        args.putLong("user_id", UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId());
+        args.putBoolean("my_profile", true);
+        actionBarLayout.presentFragment(new ProfileActivity(args, null));
+    } else if (id == org.telegram.ui.PotokDrawerView.ID_WALLET) {
+        openWalletFromDrawer();
     }
 });
         potokDrawerLayout.addDrawerListener(new androidx.drawerlayout.widget.DrawerLayout.DrawerListener() {
@@ -929,6 +936,47 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
 
     private Object onBackAnimationCallback;
     private Object onBackInvokedCallback;
+
+    // Открытие @wallet (attach-menu бот) из боковой шторки, пункт "Кошелёк".
+    // Повторяет логику стокового SettingsActivity/DialogsActivity для того же бота:
+    // если бот неактивен или требует disclaimer — сначала показываем подтверждение
+    // и включаем его, потом открываем мини-апп. Если бота вообще нет в списке
+    // (пользователь никогда не касался @wallet) — фолбэк: открыть как обычный чат
+    // с ботом по username, чтобы кнопка не оставалась нерабочей.
+    private void openWalletFromDrawer() {
+        final long WALLET_BOT_ID = 1985737506L;
+        TLRPC.TL_attachMenuBots menuBots = MediaDataController.getInstance(currentAccount).getAttachMenuBots();
+        TLRPC.TL_attachMenuBot walletBot = null;
+        if (menuBots != null && menuBots.bots != null) {
+            for (TLRPC.TL_attachMenuBot bot : menuBots.bots) {
+                if (bot.bot_id == WALLET_BOT_ID) {
+                    walletBot = bot;
+                    break;
+                }
+            }
+        }
+        if (walletBot == null) {
+            BaseFragment lastFragment = actionBarLayout.getLastFragment();
+            MessagesController.getInstance(currentAccount).openByUserName("wallet", lastFragment, 0);
+            return;
+        }
+        final TLRPC.TL_attachMenuBot finalWalletBot = walletBot;
+        if (finalWalletBot.inactive || finalWalletBot.side_menu_disclaimer_needed) {
+            WebAppDisclaimerAlert.show(this, (allowSendMessage) -> {
+                TLRPC.TL_messages_toggleBotInAttachMenu botRequest = new TLRPC.TL_messages_toggleBotInAttachMenu();
+                botRequest.bot = MessagesController.getInstance(currentAccount).getInputUser(finalWalletBot.bot_id);
+                botRequest.enabled = true;
+                botRequest.write_allowed = true;
+                ConnectionsManager.getInstance(currentAccount).sendRequest(botRequest, (response2, error2) -> AndroidUtilities.runOnUIThread(() -> {
+                    finalWalletBot.inactive = finalWalletBot.side_menu_disclaimer_needed = false;
+                    LaunchActivity.showAttachMenuBot(LaunchActivity.this, currentAccount, finalWalletBot, null, true);
+                    MediaDataController.getInstance(currentAccount).updateAttachMenuBotsInCache();
+                }), ConnectionsManager.RequestFlagInvokeAfter | ConnectionsManager.RequestFlagFailOnServerErrors);
+            }, null, null);
+        } else {
+            showAttachMenuBot(this, currentAccount, finalWalletBot, null, true);
+        }
+    }
 
     public static void showAttachMenuBot(LaunchActivity launchActivity, int currentAccount, TLRPC.TL_attachMenuBot attachMenuBot, String startApp, boolean sidemenu) {
         BaseFragment lastFragment = getLastFragment();

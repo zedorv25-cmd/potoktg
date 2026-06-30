@@ -50,6 +50,9 @@ public class PotokDrawerView extends FrameLayout {
     public static final int ID_SWITCH_ACCOUNT = 11;
 
     private View themeToggleButton;
+    private LinearLayout accountsContainer;
+    private View chevronView;
+    private boolean accountsExpanded = false;
 
     /**
      * Векторная стрелка-шеврон вниз тем же подходом, что ArrowUpView/PlayTriangleView
@@ -146,14 +149,16 @@ public class PotokDrawerView extends FrameLayout {
             header.setBackgroundColor(placeholderColor);
         }
 
-        // Переключатель темы (солнце) — верх квадрата, справа.
+        // Переключатель темы (солнце/луна) — верх квадрата, справа.
+        // Отступ учитывает высоту статус-бара, чтобы кнопка не пряталась под ним на любом телефоне.
+        int topInset = AndroidUtilities.statusBarHeight + AndroidUtilities.dp(8);
         themeToggleButton = createHeaderIconButton(context, R.drawable.menu_night_mode_24);
         themeToggleButton.setOnClickListener(v -> {
             if (listener != null) {
                 listener.onItemClick(ID_THEME_TOGGLE);
             }
         });
-        header.addView(themeToggleButton, LayoutHelper.createFrame(40, 40, Gravity.TOP | Gravity.RIGHT, 0, 12, 12, 0));
+        header.addView(themeToggleButton, LayoutHelper.createFrame(40, 40, Gravity.TOP | Gravity.RIGHT, 0, topInset / AndroidUtilities.density, 12, 0));
 
         // Кнопка избранных сообщений — под переключателем темы.
         View favoritesButton = createHeaderIconButton(context, R.drawable.msg_saved);
@@ -162,7 +167,7 @@ public class PotokDrawerView extends FrameLayout {
                 listener.onItemClick(ID_SAVED);
             }
         });
-        header.addView(favoritesButton, LayoutHelper.createFrame(40, 40, Gravity.TOP | Gravity.RIGHT, 0, 60, 12, 0));
+        header.addView(favoritesButton, LayoutHelper.createFrame(40, 40, Gravity.TOP | Gravity.RIGHT, 0, (topInset + AndroidUtilities.dp(48)) / AndroidUtilities.density, 12, 0));
 
         // Низ квадрата, поверх фото: имя + шеврон в одной строке, телефон строкой ниже.
         LinearLayout nameRow = new LinearLayout(context);
@@ -182,7 +187,8 @@ public class PotokDrawerView extends FrameLayout {
 
         FrameLayout chevronTouchArea = new FrameLayout(context);
         chevronTouchArea.setBackground(Theme.createSelectorDrawable(0x33ffffff, Theme.RIPPLE_MASK_CIRCLE_20DP));
-        chevronTouchArea.addView(new ChevronDownView(context), LayoutHelper.createFrame(16, 16, Gravity.CENTER));
+        chevronView = new ChevronDownView(context);
+        chevronTouchArea.addView(chevronView, LayoutHelper.createFrame(16, 16, Gravity.CENTER));
         chevronTouchArea.setOnClickListener(v -> {
             if (listener != null) {
                 listener.onItemClick(ID_SWITCH_ACCOUNT);
@@ -201,6 +207,15 @@ public class PotokDrawerView extends FrameLayout {
         header.addView(phoneView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.BOTTOM, 16, 0, 52, 9));
 
         content.addView(header, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+
+        // Контейнер для встроенного списка аккаунтов — раскрывается под шапкой по клику на шеврон.
+        // Заполняется снаружи через setAccountsContent(), так как требует доступа к MainTabsActivity.
+        accountsContainer = new LinearLayout(context);
+        accountsContainer.setOrientation(LinearLayout.VERTICAL);
+        accountsContainer.setBackgroundColor(Theme.getColor(Theme.key_chats_menuBackground));
+        accountsContainer.setVisibility(GONE);
+        content.addView(accountsContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        content.addView(createDivider(context));
 
         // Профиль и кошелёк
         content.addView(createMenuItem(context, ID_MY_PROFILE, R.drawable.settings_account, LocaleController.getString("MyProfile", R.string.MyProfile)));
@@ -224,6 +239,21 @@ public class PotokDrawerView extends FrameLayout {
     }
 
     private View createMenuItem(Context context, int id, int iconRes, String title) {
+        View item = createSimpleRow(context, iconRes, title);
+        item.setOnClickListener(v -> {
+            if (listener != null) {
+                listener.onItemClick(id);
+            }
+        });
+        return item;
+    }
+
+    /**
+     * Публичный хелпер для построения строки в стиле пунктов меню шторки, но без
+     * привязки к внутреннему OnDrawerItemClickListener — клик навешивается снаружи.
+     * Используется, например, для строки "Добавить аккаунт" во встроенном списке аккаунтов.
+     */
+    public static View createSimpleRow(Context context, int iconRes, String title) {
         FrameLayout item = new FrameLayout(context);
         item.setMinimumHeight(AndroidUtilities.dp(48));
         item.setBackground(Theme.createSelectorDrawable(Theme.getColor(Theme.key_listSelector), 2));
@@ -239,12 +269,6 @@ public class PotokDrawerView extends FrameLayout {
         text.setTextColor(Theme.getColor(Theme.key_chats_menuItemText));
         item.addView(text, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.CENTER_VERTICAL, 72, 0, 16, 0));
 
-        item.setOnClickListener(v -> {
-            if (listener != null) {
-                listener.onItemClick(id);
-            }
-        });
-
         return item;
     }
 
@@ -256,6 +280,46 @@ public class PotokDrawerView extends FrameLayout {
 
     public void setOnDrawerItemClickListener(OnDrawerItemClickListener listener) {
         this.listener = listener;
+    }
+
+    /**
+     * Заполняет встроенный список аккаунтов готовыми View-ячейками, построенными снаружи
+     * (через MainTabsActivity.accountView() и кнопку "Добавить аккаунт"), так как сама
+     * PotokDrawerView не имеет доступа к MainTabsActivity/UserConfig напрямую.
+     * Цвет текста в переданных ячейках переопределяется на белый, так как accountView()
+     * по умолчанию рассчитан на светлый popup-фон, а не на тёмную шторку.
+     */
+    public void setAccountsContent(java.util.List<View> accountRows, View addAccountRow) {
+        accountsContainer.removeAllViews();
+        for (View row : accountRows) {
+            forceLightTextColor(row);
+            accountsContainer.addView(row, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48));
+        }
+        if (addAccountRow != null) {
+            forceLightTextColor(addAccountRow);
+            accountsContainer.addView(addAccountRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48));
+        }
+    }
+
+    private void forceLightTextColor(View view) {
+        if (view instanceof TextView) {
+            ((TextView) view).setTextColor(Theme.getColor(Theme.key_chats_menuItemText));
+        } else if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                forceLightTextColor(group.getChildAt(i));
+            }
+        }
+    }
+
+    public boolean isAccountsExpanded() {
+        return accountsExpanded;
+    }
+
+    public void toggleAccountsList() {
+        accountsExpanded = !accountsExpanded;
+        accountsContainer.setVisibility(accountsExpanded ? VISIBLE : GONE);
+        chevronView.animate().rotation(accountsExpanded ? 180f : 0f).setDuration(180).start();
     }
     @Override
 public boolean onTouchEvent(MotionEvent event) {

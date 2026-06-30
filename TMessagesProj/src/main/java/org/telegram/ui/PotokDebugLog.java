@@ -101,10 +101,17 @@ public class PotokDebugLog {
         File file = new File(context.getFilesDir(), LOG_FILE_NAME);
         if (file.exists()) {
             StringBuilder sb = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new java.io.FileReader(file))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (filterKeyword == null || line.contains(filterKeyword)) sb.append(line).append("\n");
+            try {
+                String fullContent = new String(java.nio.file.Files.readAllBytes(file.toPath()));
+                // Каждая запись — это блок "[TAG] дата\nсообщение\n---\n".
+                // Фильтруем по блокам целиком, а не построчно — иначе тег попадает в фильтр,
+                // а сам текст сообщения (следующая строка, без тега) отсеивается напрасно.
+                String[] entries = fullContent.split("---\n");
+                for (String entry : entries) {
+                    if (entry.trim().isEmpty()) continue;
+                    if (filterKeyword == null || entry.contains(filterKeyword)) {
+                        sb.append(entry).append("---\n");
+                    }
                 }
             } catch (Exception e) {
                 sb.append("Ошибка: ").append(e.getMessage());

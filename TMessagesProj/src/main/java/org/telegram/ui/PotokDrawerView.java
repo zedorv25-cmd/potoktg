@@ -99,6 +99,28 @@ public class PotokDrawerView extends FrameLayout {
         return button;
     }
 
+    private ScrollView scrollViewRef;
+    private int lastAppliedTopInset = -1;
+
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        // AndroidUtilities.statusBarHeight НЕ заполняется автоматически в этом проекте
+        // (BuildVars.USE_LEGACY_SYSTEM_INSETS = false), поэтому получаем реальный inset
+        // статус-бара напрямую через современный WindowInsets API, как это уже делает
+        // DrawerLayoutContainer для остального приложения.
+        int topInset = 0;
+        androidx.core.view.WindowInsetsCompat insetsCompat = androidx.core.view.ViewCompat.getRootWindowInsets(this);
+        if (insetsCompat != null) {
+            topInset = insetsCompat.getInsetsIgnoringVisibility(androidx.core.view.WindowInsetsCompat.Type.systemBars()).top;
+        }
+        if (topInset != lastAppliedTopInset && scrollViewRef != null) {
+            lastAppliedTopInset = topInset;
+            scrollViewRef.setPadding(0, topInset, 0, 0);
+            PotokDebugLog.log(LOG_TAG, "onMeasure: применён реальный topInset=" + topInset + "px через WindowInsets API");
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
+
     public PotokDrawerView(Context context, BaseFragment fragment) {
         super(context);
         this.parentFragment = fragment;
@@ -267,10 +289,7 @@ public class PotokDrawerView extends FrameLayout {
 
         ScrollView scrollView = new ScrollView(context);
         scrollView.setClipToPadding(false);
-        // Контент шторки сдвигается вниз на высоту статус-бара, чтобы квадрат шапки
-        // начинался сразу под ним (видимая часть = от статус-бара и вниз), а не заходил
-        // в системную зону сверху, искажая пропорцию 1:1.
-        scrollView.setPadding(0, AndroidUtilities.statusBarHeight, 0, 0);
+        scrollViewRef = scrollView;
         scrollView.addView(content);
         addView(scrollView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 

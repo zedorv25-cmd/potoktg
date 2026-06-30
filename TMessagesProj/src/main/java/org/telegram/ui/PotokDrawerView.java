@@ -30,6 +30,9 @@ import org.telegram.ui.Components.LayoutHelper;
 
 public class PotokDrawerView extends FrameLayout {
 
+    private static final String LOG_TAG = "DRAWER";
+    private final long createdAtMs = System.currentTimeMillis();
+
     private BaseFragment parentFragment;
     private OnDrawerItemClickListener listener;
 
@@ -99,6 +102,12 @@ public class PotokDrawerView extends FrameLayout {
     public PotokDrawerView(Context context, BaseFragment fragment) {
         super(context);
         this.parentFragment = fragment;
+        PotokDebugLog.log(LOG_TAG, "Конструктор начат, t=0ms");
+
+        // statusBarHeight заполняется лениво в AndroidUtilities — на момент создания шторки
+        // оно может быть ещё не инициализировано (0), поэтому форсируем заполнение явно.
+        AndroidUtilities.fillStatusBarHeight(context, false);
+        PotokDebugLog.log(LOG_TAG, "statusBarHeight=" + AndroidUtilities.statusBarHeight + "px (dp=" + (AndroidUtilities.statusBarHeight / AndroidUtilities.density) + ")");
 
         setBackgroundColor(Theme.getColor(Theme.key_chats_menuBackground));
 
@@ -121,12 +130,35 @@ public class PotokDrawerView extends FrameLayout {
         boolean hasPhoto = user != null && user.photo != null && user.photo.photo_big != null
                 && !(user.photo instanceof TLRPC.TL_userProfilePhotoEmpty);
 
+        PotokDebugLog.log(LOG_TAG, "hasPhoto=" + hasPhoto
+                + ", user=null? " + (user == null)
+                + (user != null ? (", photo=null? " + (user.photo == null)
+                    + (user.photo != null ? (", strippedBitmap=null? " + (user.photo.strippedBitmap == null)
+                        + ", stripped_thumb=null? " + (user.photo.stripped_thumb == null)) : "")) : ""));
+
+        // Заливка-заглушка ставится всегда первым фоном — видна как пустой квадрат не успевает быть,
+        // даже пока реальное фото (если оно есть) ещё не подгрузилось из сети/кэша.
+        boolean dark = Theme.isCurrentThemeDark();
+        int baseColor = Theme.getColor(Theme.key_chats_menuBackground);
+        int blendTarget = dark ? Color.WHITE : Color.BLACK;
+        int placeholderColor = ColorUtils.blendARGB(baseColor, blendTarget, dark ? 0.10f : 0.06f);
+        header.setBackgroundColor(placeholderColor);
+
         if (hasPhoto) {
             // Фото профиля заполняет весь квадрат целиком (cover), не круглый аватар в углу.
             BackupImageView avatarView = new BackupImageView(context);
             avatarView.getImageReceiver().setRoundRadius(0);
             AvatarDrawable avatarDrawable = new AvatarDrawable(user);
-            avatarView.setForUserOrChat(user, avatarDrawable);
+            avatarView.getImageReceiver().setDelegate((imageReceiver, set, thumb, memCache) -> {
+                long elapsed = System.currentTimeMillis() - createdAtMs;
+                PotokDebugLog.log(LOG_TAG, "Фото в шапке: set=" + set + ", thumb=" + thumb
+                        + ", memCache=" + memCache + ", t=+" + elapsed + "ms");
+            });
+            // big=true — грузим версию покрупнее (100_100), подходящую для большого квадрата шапки.
+            // animationEnabled=true, vectorType=0 — как в стандартных местах проекта (DialogCell).
+            // Stripped-thumb (мгновенное размытое превью без сети) используется автоматически
+            // внутри setForUserOrChat, если у пользователя есть user.photo.stripped_thumb.
+            avatarView.getImageReceiver().setForUserOrChat(user, avatarDrawable, null, true, 0, true);
             header.addView(avatarView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
             // Затемнение снизу для читаемости имени/телефона на любом фото.
@@ -140,20 +172,15 @@ public class PotokDrawerView extends FrameLayout {
                 }
             };
             header.addView(shadow, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 120, Gravity.BOTTOM));
-        } else {
-            // Нет фото — заливка однотонным цветом, отличающимся от фона остальной шторки.
-            boolean dark = Theme.isCurrentThemeDark();
-            int baseColor = Theme.getColor(Theme.key_chats_menuBackground);
-            int blendTarget = dark ? Color.WHITE : Color.BLACK;
-            int placeholderColor = ColorUtils.blendARGB(baseColor, blendTarget, dark ? 0.10f : 0.06f);
-            header.setBackgroundColor(placeholderColor);
         }
 
         // Переключатель темы (солнце/луна) — верх квадрата, справа.
-        // Отступ учитывает высоту статус-бара, чтобы кнопка не пряталась под ним на любом телефоне.
-        int topInset = AndroidUtilities.statusBarHeight + AndroidUtilities.dp(8);
+        // Отступ от верха квадрата простой (без statusBarHeight) — статус-бар уже учтён
+        // через padding на ScrollView (контент целиком сдвинут вниз, квадрат начинается под ним).
+        int topInset = AndroidUtilities.dp(12);
         themeToggleButton = createHeaderIconButton(context, R.drawable.menu_night_mode_24);
         themeToggleButton.setOnClickListener(v -> {
+            PotokDebugLog.log(LOG_TAG, "Клик: тема (солнце/луна), t=+" + (System.currentTimeMillis() - createdAtMs) + "ms");
             if (listener != null) {
                 listener.onItemClick(ID_THEME_TOGGLE);
             }
@@ -163,6 +190,10 @@ public class PotokDrawerView extends FrameLayout {
         // Кнопка избранных сообщений — под переключателем темы.
         View favoritesButton = createHeaderIconButton(context, R.drawable.msg_saved);
         favoritesButton.setOnClickListener(v -> {
+            long elapsed = System.currentTimeMillis() - createdAtMs;
+            PotokDebugLog.log(LOG_TAG, "Клик: избранное (закладка), t=+" + elapsed + "ms от создания шторки. "
+                    + "Если открытие самого экрана займёт ещё время — это отдельная задержка ПОСЛЕ этого клика "
+                    + "(переход в ChatActivity), не в самой шторке.");
             if (listener != null) {
                 listener.onItemClick(ID_SAVED);
             }
@@ -190,6 +221,7 @@ public class PotokDrawerView extends FrameLayout {
         chevronView = new ChevronDownView(context);
         chevronTouchArea.addView(chevronView, LayoutHelper.createFrame(16, 16, Gravity.CENTER));
         chevronTouchArea.setOnClickListener(v -> {
+            PotokDebugLog.log(LOG_TAG, "Клик: шеврон переключения аккаунтов, t=+" + (System.currentTimeMillis() - createdAtMs) + "ms");
             if (listener != null) {
                 listener.onItemClick(ID_SWITCH_ACCOUNT);
             }
@@ -234,13 +266,22 @@ public class PotokDrawerView extends FrameLayout {
         content.addView(createMenuItem(context, ID_SETTINGS, R.drawable.msg_settings_old, LocaleController.getString("Settings", R.string.Settings)));
 
         ScrollView scrollView = new ScrollView(context);
+        scrollView.setClipToPadding(false);
+        // Контент шторки сдвигается вниз на высоту статус-бара, чтобы квадрат шапки
+        // начинался сразу под ним (видимая часть = от статус-бара и вниз), а не заходил
+        // в системную зону сверху, искажая пропорцию 1:1.
+        scrollView.setPadding(0, AndroidUtilities.statusBarHeight, 0, 0);
         scrollView.addView(content);
         addView(scrollView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        PotokDebugLog.log(LOG_TAG, "Конструктор завершён, t=+" + (System.currentTimeMillis() - createdAtMs) + "ms");
     }
 
     private View createMenuItem(Context context, int id, int iconRes, String title) {
         View item = createSimpleRow(context, iconRes, title);
         item.setOnClickListener(v -> {
+            PotokDebugLog.log(LOG_TAG, "Клик: пункт меню \"" + title + "\" (id=" + id + "), t=+"
+                    + (System.currentTimeMillis() - createdAtMs) + "ms от создания шторки");
             if (listener != null) {
                 listener.onItemClick(id);
             }
@@ -290,6 +331,8 @@ public class PotokDrawerView extends FrameLayout {
      * по умолчанию рассчитан на светлый popup-фон, а не на тёмную шторку.
      */
     public void setAccountsContent(java.util.List<View> accountRows, View addAccountRow) {
+        PotokDebugLog.log(LOG_TAG, "setAccountsContent: " + accountRows.size() + " аккаунт(ов), addAccountRow="
+                + (addAccountRow != null ? "есть" : "нет"));
         accountsContainer.removeAllViews();
         for (View row : accountRows) {
             forceLightTextColor(row);
@@ -320,6 +363,8 @@ public class PotokDrawerView extends FrameLayout {
         accountsExpanded = !accountsExpanded;
         accountsContainer.setVisibility(accountsExpanded ? VISIBLE : GONE);
         chevronView.animate().rotation(accountsExpanded ? 180f : 0f).setDuration(180).start();
+        PotokDebugLog.log(LOG_TAG, "toggleAccountsList: теперь " + (accountsExpanded ? "развёрнут" : "свёрнут")
+                + ", t=+" + (System.currentTimeMillis() - createdAtMs) + "ms");
     }
     @Override
 public boolean onTouchEvent(MotionEvent event) {

@@ -519,7 +519,9 @@ androidx.drawerlayout.widget.DrawerLayout.LayoutParams drawerParams = new androi
 );
 potokDrawerLayout.addView(potokDrawerView, drawerParams);
 potokDrawerView.setOnDrawerItemClickListener(id -> {
-    potokDrawerLayout.closeDrawers();
+    if (id != org.telegram.ui.PotokDrawerView.ID_SWITCH_ACCOUNT) {
+        potokDrawerLayout.closeDrawers();
+    }
     if (id == org.telegram.ui.PotokDrawerView.ID_CONTACTS) {
         actionBarLayout.presentFragment(new ContactsActivity(null));
     } else if (id == org.telegram.ui.PotokDrawerView.ID_CALLS) {
@@ -590,8 +592,62 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
     } else if (id == org.telegram.ui.PotokDrawerView.ID_SWITCH_ACCOUNT) {
         BaseFragment lastFragment = actionBarLayout.getLastFragment();
         if (lastFragment instanceof MainTabsActivity) {
-            View anchor = lastFragment.getFragmentView() != null ? lastFragment.getFragmentView() : drawerLayoutContainer;
-            ((MainTabsActivity) lastFragment).openAccountSelector(anchor);
+            MainTabsActivity mainTabsActivity = (MainTabsActivity) lastFragment;
+            if (!potokDrawerView.isAccountsExpanded()) {
+                ArrayList<Integer> accountNumbers = new ArrayList<>();
+                for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                    if (UserConfig.getInstance(a).isClientActivated()) {
+                        accountNumbers.add(a);
+                    }
+                }
+                java.util.Collections.sort(accountNumbers, (o1, o2) -> {
+                    long l1 = UserConfig.getInstance(o1).loginTime;
+                    long l2 = UserConfig.getInstance(o2).loginTime;
+                    return Long.compare(l1, l2);
+                });
+
+                ArrayList<View> accountRows = new ArrayList<>();
+                for (int acc : accountNumbers) {
+                    final int account = acc;
+                    View row = mainTabsActivity.accountView(account, account == UserConfig.selectedAccount);
+                    row.setOnClickListener(v -> {
+                        if (account == UserConfig.selectedAccount) {
+                            return;
+                        }
+                        potokDrawerLayout.closeDrawers();
+                        LaunchActivity.this.switchToAccount(account, true);
+                    });
+                    accountRows.add(row);
+                }
+
+                View addAccountRow = null;
+                if (UserConfig.getActivatedAccountsCount() < UserConfig.MAX_ACCOUNT_COUNT) {
+                    addAccountRow = org.telegram.ui.PotokDrawerView.createSimpleRow(getApplicationContext(), R.drawable.msg_addbot, LocaleController.getString("AddAccount", R.string.AddAccount));
+                    addAccountRow.setOnClickListener(v -> {
+                        int freeAccounts = 0;
+                        Integer availableAccount = null;
+                        for (int a = UserConfig.MAX_ACCOUNT_COUNT - 1; a >= 0; a--) {
+                            if (!UserConfig.getInstance(a).isClientActivated()) {
+                                freeAccounts++;
+                                if (availableAccount == null) {
+                                    availableAccount = a;
+                                }
+                            }
+                        }
+                        if (!UserConfig.hasPremiumOnAccounts()) {
+                            freeAccounts -= (UserConfig.MAX_ACCOUNT_COUNT - UserConfig.MAX_ACCOUNT_DEFAULT_COUNT);
+                        }
+                        if (freeAccounts > 0 && availableAccount != null) {
+                            potokDrawerLayout.closeDrawers();
+                            mainTabsActivity.presentFragment(new LoginActivity(availableAccount));
+                        } else if (!UserConfig.hasPremiumOnAccounts()) {
+                            mainTabsActivity.showDialog(new org.telegram.ui.Components.Premium.LimitReachedBottomSheet(mainTabsActivity, mainTabsActivity.getContext(), org.telegram.ui.Components.Premium.LimitReachedBottomSheet.TYPE_ACCOUNTS, UserConfig.selectedAccount, null));
+                        }
+                    });
+                }
+                potokDrawerView.setAccountsContent(accountRows, addAccountRow);
+            }
+            potokDrawerView.toggleAccountsList();
         }
     }
 });

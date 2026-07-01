@@ -646,8 +646,22 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
     }
 });
         potokDrawerLayout.addDrawerListener(new androidx.drawerlayout.widget.DrawerLayout.DrawerListener() {
+    private boolean refreshedForThisOpen = false;
     @Override
-    public void onDrawerSlide(android.view.View drawerView, float slideOffset) {}
+    public void onDrawerSlide(android.view.View drawerView, float slideOffset) {
+        // Фикс "серого квадрата": как только шторка начинает открываться (свайп или клик по
+        // кнопке), подтягиваем актуальные фото/имя/номер — на случай, если на момент создания
+        // view они ещё не были готовы.
+        if (!refreshedForThisOpen && slideOffset > 0f) {
+            refreshedForThisOpen = true;
+            if (potokDrawerView != null) {
+                potokDrawerView.refreshHeaderData();
+            }
+        }
+        if (slideOffset == 0f) {
+            refreshedForThisOpen = false;
+        }
+    }
     @Override
     public void onDrawerOpened(android.view.View drawerView) {}
     @Override

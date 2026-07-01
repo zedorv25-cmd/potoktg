@@ -529,25 +529,12 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
         args.putInt("type", 0);
         actionBarLayout.presentFragment(new CallLogActivity());
 } else if (id == org.telegram.ui.PotokDrawerView.ID_SAVED) {
-    long savedClickTime = System.currentTimeMillis();
-    PotokDebugLog.log("DRAWER", "ID_SAVED получен в LaunchActivity, начинаем закрытие шторки перед открытием");
     Bundle args = new Bundle();
     args.putLong("user_id", UserConfig.getInstance(UserConfig.selectedAccount).getClientUserId());
-    potokDrawerLayout.addDrawerListener(new androidx.drawerlayout.widget.DrawerLayout.SimpleDrawerListener() {
-        @Override
-        public void onDrawerClosed(View drawerView) {
-            potokDrawerLayout.removeDrawerListener(this);
-            long closedTime = System.currentTimeMillis();
-            PotokDebugLog.log("DRAWER", "Шторка закрылась через " + (closedTime - savedClickTime)
-                    + "ms после клика на избранное — именно эта анимация закрытия и есть основная задержка перед открытием");
-            BaseFragment lastFragment = actionBarLayout.getLastFragment();
-            if (lastFragment instanceof MainTabsActivity) {
-                ((MainTabsActivity) lastFragment).getDialogsActivity().presentFragment(new ChatActivity(args));
-                PotokDebugLog.log("DRAWER", "ChatActivity (избранное) запрошен к открытию, t=+"
-                        + (System.currentTimeMillis() - savedClickTime) + "ms от клика");
-            }
-        }
-    });
+    BaseFragment lastFragment = actionBarLayout.getLastFragment();
+    if (lastFragment instanceof MainTabsActivity) {
+        ((MainTabsActivity) lastFragment).getDialogsActivity().presentFragment(new ChatActivity(args));
+    }
     } else if (id == org.telegram.ui.PotokDrawerView.ID_SETTINGS) {
         actionBarLayout.presentFragment(new SettingsActivity());
     } else if (id == org.telegram.ui.PotokDrawerView.ID_NEW_GROUP) {

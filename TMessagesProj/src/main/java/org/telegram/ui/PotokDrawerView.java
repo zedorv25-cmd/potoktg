@@ -57,6 +57,14 @@ public class PotokDrawerView extends FrameLayout {
     private boolean accountsExpanded = false;
     private ScrollView scrollViewRef;
     private int lastAppliedTopInset = -1;
+    private android.animation.ValueAnimator accountsHeightAnimator;
+
+    // Фикс "серого квадрата": ссылки на элементы шапки, чтобы можно было обновить их
+    // (фото/имя/номер) в момент открытия шторки, а не только один раз при создании view.
+    private BackupImageView avatarView;
+    private FrameLayout headerRef;
+    private TextView nameViewRef;
+    private TextView phoneViewRef;
 
     // Фикс 1: шеврон округлённый — уменьшен угол за счёт поднятия вершины (h/2.5f вместо h-pad),
     // увеличена толщина линии (2.0dp вместо 1.6dp), что даёт более мягкий и менее острый вид.
@@ -151,29 +159,32 @@ public class PotokDrawerView extends FrameLayout {
         int placeholderColor = ColorUtils.blendARGB(baseColor, dark ? Color.WHITE : Color.BLACK, dark ? 0.10f : 0.06f);
         header.setBackgroundColor(placeholderColor);
 
+        // avatarView создаём ВСЕГДА (а не только если hasPhoto), чтобы можно было
+        // подставить фото позже через refreshHeaderData(), когда оно догрузится —
+        // без пересоздания всей шторки. Пока фото нет, view прозрачный, виден placeholderColor.
+        avatarView = new BackupImageView(context);
+        avatarView.getImageReceiver().setRoundRadius(0);
+        avatarView.getImageReceiver().setDelegate((imageReceiver, set, thumb, memCache) -> {
+            long elapsed = System.currentTimeMillis() - createdAtMs;
+            PotokDebugLog.log(LOG_TAG, "Фото: set=" + set + ", thumb=" + thumb
+                    + ", memCache=" + memCache + ", t=+" + elapsed + "ms");
+        });
+        header.addView(avatarView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         if (hasPhoto) {
-            BackupImageView avatarView = new BackupImageView(context);
-            avatarView.getImageReceiver().setRoundRadius(0);
             AvatarDrawable avatarDrawable = new AvatarDrawable(user);
-            avatarView.getImageReceiver().setDelegate((imageReceiver, set, thumb, memCache) -> {
-                long elapsed = System.currentTimeMillis() - createdAtMs;
-                PotokDebugLog.log(LOG_TAG, "Фото: set=" + set + ", thumb=" + thumb
-                        + ", memCache=" + memCache + ", t=+" + elapsed + "ms");
-            });
             avatarView.getImageReceiver().setForUserOrChat(user, avatarDrawable, null, true, 0, true);
-            header.addView(avatarView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-
-            View shadow = new View(context) {
-                @Override
-                protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-                    super.onSizeChanged(w, h, oldw, oldh);
-                    setBackground(new GradientDrawable(
-                            GradientDrawable.Orientation.TOP_BOTTOM,
-                            new int[]{0x00000000, 0x9A000000}));
-                }
-            };
-            header.addView(shadow, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 120, Gravity.BOTTOM));
         }
+
+        View shadow = new View(context) {
+            @Override
+            protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+                super.onSizeChanged(w, h, oldw, oldh);
+                setBackground(new GradientDrawable(
+                        GradientDrawable.Orientation.TOP_BOTTOM,
+                        new int[]{0x00000000, 0x9A000000}));
+            }
+        };
+        header.addView(shadow, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 120, Gravity.BOTTOM));
 
         // Кнопки темы и избранного — верх квадрата, справа.
         themeToggleButton = createHeaderIconButton(context, R.drawable.menu_night_mode_24);
@@ -203,16 +214,14 @@ public class PotokDrawerView extends FrameLayout {
         }
         header.addView(nameView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
                 Gravity.LEFT | Gravity.BOTTOM, 16, 0, 60, 28));
+        nameViewRef = nameView;
 
         // Фикс 3: шеврон перенесён в правый угол, выровнен по вертикали с именем.
+        // Клик убран отсюда — теперь обрабатывается общей зоной accountToggleTouchArea ниже,
+        // это только визуальная иконка.
         FrameLayout chevronTouchArea = new FrameLayout(context);
-        chevronTouchArea.setBackground(Theme.createSelectorDrawable(0x33ffffff, Theme.RIPPLE_MASK_CIRCLE_20DP));
         chevronView = new ChevronDownView(context);
         chevronTouchArea.addView(chevronView, LayoutHelper.createFrame(18, 18, Gravity.CENTER));
-        chevronTouchArea.setOnClickListener(v -> {
-            PotokDebugLog.log(LOG_TAG, "Клик: шеврон, t=+" + (System.currentTimeMillis() - createdAtMs) + "ms");
-            if (listener != null) listener.onItemClick(ID_SWITCH_ACCOUNT);
-        });
         // Правый угол, по вертикали — на уровне имени (bottom=22, чтобы центр кнопки 36dp
         // совпадал с центром строки имени высотой ~20dp при bottom=28 у nameView).
         header.addView(chevronTouchArea, LayoutHelper.createFrame(36, 36, Gravity.RIGHT | Gravity.BOTTOM, 0, 0, 8, 20));
@@ -226,8 +235,20 @@ public class PotokDrawerView extends FrameLayout {
         }
         header.addView(phoneView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT,
                 Gravity.LEFT | Gravity.BOTTOM, 16, 0, 52, 9));
+        phoneViewRef = phoneView;
+
+        // Общая кликабельная зона поверх имени/номера/шеврона — тап в любом месте этой
+        // полосы раскрывает список аккаунтов, плюс единый ripple на всю ширину.
+        FrameLayout accountToggleTouchArea = new FrameLayout(context);
+        accountToggleTouchArea.setBackground(Theme.createSelectorDrawable(0x26ffffff, 2));
+        accountToggleTouchArea.setOnClickListener(v -> {
+            PotokDebugLog.log(LOG_TAG, "Клик: зона имени/номера/шеврона, t=+" + (System.currentTimeMillis() - createdAtMs) + "ms");
+            toggleAccountsList();
+        });
+        header.addView(accountToggleTouchArea, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 64, Gravity.LEFT | Gravity.BOTTOM));
 
         content.addView(header, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        headerRef = header;
 
         // Фикс 4: разделитель ПОСЛЕ accountsContainer (перед пунктами меню) заменён на
         // разделитель ВНУТРИ самого accountsContainer снизу — чтобы он появлялся только
@@ -336,9 +357,78 @@ public class PotokDrawerView extends FrameLayout {
 
     public void toggleAccountsList() {
         accountsExpanded = !accountsExpanded;
-        accountsContainer.setVisibility(accountsExpanded ? VISIBLE : GONE);
-        chevronView.animate().rotation(accountsExpanded ? 180f : 0f).setDuration(180).start();
+        chevronView.animate().rotation(accountsExpanded ? 180f : 0f).setDuration(220).start();
+
+        if (accountsHeightAnimator != null) {
+            accountsHeightAnimator.cancel();
+        }
+
+        android.view.ViewGroup.LayoutParams lp = accountsContainer.getLayoutParams();
+
+        if (accountsExpanded) {
+            accountsContainer.setVisibility(VISIBLE);
+            accountsContainer.setAlpha(0f);
+            int parentWidth = getWidth() > 0 ? getWidth() : AndroidUtilities.dp(280);
+            accountsContainer.measure(
+                    MeasureSpec.makeMeasureSpec(parentWidth, MeasureSpec.EXACTLY),
+                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+            int targetHeight = accountsContainer.getMeasuredHeight();
+            lp.height = 0;
+            accountsContainer.setLayoutParams(lp);
+
+            accountsHeightAnimator = android.animation.ValueAnimator.ofInt(0, targetHeight);
+            accountsHeightAnimator.addUpdateListener(a -> {
+                lp.height = (int) a.getAnimatedValue();
+                accountsContainer.setLayoutParams(lp);
+            });
+            accountsHeightAnimator.setDuration(240);
+            accountsHeightAnimator.setInterpolator(new android.view.animation.DecelerateInterpolator());
+            accountsHeightAnimator.start();
+            accountsContainer.animate().alpha(1f).setDuration(240).start();
+        } else {
+            int startHeight = accountsContainer.getHeight();
+            accountsHeightAnimator = android.animation.ValueAnimator.ofInt(startHeight, 0);
+            accountsHeightAnimator.addUpdateListener(a -> {
+                lp.height = (int) a.getAnimatedValue();
+                accountsContainer.setLayoutParams(lp);
+            });
+            accountsHeightAnimator.setDuration(200);
+            accountsHeightAnimator.setInterpolator(new android.view.animation.AccelerateInterpolator());
+            accountsHeightAnimator.addListener(new android.animation.AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(android.animation.Animator animation) {
+                    accountsContainer.setVisibility(GONE);
+                    lp.height = LayoutHelper.WRAP_CONTENT;
+                    accountsContainer.setLayoutParams(lp);
+                }
+            });
+            accountsHeightAnimator.start();
+            accountsContainer.animate().alpha(0f).setDuration(160).start();
+        }
         PotokDebugLog.log(LOG_TAG, "toggleAccountsList: " + (accountsExpanded ? "развёрнут" : "свёрнут"));
+    }
+
+    // Фикс "серого квадрата": вызывается при каждом открытии шторки — подтягивает актуальные
+    // имя/номер/фото из UserConfig и, если фото ещё не было показано (например, догрузилось
+    // уже после создания view), подставляет его сейчас.
+    public void refreshHeaderData() {
+        TLRPC.User user = UserConfig.getInstance(UserConfig.selectedAccount).getCurrentUser();
+        if (user == null) {
+            return;
+        }
+        if (nameViewRef != null) {
+            nameViewRef.setText(user.first_name + (user.last_name != null ? " " + user.last_name : ""));
+        }
+        if (phoneViewRef != null && user.phone != null) {
+            phoneViewRef.setText("+" + user.phone);
+        }
+        boolean hasPhoto = user.photo != null && user.photo.photo_big != null
+                && !(user.photo instanceof TLRPC.TL_userProfilePhotoEmpty);
+        if (hasPhoto && avatarView != null && !avatarView.getImageReceiver().hasBitmapImage()) {
+            AvatarDrawable avatarDrawable = new AvatarDrawable(user);
+            avatarView.getImageReceiver().setForUserOrChat(user, avatarDrawable, null, true, 0, true);
+            PotokDebugLog.log(LOG_TAG, "refreshHeaderData: фото подставлено при открытии, t=+" + (System.currentTimeMillis() - createdAtMs) + "ms");
+        }
     }
 
     @Override

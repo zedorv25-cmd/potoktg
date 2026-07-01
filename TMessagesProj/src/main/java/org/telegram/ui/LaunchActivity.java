@@ -604,6 +604,24 @@ potokDrawerView.setOnDrawerItemClickListener(id -> {
                 for (int acc : accountNumbers) {
                     final int account = acc;
                     View row = mainTabsActivity.accountView(account, account == UserConfig.selectedAccount);
+                    // Фикс 3: выравниваем отступы аватара/текста под тот же стандарт, что и у
+                    // остальных пунктов шторки (createSimpleRow: иконка от 16dp, текст от 72dp),
+                    // иначе "Zafar" визуально смещён относительно "Мой профиль" и т.п.
+                    if (row instanceof LinearLayout && ((LinearLayout) row).getChildCount() >= 2) {
+                        LinearLayout accRow = (LinearLayout) row;
+                        View avatarContainer = accRow.getChildAt(0);
+                        View textView = accRow.getChildAt(1);
+                        if (avatarContainer.getLayoutParams() instanceof LinearLayout.LayoutParams) {
+                            LinearLayout.LayoutParams p = (LinearLayout.LayoutParams) avatarContainer.getLayoutParams();
+                            p.leftMargin = AndroidUtilities.dp(16);
+                            avatarContainer.setLayoutParams(p);
+                        }
+                        if (textView.getLayoutParams() instanceof LinearLayout.LayoutParams) {
+                            LinearLayout.LayoutParams p = (LinearLayout.LayoutParams) textView.getLayoutParams();
+                            p.leftMargin = AndroidUtilities.dp(22);
+                            textView.setLayoutParams(p);
+                        }
+                    }
                     row.setOnClickListener(v -> {
                         if (account == UserConfig.selectedAccount) {
                             return;

@@ -243,7 +243,7 @@ public class PotokDrawerView extends FrameLayout {
         accountToggleTouchArea.setBackground(Theme.createSelectorDrawable(0x26ffffff, 2));
         accountToggleTouchArea.setOnClickListener(v -> {
             PotokDebugLog.log(LOG_TAG, "Клик: зона имени/номера/шеврона, t=+" + (System.currentTimeMillis() - createdAtMs) + "ms");
-            toggleAccountsList();
+            if (listener != null) listener.onItemClick(ID_SWITCH_ACCOUNT);
         });
         header.addView(accountToggleTouchArea, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 64, Gravity.LEFT | Gravity.BOTTOM));
 

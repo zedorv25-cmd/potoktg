@@ -18,6 +18,7 @@ import androidx.core.graphics.ColorUtils;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
 import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.TLRPC;
@@ -27,7 +28,7 @@ import org.telegram.ui.Components.AvatarDrawable;
 import org.telegram.ui.Components.BackupImageView;
 import org.telegram.ui.Components.LayoutHelper;
 
-public class PotokDrawerView extends FrameLayout {
+public class PotokDrawerView extends FrameLayout implements NotificationCenter.NotificationCenterDelegate {
 
     private static final String LOG_TAG = "DRAWER";
     private final long createdAtMs = System.currentTimeMillis();
@@ -56,6 +57,7 @@ public class PotokDrawerView extends FrameLayout {
     private View chevronView;
     private boolean accountsExpanded = false;
     private ScrollView scrollViewRef;
+    private LinearLayout contentRef;
     private int lastAppliedTopInset = -1;
     private android.animation.ValueAnimator accountsHeightAnimator;
 
@@ -65,6 +67,11 @@ public class PotokDrawerView extends FrameLayout {
     private FrameLayout headerRef;
     private TextView nameViewRef;
     private TextView phoneViewRef;
+
+    // Фикс 1: список коллбэков перекраски — вызывается целиком при смене темы, чтобы
+    // все элементы шторки (фон, иконки, текст, разделители) подхватили новые цвета
+    // без пересоздания всей вьюхи.
+    private final java.util.List<Runnable> themeUpdaters = new java.util.ArrayList<>();
 
     // Фикс 1: шеврон округлённый — уменьшен угол за счёт поднятия вершины (h/2.5f вместо h-pad),
     // увеличена толщина линии (2.0dp вместо 1.6dp), что даёт более мягкий и менее острый вид.
@@ -114,10 +121,10 @@ public class PotokDrawerView extends FrameLayout {
         if (insetsCompat != null) {
             topInset = insetsCompat.getInsetsIgnoringVisibility(androidx.core.view.WindowInsetsCompat.Type.systemBars()).top;
         }
-        if (topInset != lastAppliedTopInset && scrollViewRef != null) {
+        if (topInset != lastAppliedTopInset && contentRef != null) {
             lastAppliedTopInset = topInset;
-            scrollViewRef.setPadding(0, topInset, 0, 0);
-            PotokDebugLog.log(LOG_TAG, "onMeasure: topInset=" + topInset + "px");
+            contentRef.setPadding(0, topInset, 0, 0);
+            PotokDebugLog.log(LOG_TAG, "onMeasure: topInset=" + topInset + "px (применён к content, не к scrollView)");
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
     }
@@ -128,6 +135,7 @@ public class PotokDrawerView extends FrameLayout {
         PotokDebugLog.log(LOG_TAG, "Конструктор начат, t=0ms");
 
         setBackgroundColor(Theme.getColor(Theme.key_chats_menuBackground));
+        themeUpdaters.add(() -> setBackgroundColor(Theme.getColor(Theme.key_chats_menuBackground)));
 
         LinearLayout content = new LinearLayout(context);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -158,6 +166,11 @@ public class PotokDrawerView extends FrameLayout {
         int baseColor = Theme.getColor(Theme.key_chats_menuBackground);
         int placeholderColor = ColorUtils.blendARGB(baseColor, dark ? Color.WHITE : Color.BLACK, dark ? 0.10f : 0.06f);
         header.setBackgroundColor(placeholderColor);
+        themeUpdaters.add(() -> {
+            boolean d = Theme.isCurrentThemeDark();
+            int base = Theme.getColor(Theme.key_chats_menuBackground);
+            header.setBackgroundColor(ColorUtils.blendARGB(base, d ? Color.WHITE : Color.BLACK, d ? 0.10f : 0.06f));
+        });
 
         // avatarView создаём ВСЕГДА (а не только если hasPhoto), чтобы можно было
         // подставить фото позже через refreshHeaderData(), когда оно догрузится —
@@ -256,13 +269,14 @@ public class PotokDrawerView extends FrameLayout {
         accountsContainer = new LinearLayout(context);
         accountsContainer.setOrientation(LinearLayout.VERTICAL);
         accountsContainer.setBackgroundColor(Theme.getColor(Theme.key_chats_menuBackground));
+        themeUpdaters.add(() -> accountsContainer.setBackgroundColor(Theme.getColor(Theme.key_chats_menuBackground)));
         accountsContainer.setVisibility(GONE);
         content.addView(accountsContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
         // Постоянный разделитель перед пунктами меню — всегда виден.
         content.addView(createDivider(context));
 
-        content.addView(createMenuItem(context, ID_MY_PROFILE, R.drawable.settings_account, LocaleController.getString("MyProfile", R.string.MyProfile)));
-        content.addView(createMenuItem(context, ID_WALLET, R.drawable.settings_wallet, LocaleController.getString("PotokWallet", R.string.PotokWallet)));
+        content.addView(createMenuItem(context, ID_MY_PROFILE, R.drawable.potok_ic_profile_outline, LocaleController.getString("MyProfile", R.string.MyProfile)));
+        content.addView(createMenuItem(context, ID_WALLET, R.drawable.potok_ic_wallet_outline, LocaleController.getString("PotokWallet", R.string.PotokWallet)));
         content.addView(createDivider(context));
         content.addView(createMenuItem(context, ID_NEW_GROUP, R.drawable.msg_groups, LocaleController.getString("NewGroup", R.string.NewGroup)));
         content.addView(createMenuItem(context, ID_NEW_CHANNEL, R.drawable.msg_channel, LocaleController.getString("NewChannel", R.string.NewChannel)));
@@ -277,6 +291,7 @@ public class PotokDrawerView extends FrameLayout {
         ScrollView scrollView = new ScrollView(context);
         scrollView.setClipToPadding(false);
         scrollViewRef = scrollView;
+        contentRef = content;
         scrollView.addView(content);
         addView(scrollView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
@@ -288,6 +303,13 @@ public class PotokDrawerView extends FrameLayout {
         item.setOnClickListener(v -> {
             PotokDebugLog.log(LOG_TAG, "Клик: \"" + title + "\" (id=" + id + ")");
             if (listener != null) listener.onItemClick(id);
+        });
+        ImageView icon = (ImageView) ((FrameLayout) item).getChildAt(0);
+        TextView text = (TextView) ((FrameLayout) item).getChildAt(1);
+        themeUpdaters.add(() -> {
+            icon.setColorFilter(Theme.getColor(Theme.key_chats_menuItemIcon), android.graphics.PorterDuff.Mode.MULTIPLY);
+            text.setTextColor(Theme.getColor(Theme.key_chats_menuItemText));
+            item.setBackground(Theme.createSelectorDrawable(Theme.getColor(Theme.key_listSelector), 2));
         });
         return item;
     }
@@ -315,6 +337,7 @@ public class PotokDrawerView extends FrameLayout {
     private View createDivider(Context context) {
         View divider = new View(context);
         divider.setBackgroundColor(Theme.getColor(Theme.key_divider));
+        themeUpdaters.add(() -> divider.setBackgroundColor(Theme.getColor(Theme.key_divider)));
         return divider;
     }
 
@@ -428,6 +451,35 @@ public class PotokDrawerView extends FrameLayout {
             AvatarDrawable avatarDrawable = new AvatarDrawable(user);
             avatarView.getImageReceiver().setForUserOrChat(user, avatarDrawable, null, true, 0, true);
             PotokDebugLog.log(LOG_TAG, "refreshHeaderData: фото подставлено при открытии, t=+" + (System.currentTimeMillis() - createdAtMs) + "ms");
+        }
+    }
+
+    // Фикс 1: применяет актуальные цвета темы ко всем зарегистрированным элементам —
+    // вызывается при смене дневной/ночной темы, чтобы шторка не оставалась "старого" цвета.
+    public void applyTheme() {
+        for (Runnable updater : themeUpdaters) {
+            updater.run();
+        }
+        invalidate();
+        PotokDebugLog.log(LOG_TAG, "applyTheme: цвета шторки обновлены (" + themeUpdaters.size() + " элементов)");
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.didSetNewTheme);
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.didSetNewTheme);
+    }
+
+    @Override
+    public void didReceivedNotification(int id, int account, Object... args) {
+        if (id == NotificationCenter.didSetNewTheme) {
+            applyTheme();
         }
     }
 

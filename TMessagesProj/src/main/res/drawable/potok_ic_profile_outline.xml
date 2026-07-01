@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Контурная иконка профиля — нарисована вручную, т.к. готовых контурных (не залитых)
+     иконок для "Мой профиль" в наборе ресурсов проекта не нашлось (только settings_account,
+     который залитый и не совпадает по стилю с остальными пунктами шторки). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M12,8m-3.5,0a3.5,3.5 0,1 1,7,0a3.5,3.5 0,1 1,-7,0"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M4.5,20 C4.5,15.86 7.86,13 12,13 C16.14,13 19.5,15.86 19.5,20"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.6"
+        android:fillColor="#00000000" />
+</vector>

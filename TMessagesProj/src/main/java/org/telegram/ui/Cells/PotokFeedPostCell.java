@@ -127,10 +127,12 @@ public class PotokFeedPostCell extends LinearLayout {
         avatarView = new BackupImageView(context);
         avatarView.setRoundRadius(dp(18));
         headerRow.addView(avatarView, LayoutHelper.createLinear(36, 36));
+        avatarView.setOnClickListener(v -> openChannelProfile());
 
         LinearLayout titleColumn = new LinearLayout(context);
         titleColumn.setOrientation(VERTICAL);
         headerRow.addView(titleColumn, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, 10, 0, 0, 0));
+        titleColumn.setOnClickListener(v -> openChannelProfile());
 
         titleView = new TextView(context);
         titleView.setTextSize(15);
@@ -165,6 +167,13 @@ public class PotokFeedPostCell extends LinearLayout {
         textView.setMaxLines(MAX_TEXT_LINES);
         textView.setEllipsize(TextUtils.TruncateAt.END);
         textView.setLineSpacing(dp(2), 1f);
+        // Фикс долгого нажатия: TextView сам может перехватывать long-press под выделение
+        // текста, форвардим на тот же обработчик, что и для фото/остальной карточки.
+        textView.setLongClickable(true);
+        textView.setOnLongClickListener(v -> {
+            openPostInChannel();
+            return true;
+        });
         addView(textView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 8, 12, 0));
 
         // --- Кнопка «ещё» ---
@@ -329,10 +338,9 @@ public class PotokFeedPostCell extends LinearLayout {
 
         commentsRow.setOnClickListener(v -> openComments());
 
-        // --- Разделитель ---
-        View divider = new View(context);
-        divider.setBackgroundColor(Theme.getColor(Theme.key_graySection, resourcesProvider));
-        addView(divider, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 8));
+        // Разделитель убран: раньше был отдельной серой полосой 8dp внутри ячейки,
+        // теперь посты — отдельные карточки с отступами снаружи (см. PotokFeedFragment,
+        // где выставляются margins у RecyclerView.LayoutParams), полоса стала не нужна.
 
         // Долгое нажатие по карточке -> открыть пост в канале
         setLongClickable(true);
@@ -707,6 +715,14 @@ public class PotokFeedPostCell extends LinearLayout {
         parentFragment.presentFragment(new ChatActivity(args));
     }
 
+    // Клик по названию канала или аватарке -> профиль канала.
+    private void openChannelProfile() {
+        if (currentChannel == null || parentFragment == null) return;
+        android.os.Bundle args = new android.os.Bundle();
+        args.putLong("chat_id", currentChannel.id);
+        parentFragment.presentFragment(new org.telegram.ui.ProfileActivity(args));
+    }
+
     private void showPostMenu(View anchor) {
         if (getContext() == null || currentMessage == null || parentActivity == null) return;
         if (postMenuWindow != null) {
@@ -825,7 +841,7 @@ public class PotokFeedPostCell extends LinearLayout {
         // Переслать без автора
         ActionBarMenuSubItem forwardNoAuthor = new ActionBarMenuSubItem(getContext(), false, false, null);
         forwardNoAuthor.setMinimumWidth(AndroidUtilities.dp(200));
-        forwardNoAuthor.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.HideSendersName), org.telegram.messenger.R.drawable.msg_forward_replace);
+        forwardNoAuthor.setTextAndIcon("Переслать без автора", org.telegram.messenger.R.drawable.msg_forward_replace);
         layout.addView(forwardNoAuthor);
         forwardNoAuthor.setOnClickListener(v -> {
             if (postMenuWindow != null) postMenuWindow.dismiss();
@@ -1071,6 +1087,13 @@ public class PotokFeedPostCell extends LinearLayout {
 
             final int idx = position;
             img.setOnClickListener(v -> openMediaViewer(mo, idx, items));
+            // Фикс: карусель (RecyclerView) сама перехватывает долгое нажатие для своих
+            // touch-жестов (скролл/свайп), поэтому долгий тап по фото не долетал до
+            // long-click на самой карточке поста. Дублируем обработчик прямо здесь.
+            img.setOnLongClickListener(v -> {
+                openPostInChannel();
+                return true;
+            });
         }
 
         @Override public int getItemCount() { return items.size(); }

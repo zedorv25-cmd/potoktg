@@ -154,7 +154,12 @@ public class PotokDrawerView extends FrameLayout implements NotificationCenter.N
             @Override
             protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
                 int width = MeasureSpec.getSize(widthMeasureSpec);
-                super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY));
+                // Фикс: раньше шапка была квадратом height=width, но теперь над ней есть
+                // реальный отступ под статусбар (lastAppliedTopInset), из-за чего суммарный
+                // видимый блок (отступ+фото) становился выше ширины. Вычитаем отступ из
+                // высоты самой шапки, чтобы весь блок целиком снова был ровным квадратом.
+                int squareHeight = Math.max(0, width - lastAppliedTopInset);
+                super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(squareHeight, MeasureSpec.EXACTLY));
             }
         };
 

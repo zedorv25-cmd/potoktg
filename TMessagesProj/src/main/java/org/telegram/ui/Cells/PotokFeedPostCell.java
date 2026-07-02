@@ -30,8 +30,10 @@ import org.telegram.messenger.MediaController;
 import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessageObject;
+import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Components.AnimatedEmojiDrawable;
 import org.telegram.ui.Components.AvatarDrawable;
 import org.telegram.ui.Components.BackupImageView;
 import org.telegram.ui.Components.LayoutHelper;
@@ -80,15 +82,17 @@ public class PotokFeedPostCell extends LinearLayout {
     // --- Футер ---
     private final ImageView viewsIcon;
     private final TextView viewsView;
+    private final ReactionEmojiView reactionEmojiView;
     private final TextView reactionView;
     private final LinearLayout commentsRow;
     private final TextView commentsView;
+    private boolean commentsLoading = false;
 
     private MessageObject currentMessage;
     private ArrayList<MessageObject> currentMessages;
     private android.app.Activity parentActivity;
     private TLRPC.Chat currentChannel;
-    private TextView menuButton;
+    private ImageView menuButton;
     private org.telegram.ui.ActionBar.BaseFragment parentFragment;
 
     public void setParentFragment(org.telegram.ui.ActionBar.BaseFragment fragment) {
@@ -111,10 +115,14 @@ public class PotokFeedPostCell extends LinearLayout {
         setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
 
         // --- Шапка ---
+        // Фикс: полоса с названием канала теперь отдельного цвета от остального поста
+        // (full-width — через padding, а не margin, иначе цветной блок был бы "с отступами").
         LinearLayout headerRow = new LinearLayout(context);
         headerRow.setOrientation(HORIZONTAL);
         headerRow.setGravity(Gravity.CENTER_VERTICAL);
-        addView(headerRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 12, 12, 0));
+        headerRow.setPadding(dp(12), dp(12), dp(8), dp(10));
+        headerRow.setBackgroundColor(Theme.getColor(Theme.key_graySection, resourcesProvider));
+        addView(headerRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
         avatarView = new BackupImageView(context);
         avatarView.setRoundRadius(dp(18));
@@ -137,15 +145,18 @@ public class PotokFeedPostCell extends LinearLayout {
         timeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
         titleColumn.addView(timeView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
-        // --- Кнопка меню "⋮" ---
-        menuButton = new TextView(context);
-        menuButton.setText("⋮");
-        menuButton.setTextSize(20);
-        menuButton.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
-        menuButton.setGravity(Gravity.CENTER);
-        menuButton.setPadding(dp(8), 0, dp(4), 0);
+        // --- Кнопка меню ---
+        // Фикс: раньше это был текстовый символ "⋮" с неровными отступами (8/4) —
+        // отсюда и "кривизна". Теперь нормальная иконка (ic_ab_other, стандартная
+        // "три точки" из самого Telegram) с симметричными отступами, крупнее.
+        menuButton = new ImageView(context);
+        menuButton.setImageResource(org.telegram.messenger.R.drawable.ic_ab_other);
+        menuButton.setColorFilter(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
+        menuButton.setScaleType(ImageView.ScaleType.CENTER);
+        menuButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+        menuButton.setBackground(Theme.createSelectorDrawable(Theme.getColor(Theme.key_listSelector, resourcesProvider), Theme.RIPPLE_MASK_CIRCLE_20DP));
         menuButton.setOnClickListener(v -> showPostMenu(v));
-        headerRow.addView(menuButton, LayoutHelper.createLinear(32, 36, Gravity.CENTER_VERTICAL));
+        headerRow.addView(menuButton, LayoutHelper.createLinear(40, 40, Gravity.CENTER_VERTICAL));
 
         // --- Текст ---
         textView = new TextView(context);
@@ -262,25 +273,36 @@ public class PotokFeedPostCell extends LinearLayout {
         this.audioSeekRow = audioSeekRow;
 
         // --- Футер ---
+        // Фикс: раньше было тесно (иконки 16dp, текст 13sp) и комментарии шли сразу
+        // после реакции слева. Теперь — 4 условные колонки: просмотры | реакция |
+        // (гибкий отступ) | комментарии — комментарии прижаты к правому краю.
         LinearLayout footer = new LinearLayout(context);
         footer.setOrientation(HORIZONTAL);
         footer.setGravity(Gravity.CENTER_VERTICAL);
-        addView(footer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 10, 12, 12));
+        addView(footer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 12, 12, 14));
 
         viewsIcon = new ImageView(context);
         viewsIcon.setImageResource(org.telegram.messenger.R.drawable.msg_views);
         viewsIcon.setColorFilter(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
-        footer.addView(viewsIcon, LayoutHelper.createLinear(16, 16, 0, Gravity.CENTER_VERTICAL, 0, 0, 4, 0));
+        footer.addView(viewsIcon, LayoutHelper.createLinear(20, 20, 0, Gravity.CENTER_VERTICAL, 0, 0, 5, 0));
 
         viewsView = new TextView(context);
-        viewsView.setTextSize(13);
+        viewsView.setTextSize(14);
         viewsView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
-        footer.addView(viewsView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL, 0, 0, 16, 0));
+        footer.addView(viewsView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL, 0, 0, 18, 0));
+
+        reactionEmojiView = new ReactionEmojiView(context);
+        reactionEmojiView.setVisibility(GONE);
+        footer.addView(reactionEmojiView, LayoutHelper.createLinear(20, 20, 0, Gravity.CENTER_VERTICAL, 0, 0, 4, 0));
 
         reactionView = new TextView(context);
-        reactionView.setTextSize(13);
+        reactionView.setTextSize(14);
         reactionView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
         footer.addView(reactionView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL));
+
+        // Гибкий отступ — толкает блок комментариев к правому краю.
+        View footerSpacer = new View(context);
+        footer.addView(footerSpacer, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f));
 
         // --- Комментарии ---
         // Видна только если у поста есть привязанная группа обсуждений
@@ -290,15 +312,18 @@ public class PotokFeedPostCell extends LinearLayout {
         commentsRow.setOrientation(HORIZONTAL);
         commentsRow.setGravity(Gravity.CENTER_VERTICAL);
         commentsRow.setVisibility(GONE);
-        footer.addView(commentsRow, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL, 16, 0, 0, 0));
+        // Увеличенный внутренний паддинг — больше площадь нажатия (жалоба на то,
+        // что тап срабатывает не с первого раза) и больше "воздуха" под пальцем.
+        commentsRow.setPadding(dp(10), dp(8), dp(4), dp(8));
+        footer.addView(commentsRow, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL));
 
         ImageView commentsIcon = new ImageView(context);
         commentsIcon.setImageResource(org.telegram.messenger.R.drawable.msg_discussion);
         commentsIcon.setColorFilter(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider));
-        commentsRow.addView(commentsIcon, LayoutHelper.createLinear(16, 16, 0, Gravity.CENTER_VERTICAL, 0, 0, 4, 0));
+        commentsRow.addView(commentsIcon, LayoutHelper.createLinear(20, 20, 0, Gravity.CENTER_VERTICAL, 0, 0, 5, 0));
 
         commentsView = new TextView(context);
-        commentsView.setTextSize(13);
+        commentsView.setTextSize(14);
         commentsView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider));
         commentsRow.addView(commentsView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL));
 
@@ -332,6 +357,11 @@ public class PotokFeedPostCell extends LinearLayout {
         textView.setEllipsize(TextUtils.TruncateAt.END);
         expandButton.setText("ещё");
         expandButton.setVisibility(GONE);
+        // Фикс: если ячейка переиспользуется, пока старый запрос комментариев ещё летит —
+        // сбрасываем флаг и прозрачность, иначе кнопка комментариев нового поста может
+        // навсегда остаться полупрозрачной/заблокированной.
+        commentsLoading = false;
+        commentsRow.setAlpha(1f);
 
         // Шапка
         AvatarDrawable avatarDrawable = new AvatarDrawable();
@@ -442,13 +472,26 @@ public class PotokFeedPostCell extends LinearLayout {
 
         TLRPC.ReactionCount topReaction = getTopReaction(messageObject);
         if (topReaction != null) {
-            String emoji = "";
-            if (topReaction.reaction instanceof TLRPC.TL_reactionEmoji) {
-                emoji = ((TLRPC.TL_reactionEmoji) topReaction.reaction).emoticon;
+            if (topReaction.reaction instanceof TLRPC.TL_reactionCustomEmoji) {
+                // Кастомная эмодзи-реакция — рисуем как стикер через AnimatedEmojiDrawable,
+                // рядом только число (без места под юникод-символ).
+                long documentId = ((TLRPC.TL_reactionCustomEmoji) topReaction.reaction).document_id;
+                reactionEmojiView.setDocumentId(documentId);
+                reactionEmojiView.setVisibility(VISIBLE);
+                reactionView.setText(String.valueOf(topReaction.count));
+            } else {
+                reactionEmojiView.setVisibility(GONE);
+                reactionEmojiView.setDocumentId(0);
+                String emoji = "";
+                if (topReaction.reaction instanceof TLRPC.TL_reactionEmoji) {
+                    emoji = ((TLRPC.TL_reactionEmoji) topReaction.reaction).emoticon;
+                }
+                reactionView.setText(emoji + " " + topReaction.count);
             }
-            reactionView.setText(emoji + " " + topReaction.count);
             reactionView.setVisibility(VISIBLE);
         } else {
+            reactionEmojiView.setVisibility(GONE);
+            reactionEmojiView.setDocumentId(0);
             reactionView.setVisibility(GONE);
         }
 
@@ -482,6 +525,13 @@ public class PotokFeedPostCell extends LinearLayout {
         if (currentMessage == null || currentChannel == null || parentFragment == null) return;
         TLRPC.MessageReplies replies = currentMessage.messageOwner != null ? currentMessage.messageOwner.replies : null;
         if (replies == null || !replies.comments) return;
+        // Фикс "нажимаю 2-3-4 раза": раньше каждый тап отправлял новый сетевой запрос —
+        // при нескольких быстрых тапах улетало несколько запросов, и по мере того как они
+        // возвращались, экран комментариев мог попытаться открыться повторно. Теперь —
+        // пока первый запрос не отработал, повторные тапы игнорируются.
+        if (commentsLoading) return;
+        commentsLoading = true;
+        commentsRow.setAlpha(0.5f);
 
         final int originalMsgId = currentMessage.getId();
         final TLRPC.Chat originalChat = currentChannel;
@@ -493,6 +543,8 @@ public class PotokFeedPostCell extends LinearLayout {
 
         org.telegram.messenger.MessagesController controller = parentFragment.getMessagesController();
         parentFragment.getConnectionsManager().sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
+            commentsLoading = false;
+            commentsRow.setAlpha(1f);
             if (parentFragment == null || parentFragment.getParentActivity() == null) return;
             if (!(response instanceof TLRPC.TL_messages_discussionMessage)) {
                 FileLog.e("PotokFeedPostCell: getDiscussionMessage failed, error=" + (error != null ? error.text : "null response"));
@@ -1177,6 +1229,52 @@ public class PotokFeedPostCell extends LinearLayout {
                 float cx = startX + i * (dp(DOT_SIZE_DP) + gap);
                 canvas.drawCircle(cx, cy, dotR, i == currentPage ? activePaint : inactivePaint);
             }
+        }
+    }
+
+    // Фикс "реакция без смайлика": обычный TextView умеет показать только юникод-эмодзи
+    // (TL_reactionEmoji). Если у канала кастомная эмодзи-реакция (TL_reactionCustomEmoji —
+    // это стикер, а не текстовый символ), нужен полноценный AnimatedEmojiDrawable.
+    // Эта вьюха — минимальный хост для него: сама ничего не знает про реакции,
+    // просто рисует переданный document_id.
+    private static class ReactionEmojiView extends View {
+        private AnimatedEmojiDrawable drawable;
+
+        ReactionEmojiView(Context context) {
+            super(context);
+        }
+
+        void setDocumentId(long documentId) {
+            if (drawable != null) {
+                drawable.removeView(this);
+                drawable = null;
+            }
+            if (documentId != 0) {
+                drawable = AnimatedEmojiDrawable.make(UserConfig.selectedAccount, AnimatedEmojiDrawable.CACHE_TYPE_MESSAGES, documentId);
+                drawable.addView(this);
+            }
+            invalidate();
+        }
+
+        void recycle() {
+            if (drawable != null) {
+                drawable.removeView(this);
+                drawable = null;
+            }
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            if (drawable != null) {
+                drawable.setBounds(0, 0, getWidth(), getHeight());
+                drawable.draw(canvas);
+            }
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            super.onDetachedFromWindow();
+            recycle();
         }
     }
 }

@@ -76,7 +76,15 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             @Override
             public RecyclerListView.Holder onCreateViewHolder(android.view.ViewGroup parent, int viewType) {
                 PotokFeedPostCell cell = new PotokFeedPostCell(context, null);
-                cell.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
+                RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT);
+                // Фикс "карточки впритык": раньше пост занимал всю ширину без отступов
+                // и соседние посты стыковались друг с другом. Теперь — заметные, но не
+                // большие отступы со всех 4 сторон, как отдельные карточки в канале.
+                lp.leftMargin = AndroidUtilities.dp(8);
+                lp.rightMargin = AndroidUtilities.dp(8);
+                lp.topMargin = AndroidUtilities.dp(6);
+                lp.bottomMargin = AndroidUtilities.dp(6);
+                cell.setLayoutParams(lp);
                 cell.setParentActivity(getParentActivity());
                 cell.setParentFragment(PotokFeedFragment.this);
                 return new RecyclerListView.Holder(cell);
@@ -326,9 +334,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     }
 
     /**
-     * Чёткая на любом dpi стрелка "вверх": стержень + шеврон (галочка), отрисованные
-     * через Path с круглыми соединениями — визуально аккуратнее системной
-     * android.R.drawable.arrow_up_float, которая на деле выглядит как треугольник.
+     * Простой шеврон "^" (две сходящиеся вверх линии, без стержня) — по просьбе
+     * убрать "стрелу", оставить только галочку.
      */
     private static class ArrowUpView extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -352,20 +359,13 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             super.onSizeChanged(w, h, oldw, oldh);
             path.reset();
             float cx = w / 2f;
-            float top = h * 0.16f;
-            float bottom = h * 0.82f;
-            float chevronHalfWidth = w * 0.30f;
-            float chevronTop = top;
-            float chevronBottom = top + (bottom - top) * 0.46f;
+            float cy = h / 2f;
+            float halfWidth = w * 0.28f;
+            float halfHeight = h * 0.20f;
 
-            // Стержень стрелки
-            path.moveTo(cx, chevronBottom - AndroidUtilities.dp(1));
-            path.lineTo(cx, bottom);
-
-            // Шеврон (галочка) поверх стержня
-            path.moveTo(cx - chevronHalfWidth, chevronBottom);
-            path.lineTo(cx, chevronTop);
-            path.lineTo(cx + chevronHalfWidth, chevronBottom);
+            path.moveTo(cx - halfWidth, cy + halfHeight);
+            path.lineTo(cx, cy - halfHeight);
+            path.lineTo(cx + halfWidth, cy + halfHeight);
         }
 
         @Override

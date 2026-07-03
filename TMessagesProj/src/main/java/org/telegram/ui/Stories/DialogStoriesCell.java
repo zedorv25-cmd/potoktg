@@ -189,6 +189,42 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
         menuItemsOffset = dp(68);
         storiesController = MessagesController.getInstance(currentAccount).getStoriesController();
         recyclerListView = new RecyclerListView(context) {
+            // Фикс: список историй лежит внутри DrawerLayout (боковая шторка Potok),
+            // который перехватывает свайп вправо как жест открытия шторки. Как только
+            // видим, что палец двигается преимущественно по горизонтали внутри самого
+            // списка историй — явно запрещаем родителю (DrawerLayout) перехватывать тач,
+            // чтобы горизонтальный свайп доставался только историям.
+            private float touchDownX, touchDownY;
+            private boolean disallowDecided;
+
+            @Override
+            public boolean onInterceptTouchEvent(MotionEvent ev) {
+                switch (ev.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        touchDownX = ev.getX();
+                        touchDownY = ev.getY();
+                        disallowDecided = false;
+                        break;
+                    case MotionEvent.ACTION_MOVE:
+                        if (!disallowDecided) {
+                            float dx = Math.abs(ev.getX() - touchDownX);
+                            float dy = Math.abs(ev.getY() - touchDownY);
+                            if (dx > AndroidUtilities.dp(4) || dy > AndroidUtilities.dp(4)) {
+                                disallowDecided = true;
+                                if (dx > dy && getParent() != null) {
+                                    getParent().requestDisallowInterceptTouchEvent(true);
+                                }
+                            }
+                        }
+                        break;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        disallowDecided = false;
+                        break;
+                }
+                return super.onInterceptTouchEvent(ev);
+            }
+
             @Override
             public boolean drawChild(Canvas canvas, View child, long drawingTime) {
                 if (viewsDrawInParent.contains(child)) {

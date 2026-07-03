@@ -114,6 +114,20 @@ public class PotokDrawerView extends FrameLayout implements NotificationCenter.N
         return button;
     }
 
+    private final Paint bodyBackgroundPaint = new Paint();
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        // Фикс "белая полоса под статусбаром": раньше фон красился сплошным цветом на
+        // весь корень, включая верхнюю зону под статусбаром (topInset) — из-за этого
+        // слева статусбар выглядел иначе, чем справа (там просто затемнение основного
+        // экрана позади шторки). Теперь красим фон только НИЖЕ topInset, а сама верхняя
+        // полоса остаётся прозрачной — сквозь неё виден стандартный scrim DrawerLayout,
+        // тот же, что и справа от шторки.
+        canvas.drawRect(0, lastAppliedTopInset, getWidth(), getHeight(), bodyBackgroundPaint);
+        super.onDraw(canvas);
+    }
+
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         int topInset = 0;
@@ -134,8 +148,12 @@ public class PotokDrawerView extends FrameLayout implements NotificationCenter.N
         this.parentFragment = fragment;
         PotokDebugLog.log(LOG_TAG, "Конструктор начат, t=0ms");
 
-        setBackgroundColor(Theme.getColor(Theme.key_chats_menuBackground));
-        themeUpdaters.add(() -> setBackgroundColor(Theme.getColor(Theme.key_chats_menuBackground)));
+        bodyBackgroundPaint.setColor(Theme.getColor(Theme.key_chats_menuBackground));
+        themeUpdaters.add(() -> {
+            bodyBackgroundPaint.setColor(Theme.getColor(Theme.key_chats_menuBackground));
+            invalidate();
+        });
+        setWillNotDraw(false);
 
         LinearLayout content = new LinearLayout(context);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -188,6 +206,13 @@ public class PotokDrawerView extends FrameLayout implements NotificationCenter.N
                     + ", memCache=" + memCache + ", t=+" + elapsed + "ms");
         });
         header.addView(avatarView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+        // Тап по фото в шапке — открыть его на весь экран (как обычный просмотр аватарки).
+        avatarView.setOnClickListener(v -> {
+            TLRPC.User currentUser = UserConfig.getInstance(UserConfig.selectedAccount).getCurrentUser();
+            if (currentUser != null && currentUser.photo != null && currentUser.photo.photo_big != null) {
+                PhotoViewer.getInstance().openPhoto(currentUser.photo.photo_big, new PhotoViewer.EmptyPhotoViewerProvider());
+            }
+        });
         if (hasPhoto) {
             AvatarDrawable avatarDrawable = new AvatarDrawable(user);
             avatarView.getImageReceiver().setForUserOrChat(user, avatarDrawable, null, true, 0, true);

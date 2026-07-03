@@ -59,8 +59,13 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
     @Override
     public View createView(Context context) {
-        FrameLayout frameLayout = new FrameLayout(context);
+        org.telegram.ui.Components.SizeNotifierFrameLayout frameLayout = new org.telegram.ui.Components.SizeNotifierFrameLayout(context);
         fragmentView = frameLayout;
+        // Фикс "карнавал полосок": лента раньше рисовала сплошной фон темы под
+        // карточками, из-за чего фон не совпадал с обоями, которые пользователь
+        // выставил в самих чатах. Теперь используем тот же механизм, что и ChatActivity —
+        // SizeNotifierFrameLayout.setBackgroundImage с текущими обоями темы.
+        frameLayout.setBackgroundImage(Theme.getCachedWallpaper(), Theme.isWallpaperMotion());
 
         listView = new RecyclerListView(context);
         listViewLayoutManager = new LinearLayoutManager(context);
@@ -303,12 +308,14 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     @Override
     public boolean onFragmentCreate() {
         getNotificationCenter().addObserver(this, NotificationCenter.messagePlayingProgressDidChanged);
+        getNotificationCenter().addObserver(this, NotificationCenter.didSetNewTheme);
         return super.onFragmentCreate();
     }
 
     @Override
     public void onFragmentDestroy() {
         getNotificationCenter().removeObserver(this, NotificationCenter.messagePlayingProgressDidChanged);
+        getNotificationCenter().removeObserver(this, NotificationCenter.didSetNewTheme);
         super.onFragmentDestroy();
     }
 
@@ -324,12 +331,22 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                     ((PotokFeedPostCell) child).updateAudioProgressIfPlaying(mid);
                 }
             }
+        } else if (id == NotificationCenter.didSetNewTheme) {
+            updateWallpaper();
+        }
+    }
+
+    private void updateWallpaper() {
+        if (fragmentView instanceof org.telegram.ui.Components.SizeNotifierFrameLayout) {
+            ((org.telegram.ui.Components.SizeNotifierFrameLayout) fragmentView)
+                .setBackgroundImage(Theme.getCachedWallpaper(), Theme.isWallpaperMotion());
         }
     }
 
     @Override
     public void onResume() {
         super.onResume();
+        updateWallpaper();
         loadFeed();
     }
 
@@ -360,8 +377,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             path.reset();
             float cx = w / 2f;
             float cy = h / 2f;
-            float halfWidth = w * 0.28f;
-            float halfHeight = h * 0.20f;
+            float halfWidth = w * 0.34f;
+            float halfHeight = h * 0.15f;
 
             path.moveTo(cx - halfWidth, cy + halfHeight);
             path.lineTo(cx, cy - halfHeight);

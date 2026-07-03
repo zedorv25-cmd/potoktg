@@ -112,7 +112,24 @@ public class PotokFeedPostCell extends LinearLayout {
     public PotokFeedPostCell(Context context, Theme.ResourcesProvider resourcesProvider) {
         super(context);
         setOrientation(VERTICAL);
-        setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
+        // Фикс "карнавал полосок": раньше карточка была просто сплошным прямоугольником
+        // без обводки, и на фоне похожего по цвету экрана границы между постами были
+        // почти не видны. Теперь — скруглённые углы + тонкая обводка + фон подчёркнуто
+        // отличается от фона ленты (который теперь — обои чата, см. PotokFeedFragment).
+        android.graphics.drawable.GradientDrawable cardBg = new android.graphics.drawable.GradientDrawable();
+        cardBg.setColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
+        cardBg.setCornerRadius(AndroidUtilities.dp(12));
+        cardBg.setStroke(AndroidUtilities.dp(1), Theme.getColor(Theme.key_divider, resourcesProvider));
+        setBackground(cardBg);
+        // Дочерние вью (шапка с квадратными углами) обрезаются по той же скруглённой
+        // форме — иначе углы headerRow торчали бы за пределы скруглённой карточки.
+        setClipToOutline(true);
+        setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, android.graphics.Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), AndroidUtilities.dp(12));
+            }
+        });
 
         // --- Шапка ---
         // Фикс: полоса с названием канала теперь отдельного цвета от остального поста

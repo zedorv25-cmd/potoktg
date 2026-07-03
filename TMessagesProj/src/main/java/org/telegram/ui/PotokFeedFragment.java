@@ -9,6 +9,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
+import android.widget.TextView;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.MessageObject;
@@ -37,6 +38,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private static final int MAX_POSTS_PER_CHANNEL = 10;
 
     private RecyclerListView listView;
+    private androidx.swiperefreshlayout.widget.SwipeRefreshLayout swipeRefreshLayout;
+    private boolean refreshingFeed = false;
     private LinearLayoutManager listViewLayoutManager;
     private org.telegram.ui.Components.RecyclerAnimationScrollHelper scrollHelper;
     private FrameLayout scrollToTopButton;
@@ -106,7 +109,45 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 return items.size();
             }
         });
-        frameLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        // Фикс: свайп сверху вниз на самом верху ленты — обновляет посты (как в
+        // большинстве соцсетей), со стандартным материальным спиннером-индикатором.
+        swipeRefreshLayout = new androidx.swiperefreshlayout.widget.SwipeRefreshLayout(context);
+        swipeRefreshLayout.setProgressViewOffset(false, AndroidUtilities.statusBarHeight + AndroidUtilities.dp(20), AndroidUtilities.statusBarHeight + AndroidUtilities.dp(76));
+        swipeRefreshLayout.setColorSchemeColors(Theme.getColor(Theme.key_featuredStickers_addButton));
+        swipeRefreshLayout.setOnRefreshListener(() -> {
+            refreshingFeed = true;
+            loadFeed();
+            // Страховка: если запросы по какой-то причине зависнут (обрыв сети),
+            // спиннер всё равно скроется через 8 секунд, а не будет висеть вечно.
+            AndroidUtilities.runOnUIThread(() -> {
+                if (refreshingFeed) {
+                    refreshingFeed = false;
+                    if (swipeRefreshLayout != null) {
+                        swipeRefreshLayout.setRefreshing(false);
+                    }
+                }
+            }, 8000);
+        });
+        swipeRefreshLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+        frameLayout.addView(swipeRefreshLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        // --- Надпись "ПОТОК" в верхней полосе (там же, где раньше было пусто) ---
+        TextView logoView = new TextView(context);
+        logoView.setText("ПОТОК");
+        logoView.setTextSize(22);
+        logoView.setTypeface(AndroidUtilities.bold());
+        logoView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
+        // Небольшой наклон текста — ближе к стилю логотипа с примера.
+        logoView.setTextScaleX(1f);
+        android.widget.FrameLayout.LayoutParams logoParams = LayoutHelper.createFrame(
+            LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
+            Gravity.LEFT | Gravity.TOP, 16, 0, 0, 0
+        );
+        logoParams.topMargin = AndroidUtilities.statusBarHeight;
+        logoParams.height = AndroidUtilities.dp(56);
+        logoView.setGravity(Gravity.CENTER_VERTICAL);
+        frameLayout.addView(logoView, logoParams);
 
         // --- Кнопка "наверх" ---
         scrollToTopButton = new FrameLayout(context);
@@ -220,6 +261,12 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         getConnectionsManager().sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
             historyInFlight.remove(key);
+            if (refreshingFeed && historyInFlight.isEmpty()) {
+                refreshingFeed = false;
+                if (swipeRefreshLayout != null) {
+                    swipeRefreshLayout.setRefreshing(false);
+                }
+            }
             if (error != null || !(response instanceof TLRPC.messages_Messages)) {
                 return;
             }

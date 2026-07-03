@@ -4,6 +4,7 @@ import static org.telegram.messenger.AndroidUtilities.dp;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.Paint;
@@ -117,9 +118,16 @@ public class PotokFeedPostCell extends LinearLayout {
         // почти не видны. Теперь — скруглённые углы + тонкая обводка + фон подчёркнуто
         // отличается от фона ленты (который теперь — обои чата, см. PotokFeedFragment).
         android.graphics.drawable.GradientDrawable cardBg = new android.graphics.drawable.GradientDrawable();
-        cardBg.setColor(Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider));
+        int cardColor = Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider);
+        cardBg.setColor(cardColor);
         cardBg.setCornerRadius(AndroidUtilities.dp(12));
-        cardBg.setStroke(AndroidUtilities.dp(1), Theme.getColor(Theme.key_divider, resourcesProvider));
+        // Фикс: раньше обводка бралась из key_divider, который в тёмной теме почти
+        // сливается с фоном карточки — контраста почти не было. Теперь цвет обводки
+        // считается как смешение фона карточки с белым (в тёмной теме) или чёрным
+        // (в светлой) на фиксированный процент — контраст гарантирован в любой теме.
+        boolean isDark = Theme.isCurrentThemeDark();
+        int borderColor = androidx.core.graphics.ColorUtils.blendARGB(cardColor, isDark ? Color.WHITE : Color.BLACK, isDark ? 0.22f : 0.14f);
+        cardBg.setStroke(AndroidUtilities.dp(1), borderColor);
         setBackground(cardBg);
         // Дочерние вью (шапка с квадратными углами) обрезаются по той же скруглённой
         // форме — иначе углы headerRow торчали бы за пределы скруглённой карточки.

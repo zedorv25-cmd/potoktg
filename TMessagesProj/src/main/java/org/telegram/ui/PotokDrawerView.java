@@ -17,7 +17,9 @@ import android.widget.TextView;
 import androidx.core.graphics.ColorUtils;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.ImageReceiver;
 import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
 import org.telegram.messenger.UserConfig;
@@ -210,11 +212,34 @@ public class PotokDrawerView extends FrameLayout implements NotificationCenter.N
         avatarView.setOnClickListener(v -> {
             TLRPC.User currentUser = UserConfig.getInstance(UserConfig.selectedAccount).getCurrentUser();
             if (currentUser != null && currentUser.photo != null && currentUser.photo.photo_big != null) {
-                // Фикс "чёрный экран": одного legacy FileLocation недостаточно — в нём нет
-                // актуального file_reference, без которого сервер отказывает в скачивании.
-                // ImageLocation.getForUserOrChat(...) собирает location с этим reference.
                 org.telegram.messenger.ImageLocation imageLocation = org.telegram.messenger.ImageLocation.getForUserOrChat(currentUser, org.telegram.messenger.ImageLocation.TYPE_BIG);
-                PhotoViewer.getInstance().openPhoto(currentUser.photo.photo_big, imageLocation, new PhotoViewer.EmptyPhotoViewerProvider());
+                // Фикс "чёрный экран": EmptyPhotoViewerProvider не даёт ни превью (уже
+                // загруженный битмап), ни dialogId — из-за отсутствия dialogId PhotoViewer
+                // не входит в режим просмотра аватарки конкретного диалога и не может
+                // корректно догрузить полноразмерное фото. Свой провайдер отдаёт и то,
+                // и другое: превью берём прямо из уже отображённого avatarView.
+                final long selfDialogId = currentUser.id;
+                PhotoViewer.PhotoViewerProvider avatarProvider = new PhotoViewer.EmptyPhotoViewerProvider() {
+                    @Override
+                    public PhotoViewer.PlaceProviderObject getPlaceForPhoto(MessageObject messageObject, TLRPC.FileLocation fileLocation, int index, boolean needPreview, boolean closing) {
+                        PhotoViewer.PlaceProviderObject object = new PhotoViewer.PlaceProviderObject();
+                        object.viewX = 0;
+                        object.viewY = 0;
+                        object.parentView = avatarView;
+                        object.imageReceiver = avatarView.getImageReceiver();
+                        object.thumb = avatarView.getImageReceiver().getBitmapSafe();
+                        object.dialogId = selfDialogId;
+                        object.size = -1;
+                        return object;
+                    }
+
+                    @Override
+                    public ImageReceiver.BitmapHolder getThumbForPhoto(MessageObject messageObject, TLRPC.FileLocation fileLocation, int index) {
+                        return avatarView.getImageReceiver().getBitmapSafe();
+                    }
+                };
+                PhotoViewer.getInstance().setParentActivity(AndroidUtilities.findActivity(getContext()));
+                PhotoViewer.getInstance().openPhoto(currentUser.photo.photo_big, imageLocation, avatarProvider);
             }
         });
         if (hasPhoto) {

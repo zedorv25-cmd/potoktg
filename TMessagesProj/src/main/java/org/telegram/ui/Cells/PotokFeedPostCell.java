@@ -147,7 +147,7 @@ public class PotokFeedPostCell extends LinearLayout {
         headerRow.setGravity(Gravity.CENTER_VERTICAL);
         headerRow.setPadding(dp(12), dp(12), dp(8), dp(10));
         headerRow.setBackgroundColor(Theme.getColor(Theme.key_graySection, resourcesProvider));
-        addView(headerRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        addView(headerRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 1, 1, 1, 0));
 
         avatarView = new BackupImageView(context);
         avatarView.setRoundRadius(dp(18));
@@ -254,7 +254,7 @@ public class PotokFeedPostCell extends LinearLayout {
         PagerSnapHelper snapHelper = new PagerSnapHelper();
         snapHelper.attachToRecyclerView(carouselView);
         carouselView.setVisibility(GONE);
-        addView(carouselView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, MIN_MEDIA_HEIGHT_DP, 0, 10, 0, 0));
+        addView(carouselView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, MIN_MEDIA_HEIGHT_DP, 1, 10, 1, 0));
 
         // --- Точки-индикатор ---
         dotsIndicator = new DotsIndicator(context, resourcesProvider);

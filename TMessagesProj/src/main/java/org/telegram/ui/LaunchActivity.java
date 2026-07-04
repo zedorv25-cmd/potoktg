@@ -9354,6 +9354,7 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
     private float swipeStartX;
 private float swipeStartY;
 private boolean swipeTracking;
+private boolean touchStartedOnStories;
 
 @Override
 public boolean dispatchTouchEvent(MotionEvent event) {
@@ -9363,11 +9364,17 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                 swipeStartX = event.getX();
                 swipeStartY = event.getY();
                 swipeTracking = false;
+                // Фикс: свайп вправо по списку историй наверху чатов открывал шторку —
+                // жест ловился здесь, на уровне Activity, ДО того как список историй
+                // вообще успевал его увидеть. Запоминаем, попал ли DOWN в границы
+                // самого списка историй на экране — если да, весь этот жест (до UP)
+                // полностью игнорируем для открытия шторки.
+                touchStartedOnStories = isPointInsideStoriesCell(swipeStartX, swipeStartY);
                 break;
             case MotionEvent.ACTION_MOVE:
                 float dx = event.getX() - swipeStartX;
                 float dy = event.getY() - swipeStartY;
-                if (!swipeTracking && dx > AndroidUtilities.dp(30) && Math.abs(dy) < AndroidUtilities.dp(40)) {
+                if (!swipeTracking && !touchStartedOnStories && dx > AndroidUtilities.dp(30) && Math.abs(dy) < AndroidUtilities.dp(40)) {
                     swipeTracking = true;
                     boolean isOnChatsTab = false;
                     if (isOnMainScreen()) {
@@ -9389,10 +9396,36 @@ public boolean dispatchTouchEvent(MotionEvent event) {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 swipeTracking = false;
+                touchStartedOnStories = false;
                 break;
        }
     }
     return super.dispatchTouchEvent(event);
+}
+
+// Возвращает true, если точка (x, y) в системе координат окна попадает в границы
+// видимого на экране списка историй (org.telegram.ui.Stories.DialogStoriesCell).
+private boolean isPointInsideStoriesCell(float x, float y) {
+    org.telegram.ui.Stories.DialogStoriesCell cell = findCurrentDialogStoriesCell();
+    if (cell == null || cell.getVisibility() != View.VISIBLE) {
+        return false;
+    }
+    int[] location = new int[2];
+    cell.getLocationOnScreen(location);
+    return x >= location[0] && x <= location[0] + cell.getWidth()
+        && y >= location[1] && y <= location[1] + cell.getHeight();
+}
+
+private org.telegram.ui.Stories.DialogStoriesCell findCurrentDialogStoriesCell() {
+    if (mainFragmentsStack == null || mainFragmentsStack.isEmpty()) return null;
+    BaseFragment top = mainFragmentsStack.get(mainFragmentsStack.size() - 1);
+    DialogsActivity dialogsActivity = null;
+    if (top instanceof MainTabsActivity) {
+        dialogsActivity = ((MainTabsActivity) top).getDialogsActivity();
+    } else if (top instanceof DialogsActivity) {
+        dialogsActivity = (DialogsActivity) top;
+    }
+    return dialogsActivity != null ? dialogsActivity.dialogStoriesCell : null;
 }
 
 public void closePotokDrawer() {

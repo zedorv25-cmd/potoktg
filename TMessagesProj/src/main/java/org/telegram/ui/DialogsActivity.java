@@ -6662,9 +6662,9 @@ public boolean onTouchEvent(MotionEvent ev) {
         actionMode.addView(selectedDialogsCountTextView, LayoutHelper.createLinear(0, LayoutHelper.MATCH_PARENT, 1.0f, hasMainTabs ? 18 : 72, 0, 0, 0));
         selectedDialogsCountTextView.setOnTouchListener((v, event) -> true);
 
+        archive2Item = actionMode.addItemWithWidth(archive2, R.drawable.msg_archive, dp(54));
         pinItem = actionMode.addItemWithWidth(pin, R.drawable.msg_pin, dp(54));
         muteItem = actionMode.addItemWithWidth(mute, R.drawable.msg_mute, dp(54));
-        archive2Item = actionMode.addItemWithWidth(archive2, R.drawable.msg_archive, dp(54));
         deleteItem = actionMode.addItemWithWidth(delete, R.drawable.msg_delete, dp(54), LocaleController.getString(R.string.Delete));
         ActionBarMenuItem otherItem = actionMode.addItemWithWidth(0, R.drawable.ic_ab_other, dp(54), LocaleController.getString(R.string.AccDescrMoreOptions));
         archiveItem = otherItem.addSubItem(archive, R.drawable.msg_archive, LocaleController.getString(R.string.Archive));
@@ -8862,6 +8862,9 @@ public boolean onTouchEvent(MotionEvent ev) {
     private void hideActionMode(boolean animateCheck) {
         actionBar.hideActionMode();
         selectedDialogs.clear();
+        if (hasMainTabs && actionModeCloseView != null && actionBar.getBackButton() != null) {
+            actionBar.getBackButton().setVisibility(View.VISIBLE);
+        }
         if (backDrawable != null) {
             backDrawable.setRotation(0, true);
         }
@@ -9697,25 +9700,19 @@ public boolean onTouchEvent(MotionEvent ev) {
                 archiveItem.setTextAndIcon(contentDescription, R.drawable.msg_unarchive);
                 archive2Item.setIcon(R.drawable.msg_unarchive);
                 archive2Item.setContentDescription(contentDescription);
-                if (filterTabsView != null && filterTabsView.getVisibility() == View.VISIBLE) {
-                    archive2Item.setVisibility(View.VISIBLE);
-                    archiveItem.setVisibility(View.GONE);
-                } else {
-                    archiveItem.setVisibility(View.VISIBLE);
-                    archive2Item.setVisibility(View.GONE);
-                }
+                // Фикс: раньше кнопка архива в верхней панели показывалась только при
+                // видимых вкладках папок (filterTabsView) — у Potok своя навигация табами
+                // снизу, поэтому это условие почти никогда не выполнялось, и архив всегда
+                // прятался в "три точки". Теперь верхняя кнопка показывается всегда.
+                archive2Item.setVisibility(View.VISIBLE);
+                archiveItem.setVisibility(View.GONE);
             } else if (canArchiveCount != 0) {
                 final String contentDescription = LocaleController.getString(R.string.Archive);
                 archiveItem.setTextAndIcon(contentDescription, R.drawable.msg_archive);
                 archive2Item.setIcon(R.drawable.msg_archive);
                 archive2Item.setContentDescription(contentDescription);
-                if (filterTabsView != null && filterTabsView.getVisibility() == View.VISIBLE) {
-                    archive2Item.setVisibility(View.VISIBLE);
-                    archiveItem.setVisibility(View.GONE);
-                } else {
-                    archiveItem.setVisibility(View.VISIBLE);
-                    archive2Item.setVisibility(View.GONE);
-                }
+                archive2Item.setVisibility(View.VISIBLE);
+                archiveItem.setVisibility(View.GONE);
             } else {
                 archiveItem.setVisibility(View.GONE);
                 archive2Item.setVisibility(View.GONE);
@@ -9835,6 +9832,13 @@ public boolean onTouchEvent(MotionEvent ev) {
             AndroidUtilities.hideKeyboard(fragmentView.findFocus());
             actionBar.setActionModeOverrideColor(getThemedColor(Theme.key_windowBackgroundWhite));
             actionBar.showActionMode();
+            // Фикс "два значка друг на друге": в режиме hasMainTabs у нас свой крестик
+            // закрытия выделения (actionModeCloseView), а оригинальный гамбургер
+            // (backButtonImageView) при этом никак не скрывается сам — они рисуются
+            // один поверх другого. Прячем гамбургер, пока выделение активно.
+            if (hasMainTabs && actionModeCloseView != null && actionBar.getBackButton() != null) {
+                actionBar.getBackButton().setVisibility(View.GONE);
+            }
             if (getPinnedCount() > 1) {
                 if (viewPages != null) {
                     for (int a = 0; a < viewPages.length; a++) {

@@ -210,7 +210,11 @@ public class PotokDrawerView extends FrameLayout implements NotificationCenter.N
         avatarView.setOnClickListener(v -> {
             TLRPC.User currentUser = UserConfig.getInstance(UserConfig.selectedAccount).getCurrentUser();
             if (currentUser != null && currentUser.photo != null && currentUser.photo.photo_big != null) {
-                PhotoViewer.getInstance().openPhoto(currentUser.photo.photo_big, new PhotoViewer.EmptyPhotoViewerProvider());
+                // Фикс "чёрный экран": одного legacy FileLocation недостаточно — в нём нет
+                // актуального file_reference, без которого сервер отказывает в скачивании.
+                // ImageLocation.getForUserOrChat(...) собирает location с этим reference.
+                org.telegram.messenger.ImageLocation imageLocation = org.telegram.messenger.ImageLocation.getForUserOrChat(currentUser, org.telegram.messenger.ImageLocation.TYPE_BIG);
+                PhotoViewer.getInstance().openPhoto(currentUser.photo.photo_big, imageLocation, new PhotoViewer.EmptyPhotoViewerProvider());
             }
         });
         if (hasPhoto) {

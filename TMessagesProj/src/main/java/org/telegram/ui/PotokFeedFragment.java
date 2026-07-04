@@ -137,17 +137,22 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         logoView.setText("ПОТОК");
         logoView.setTextSize(22);
         logoView.setTypeface(AndroidUtilities.bold());
-        logoView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
-        // Небольшой наклон текста — ближе к стилю логотипа с примера.
-        logoView.setTextScaleX(1f);
-        android.widget.FrameLayout.LayoutParams logoParams = LayoutHelper.createFrame(
-            LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-            Gravity.LEFT | Gravity.TOP, 16, 0, 0, 0
-        );
-        logoParams.topMargin = AndroidUtilities.statusBarHeight;
-        logoParams.height = AndroidUtilities.dp(56);
+        // Фикс: раньше цвет брался из темозависимого ключа и, судя по всему, где-то
+        // сливался с фоном/обоями. Логотип — фирменный элемент, красим его всегда
+        // белым (как на примере), плюс небольшая тень для контраста на светлых обоях.
+        logoView.setTextColor(0xFFFFFFFF);
+        logoView.setShadowLayer(AndroidUtilities.dp(3), 0, 0, 0x80000000);
         logoView.setGravity(Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams logoParams = new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT, AndroidUtilities.dp(56)
+        );
+        logoParams.gravity = Gravity.LEFT | Gravity.TOP;
+        logoParams.leftMargin = AndroidUtilities.dp(16);
+        logoParams.topMargin = AndroidUtilities.statusBarHeight;
         frameLayout.addView(logoView, logoParams);
+        // На случай сомнений в порядке отрисовки — явно поднимаем поверх всего
+        // остального содержимого фрагмента (обои/список/спиннер обновления).
+        logoView.bringToFront();
 
         // --- Кнопка "наверх" ---
         scrollToTopButton = new FrameLayout(context);

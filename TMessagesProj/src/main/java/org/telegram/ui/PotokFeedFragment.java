@@ -9,6 +9,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import org.telegram.messenger.AndroidUtilities;
@@ -153,6 +154,45 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // На случай сомнений в порядке отрисовки — явно поднимаем поверх всего
         // остального содержимого фрагмента (обои/список/спиннер обновления).
         logoView.bringToFront();
+
+        // Диагностика: раз логотип по неизвестной причине не появлялся визуально —
+        // пишем в файл лога реальные размеры/позицию/видимость уже ПОСЛЕ layout-прохода,
+        // чтобы понять — logoView вообще не создаётся/не в иерархии, или создаётся,
+        // но с нулевым размером/вне экрана/перекрыт чем-то.
+        logoView.post(() -> {
+            int[] loc = new int[2];
+            logoView.getLocationOnScreen(loc);
+            PotokDebugLog.log("PotokFeedLogo",
+                "logoView: width=" + logoView.getWidth() + " height=" + logoView.getHeight()
+                + " visibility=" + logoView.getVisibility() + " alpha=" + logoView.getAlpha()
+                + " screenX=" + loc[0] + " screenY=" + loc[1]
+                + " parent=" + (logoView.getParent() != null)
+                + " statusBarHeight=" + AndroidUtilities.statusBarHeight
+                + " frameLayout.w=" + frameLayout.getWidth() + " frameLayout.h=" + frameLayout.getHeight()
+                + " frameLayout.childCount=" + frameLayout.getChildCount()
+                + " text='" + logoView.getText() + "'");
+        });
+
+        // --- Кнопка "три точки" (настройки ленты) — справа в той же верхней полосе ---
+        // Пока без функционала — открывает пустое меню, сама механика (открытие/закрытие)
+        // готова, содержимое добавим отдельно позже.
+        ImageView feedMenuButton = new ImageView(context);
+        feedMenuButton.setImageResource(org.telegram.messenger.R.drawable.ic_ab_other);
+        feedMenuButton.setColorFilter(0xFFFFFFFF);
+        feedMenuButton.setScaleType(ImageView.ScaleType.CENTER);
+        feedMenuButton.setBackground(Theme.createSelectorDrawable(0x33ffffff, Theme.RIPPLE_MASK_CIRCLE_20DP));
+        FrameLayout.LayoutParams feedMenuParams = new FrameLayout.LayoutParams(AndroidUtilities.dp(40), AndroidUtilities.dp(40));
+        feedMenuParams.gravity = Gravity.RIGHT | Gravity.TOP;
+        feedMenuParams.rightMargin = AndroidUtilities.dp(8);
+        feedMenuParams.topMargin = AndroidUtilities.statusBarHeight + AndroidUtilities.dp(8);
+        feedMenuButton.setOnClickListener(v -> {
+            PotokDebugLog.log("PotokFeedLogo", "Клик: три точки (настройки ленты)");
+            android.widget.PopupMenu popupMenu = new android.widget.PopupMenu(context, feedMenuButton);
+            // Временно пусто — механика открытия готова, пункты добавим позже.
+            popupMenu.show();
+        });
+        frameLayout.addView(feedMenuButton, feedMenuParams);
+        feedMenuButton.bringToFront();
 
         // --- Кнопка "наверх" ---
         scrollToTopButton = new FrameLayout(context);

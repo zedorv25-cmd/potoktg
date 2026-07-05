@@ -17,7 +17,6 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.tgnet.TLRPC;
-import org.telegram.tgnet.TLObject;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
@@ -33,12 +32,10 @@ import java.util.Set;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
-import androidx.collection.LongSparseArray;
 
 /**
- * Лента — показывает посты из каналов на которые подписан пользователь,
- * плюс из последних 10 каналов из истории поиска.
- * Можно фильтровать каналы через кнопку "три точки".
+ * Лента — показывает посты из всех каналов на которые подписан пользователь,
+ * смешанные и отсортированные по дате (свежие сверху).
  */
 public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate, NotificationCenter.NotificationCenterDelegate {
 
@@ -56,7 +53,9 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private FrameLayout scrollToTopButton;
     private MainTabsActivityController mainTabsActivityController;
     private final ArrayList<FeedItem> items = new ArrayList<>();
+    // username -> уже резолвленный канал (или null, если ещё не резолвлен)
     private final java.util.Map<String, TLRPC.Chat> resolvedChannels = new java.util.HashMap<>();
+    // username -> посты этого канала, уже собранные в FeedItem (альбомы объединены)
     private final java.util.Map<String, ArrayList<FeedItem>> channelItems = new java.util.HashMap<>();
     private final java.util.Set<String> historyInFlight = new java.util.HashSet<>();
 
@@ -76,13 +75,13 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
     @Override
     public View createView(Context context) {
-        PotokDebugLog.log("FEED", "createView: начало");
+        PotokDebugLog.log("PotokFeedLogo", "createView: НАЧАЛО");
         try {
             View result = createViewInternal(context);
-            PotokDebugLog.log("FEED", "createView: успешно");
+            PotokDebugLog.log("PotokFeedLogo", "createView: УСПЕШНО завершён, вернул " + (result != null ? result.getClass().getSimpleName() : "null"));
             return result;
         } catch (Throwable t) {
-            PotokDebugLog.log("FEED", "createView: ИСКЛЮЧЕНИЕ " + t.getClass().getName() + ": " + t.getMessage()
+            PotokDebugLog.log("PotokFeedLogo", "createView: ИСКЛЮЧЕНИЕ " + t.getClass().getName() + ": " + t.getMessage()
                 + "\n" + android.util.Log.getStackTraceString(t));
             throw t;
         }
@@ -95,6 +94,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         org.telegram.ui.Components.SizeNotifierFrameLayout frameLayout = new org.telegram.ui.Components.SizeNotifierFrameLayout(context);
         fragmentView = frameLayout;
+        // Фикс "карнавал полосок": лента раньше рисовала сплошной фон темы под
+        // карточками, из-за чего фон не совпадал с обоями, которые пользователь
+        // выставил в самих чатах. Теперь используем тот же механизм, что и ChatActivity —
+        // SizeNotifierFrameLayout.setBackgroundImage с текущими обоями темы.
         frameLayout.setBackgroundImage(Theme.getCachedWallpaper(), Theme.isWallpaperMotion());
 
         listView = new RecyclerListView(context);
@@ -102,6 +105,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         listView.setLayoutManager(listViewLayoutManager);
         scrollHelper = new org.telegram.ui.Components.RecyclerAnimationScrollHelper(listView, listViewLayoutManager);
 
+        // Отступ сверху = статусбар + высота таббара снизу MainTabsActivity (не тулбар — его нет)
         int topPadding = AndroidUtilities.statusBarHeight + AndroidUtilities.dp(56);
         listView.setPadding(0, topPadding, 0, AndroidUtilities.dp(56));
         listView.setClipToPadding(false);
@@ -111,6 +115,9 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             public RecyclerListView.Holder onCreateViewHolder(android.view.ViewGroup parent, int viewType) {
                 PotokFeedPostCell cell = new PotokFeedPostCell(context, null);
                 RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT);
+                // Фикс "карточки впритык": раньше пост занимал всю ширину без отступов
+                // и соседние посты стыковались друг с другом. Теперь — заметные, но не
+                // большие отступы со всех 4 сторон, как отдельные карточки в канале.
                 lp.leftMargin = AndroidUtilities.dp(8);
                 lp.rightMargin = AndroidUtilities.dp(8);
                 lp.topMargin = AndroidUtilities.dp(6);
@@ -133,27 +140,36 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             }
         });
 
+        // Фикс: свайп сверху вниз на самом верху ленты — обновляет посты (как в
+        // большинстве соцсетей), со стандартным материальным спиннером-индикатором.
         swipeRefreshLayout = new androidx.swiperefreshlayout.widget.SwipeRefreshLayout(context);
         swipeRefreshLayout.setProgressViewOffset(false, AndroidUtilities.statusBarHeight + AndroidUtilities.dp(20), AndroidUtilities.statusBarHeight + AndroidUtilities.dp(76));
         swipeRefreshLayout.setColorSchemeColors(Theme.getColor(Theme.key_featuredStickers_addButton));
         swipeRefreshLayout.setOnRefreshListener(() -> {
             refreshingFeed = true;
             loadFeed();
+            // Страховка: если запросы по какой-то причине зависнут (обрыв сети),
+            // спиннер всё равно скроется через 8 секунд, а не будет висеть вечно.
             AndroidUtilities.runOnUIThread(() -> {
                 if (refreshingFeed) {
                     refreshingFeed = false;
-                    if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
+                    if (swipeRefreshLayout != null) {
+                        swipeRefreshLayout.setRefreshing(false);
+                    }
                 }
             }, 8000);
         });
         swipeRefreshLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         frameLayout.addView(swipeRefreshLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
-        // Надпись ПОТОК — курсив жирный, слева
+        // --- Надпись "ПОТОК" в верхней полосе (там же, где раньше было пусто) ---
         TextView logoView = new TextView(context);
         logoView.setText("ПОТОК");
         logoView.setTextSize(22);
         logoView.setTypeface(android.graphics.Typeface.create(AndroidUtilities.bold(), android.graphics.Typeface.BOLD_ITALIC));
+        // Фикс: раньше цвет брался из темозависимого ключа и, судя по всему, где-то
+        // сливался с фоном/обоями. Логотип — фирменный элемент, красим его всегда
+        // белым (как на примере), плюс небольшая тень для контраста на светлых обоях.
         logoView.setTextColor(0xFFFFFFFF);
         logoView.setShadowLayer(AndroidUtilities.dp(3), 0, 0, 0x80000000);
         logoView.setGravity(Gravity.CENTER_VERTICAL);
@@ -164,9 +180,31 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         logoParams.leftMargin = AndroidUtilities.dp(16);
         logoParams.topMargin = AndroidUtilities.statusBarHeight;
         frameLayout.addView(logoView, logoParams);
+        // На случай сомнений в порядке отрисовки — явно поднимаем поверх всего
+        // остального содержимого фрагмента (обои/список/спиннер обновления).
         logoView.bringToFront();
 
-        // Кнопка "три точки" — справа, открывает фильтр каналов
+        // Диагностика: раз логотип по неизвестной причине не появлялся визуально —
+        // пишем в файл лога реальные размеры/позицию/видимость уже ПОСЛЕ layout-прохода,
+        // чтобы понять — logoView вообще не создаётся/не в иерархии, или создаётся,
+        // но с нулевым размером/вне экрана/перекрыт чем-то.
+        logoView.post(() -> {
+            int[] loc = new int[2];
+            logoView.getLocationOnScreen(loc);
+            PotokDebugLog.log("PotokFeedLogo",
+                "logoView: width=" + logoView.getWidth() + " height=" + logoView.getHeight()
+                + " visibility=" + logoView.getVisibility() + " alpha=" + logoView.getAlpha()
+                + " screenX=" + loc[0] + " screenY=" + loc[1]
+                + " parent=" + (logoView.getParent() != null)
+                + " statusBarHeight=" + AndroidUtilities.statusBarHeight
+                + " frameLayout.w=" + frameLayout.getWidth() + " frameLayout.h=" + frameLayout.getHeight()
+                + " frameLayout.childCount=" + frameLayout.getChildCount()
+                + " text='" + logoView.getText() + "'");
+        });
+
+        // --- Кнопка "три точки" (настройки ленты) — справа в той же верхней полосе ---
+        // Пока без функционала — открывает пустое меню, сама механика (открытие/закрытие)
+        // готова, содержимое добавим отдельно позже.
         ImageView feedMenuButton = new ImageView(context);
         feedMenuButton.setImageResource(org.telegram.messenger.R.drawable.ic_ab_other);
         feedMenuButton.setColorFilter(0xFFFFFFFF);
@@ -176,11 +214,14 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         feedMenuParams.gravity = Gravity.RIGHT | Gravity.TOP;
         feedMenuParams.rightMargin = AndroidUtilities.dp(8);
         feedMenuParams.topMargin = AndroidUtilities.statusBarHeight + AndroidUtilities.dp(8);
-        feedMenuButton.setOnClickListener(v -> showChannelFilter(context));
+        feedMenuButton.setOnClickListener(v -> {
+            PotokDebugLog.log("PotokFeedLogo", "Клик: три точки — открываем фильтр каналов");
+            showChannelFilter(context);
+        });
         frameLayout.addView(feedMenuButton, feedMenuParams);
         feedMenuButton.bringToFront();
 
-        // Кнопка "наверх"
+        // --- Кнопка "наверх" ---
         scrollToTopButton = new FrameLayout(context);
         GradientDrawable circleBg = new GradientDrawable();
         circleBg.setShape(GradientDrawable.OVAL);
@@ -190,123 +231,107 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         scrollToTopButton.setVisibility(View.GONE);
         scrollToTopButton.setAlpha(0f);
 
+        // Векторная стрелка-шеврон + стержень — рисуется через Path, поэтому одинаково
+        // чёткая на любом dpi (системный android.R.drawable.arrow_up_float — низкого
+        // разрешения и визуально выглядит как треугольник, а не как стрелка).
         ArrowUpView arrowUp = new ArrowUpView(context);
         arrowUp.setColor(Theme.getColor(Theme.key_dialogFloatingIcon));
         scrollToTopButton.addView(arrowUp, LayoutHelper.createFrame(24, 24, Gravity.CENTER));
 
         scrollToTopButton.setOnClickListener(v -> {
-            if (listView == null || scrollHelper == null) return;
-            // Фикс компиляции: scrollToPosition требует минимум 2 аргумента, здесь —
-            // тот же вызов с мгновенным переносом к позиции 0 (см. предыдущие версии).
+            if (listView == null || scrollHelper == null) {
+                return;
+            }
+            // Раньше здесь был smoothScrollToPosition(0) — он прокручивает
+            // последовательно через ВСЕ посты между текущей позицией и началом,
+            // что на длинной ленте выглядит как долгое пролистывание. scrollHelper
+            // (тот же паттерн, что у кнопки "к началу" в DialogsActivity) мгновенно
+            // переносит layout к позиции 0 и красиво доезжают только элементы,
+            // уже видимые на экране — без полного перебора истории.
             scrollHelper.setScrollDirection(org.telegram.ui.Components.RecyclerAnimationScrollHelper.SCROLL_DIRECTION_UP);
             scrollHelper.scrollToPosition(0, 0, false, true);
         });
 
-        FrameLayout.LayoutParams scrollBtnParams = new FrameLayout.LayoutParams(AndroidUtilities.dp(52), AndroidUtilities.dp(52));
-        scrollBtnParams.gravity = Gravity.BOTTOM | Gravity.RIGHT;
-        scrollBtnParams.bottomMargin = AndroidUtilities.dp(56 + 16);
-        scrollBtnParams.rightMargin = AndroidUtilities.dp(16);
-        frameLayout.addView(scrollToTopButton, scrollBtnParams);
+        // Отступ снизу должен учитывать реальную высоту плавающего таббара
+        // (DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS = 56 + 8*2 = 72dp, не 56dp)
+        // и системный navigationBarHeight (жестовая панель/кнопки) — без него
+        // кнопка уходит под таббар на части устройств, см. AndroidUtilities.navigationBarHeight.
+        int scrollButtonBottomMarginPx = AndroidUtilities.navigationBarHeight
+            + AndroidUtilities.dp(DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS)
+            + AndroidUtilities.dp(16);
+        int scrollButtonBottomMarginDp = (int) (scrollButtonBottomMarginPx / AndroidUtilities.density);
+        frameLayout.addView(scrollToTopButton, LayoutHelper.createFrame(48, 48, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 16, scrollButtonBottomMarginDp));
 
         listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
-            private int totalDy = 0;
             @Override
             public void onScrolled(RecyclerView rv, int dx, int dy) {
-                totalDy += dy;
-                boolean shouldShow = totalDy > AndroidUtilities.dp(300);
+                LinearLayoutManager lm = (LinearLayoutManager) rv.getLayoutManager();
+                if (lm == null) return;
+                boolean shouldShow = lm.findFirstVisibleItemPosition() > 1;
                 if (shouldShow && scrollToTopButton.getVisibility() != View.VISIBLE) {
                     scrollToTopButton.setVisibility(View.VISIBLE);
-                    scrollToTopButton.animate().alpha(1f).setDuration(180).start();
+                    scrollToTopButton.animate().alpha(1f).setDuration(150).start();
                 } else if (!shouldShow && scrollToTopButton.getVisibility() == View.VISIBLE) {
-                    scrollToTopButton.animate().alpha(0f).setDuration(180).withEndAction(() -> {
-                        if (scrollToTopButton != null) scrollToTopButton.setVisibility(View.GONE);
-                    }).start();
+                    scrollToTopButton.animate().alpha(0f).setDuration(150)
+                        .withEndAction(() -> scrollToTopButton.setVisibility(View.GONE)).start();
                 }
             }
         });
 
+        if (mainTabsActivityController != null) {
+            listView.addOnScrollListener(new TabBarScrollHider(mainTabsActivityController));
+        }
+
         loadFeed();
+
         return frameLayout;
     }
 
-    /**
-     * Показывает диалог-фильтр каналов: список всех каналов в ленте с чекбоксами.
-     * Состояние сохраняется в SharedPreferences — при перезапуске фильтр сохраняется.
-     */
-    private void showChannelFilter(Context context) {
-        if (allChannels.isEmpty()) {
-            PotokDebugLog.log("FEED", "Фильтр: каналов пока нет (лента ещё не загружена)");
-            return;
-        }
-
-        PotokDebugLog.log("FEED", "Фильтр: открыт, каналов=" + allChannels.size());
-
-        String[] channelNames = new String[allChannels.size()];
-        boolean[] checked = new boolean[allChannels.size()];
-        for (int i = 0; i < allChannels.size(); i++) {
-            TLRPC.Chat ch = allChannels.get(i);
-            channelNames[i] = ch.title;
-            // checked = показывается (не скрыт)
-            checked[i] = !hiddenChannelIds.contains(String.valueOf(ch.id));
-        }
-
-        new android.app.AlertDialog.Builder(context)
-            .setTitle("Фильтр каналов")
-            .setMultiChoiceItems(channelNames, checked, (dialog, which, isChecked) -> {
-                String id = String.valueOf(allChannels.get(which).id);
-                if (isChecked) {
-                    hiddenChannelIds.remove(id);
-                } else {
-                    hiddenChannelIds.add(id);
-                }
-            })
-            .setPositiveButton("Применить", (dialog, which) -> {
-                // Сохраняем в SharedPreferences
-                SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                prefs.edit().putStringSet(PREFS_KEY_HIDDEN, hiddenChannelIds).apply();
-                PotokDebugLog.log("FEED", "Фильтр применён: скрыто=" + hiddenChannelIds.size() + " каналов");
-                // Перестраиваем ленту с учётом фильтра
-                rebuildAndShowAllItems();
-            })
-            .setNegativeButton("Отмена", null)
-            .show();
-    }
-
     private void loadFeed() {
-        // Шаг 1: каналы из подписок
+        // Берём все диалоги пользователя и фильтруем: только каналы (не группы, не боты)
         ArrayList<TLRPC.Dialog> dialogs = getMessagesController().getAllDialogs();
-        ArrayList<TLRPC.Chat> subscribed = new ArrayList<>();
+        ArrayList<TLRPC.Chat> channels = new ArrayList<>();
         for (TLRPC.Dialog dialog : dialogs) {
             if (!(dialog instanceof TLRPC.TL_dialog)) continue;
             long did = dialog.id;
-            if (did >= 0) continue;
+            if (did >= 0) continue; // не чат/канал
             TLRPC.Chat chat = getMessagesController().getChat(-did);
             if (chat == null) continue;
+            // Канал (broadcast), не мегагруппа и не деактивирован
             if (chat.broadcast && !chat.megagroup && !chat.deactivated && !chat.left && !chat.kicked) {
-                subscribed.add(chat);
+                channels.add(chat);
             }
         }
-
-        if (subscribed.isEmpty()) {
+        if (channels.isEmpty()) {
+            // Диалоги ещё не загружены — ждём и пробуем снова
             AndroidUtilities.runOnUIThread(this::loadFeed, 1500);
             return;
         }
-
-        PotokDebugLog.log("FEED", "loadFeed: подписок=" + subscribed.size());
-
-        // Обновляем список всех каналов и грузим историю
-        for (TLRPC.Chat channel : subscribed) {
+        StringBuilder channelNames = new StringBuilder();
+        for (TLRPC.Chat channel : channels) {
+            channelNames.append(channel.title).append(" (id=").append(channel.id).append("); ");
+        }
+        PotokDebugLog.log("PotokFeedLogo", "loadFeed: найдено каналов = " + channels.size() + ": " + channelNames);
+        for (TLRPC.Chat channel : channels) {
             addChannelToFeed(channel);
         }
-
-        // Шаг 2: каналы из истории поиска (последние 10)
+        // Загружаем посты из последних 10 каналов из истории поиска
         loadRecentSearchChannels();
     }
 
-    /**
-     * Загружает до MAX_RECENT_SEARCH_CHANNELS каналов из истории поиска
-     * через стандартный механизм DialogsSearchAdapter.loadRecentSearch().
-     */
+    private void addChannelToFeed(TLRPC.Chat channel) {
+        String key = String.valueOf(channel.id);
+        if (!resolvedChannels.containsKey(key)) {
+            resolvedChannels.put(key, channel);
+            boolean alreadyInList = false;
+            for (TLRPC.Chat ch : allChannels) {
+                if (ch.id == channel.id) { alreadyInList = true; break; }
+            }
+            if (!alreadyInList) allChannels.add(channel);
+            loadHistory(key, channel);
+        }
+    }
+
     private void loadRecentSearchChannels() {
         DialogsSearchAdapter.loadRecentSearch(currentAccount, 0, (arrayList, hashMap) -> {
             ArrayList<TLRPC.Chat> recentChannels = new ArrayList<>();
@@ -319,7 +344,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                     }
                 }
             }
-            PotokDebugLog.log("FEED", "История поиска: найдено каналов=" + recentChannels.size());
+            PotokDebugLog.log("PotokFeedLogo", "История поиска: найдено каналов=" + recentChannels.size());
             AndroidUtilities.runOnUIThread(() -> {
                 for (TLRPC.Chat channel : recentChannels) {
                     addChannelToFeed(channel);
@@ -328,26 +353,39 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         });
     }
 
-    /**
-     * Добавляет канал в общий список и запускает загрузку его истории,
-     * если его ещё нет в ленте.
-     */
-    private void addChannelToFeed(TLRPC.Chat channel) {
-        String key = String.valueOf(channel.id);
-        if (!resolvedChannels.containsKey(key)) {
-            resolvedChannels.put(key, channel);
-            // Добавляем в список всех каналов для фильтра (без дублей)
-            boolean alreadyInList = false;
-            for (TLRPC.Chat ch : allChannels) {
-                if (ch.id == channel.id) { alreadyInList = true; break; }
-            }
-            if (!alreadyInList) allChannels.add(channel);
-            loadHistory(key, channel);
+    private void showChannelFilter(Context context) {
+        if (allChannels.isEmpty()) {
+            PotokDebugLog.log("PotokFeedLogo", "Фильтр: каналов пока нет");
+            return;
         }
+        String[] channelNames2 = new String[allChannels.size()];
+        boolean[] checked = new boolean[allChannels.size()];
+        for (int i = 0; i < allChannels.size(); i++) {
+            TLRPC.Chat ch = allChannels.get(i);
+            channelNames2[i] = ch.title;
+            checked[i] = !hiddenChannelIds.contains(String.valueOf(ch.id));
+        }
+        new android.app.AlertDialog.Builder(context)
+            .setTitle("Фильтр каналов")
+            .setMultiChoiceItems(channelNames2, checked, (dialog, which, isChecked) -> {
+                String id = String.valueOf(allChannels.get(which).id);
+                if (isChecked) hiddenChannelIds.remove(id);
+                else hiddenChannelIds.add(id);
+            })
+            .setPositiveButton("Применить", (dialog, which) -> {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putStringSet(PREFS_KEY_HIDDEN, hiddenChannelIds).apply();
+                PotokDebugLog.log("PotokFeedLogo", "Фильтр применён: скрыто=" + hiddenChannelIds.size());
+                rebuildAndShowAllItems();
+            })
+            .setNegativeButton("Отмена", null)
+            .show();
     }
 
     private void loadHistory(String key, TLRPC.Chat channel) {
-        if (historyInFlight.contains(key)) return;
+        if (historyInFlight.contains(key)) {
+            return;
+        }
         historyInFlight.add(key);
 
         long dialogId = -channel.id;
@@ -365,9 +403,13 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             historyInFlight.remove(key);
             if (refreshingFeed && historyInFlight.isEmpty()) {
                 refreshingFeed = false;
-                if (swipeRefreshLayout != null) swipeRefreshLayout.setRefreshing(false);
+                if (swipeRefreshLayout != null) {
+                    swipeRefreshLayout.setRefreshing(false);
+                }
             }
-            if (error != null || !(response instanceof TLRPC.messages_Messages)) return;
+            if (error != null || !(response instanceof TLRPC.messages_Messages)) {
+                return;
+            }
             TLRPC.messages_Messages res = (TLRPC.messages_Messages) response;
             getMessagesController().putUsers(res.users, false);
             getMessagesController().putChats(res.chats, false);
@@ -387,11 +429,15 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         long currentGroupId = 0;
 
         for (MessageObject mo : messageObjects) {
-            if (mo == null || mo.messageOwner == null) continue;
+            if (mo == null || mo.messageOwner == null) {
+                continue;
+            }
             long groupId = mo.messageOwner.grouped_id;
             boolean continuesCurrentGroup = groupId != 0 && currentItem != null && currentGroupId == groupId;
 
-            if (!continuesCurrentGroup && result.size() >= MAX_POSTS_PER_CHANNEL) break;
+            if (!continuesCurrentGroup && result.size() >= MAX_POSTS_PER_CHANNEL) {
+                break;
+            }
 
             if (continuesCurrentGroup) {
                 currentItem.messages.add(mo);
@@ -412,31 +458,29 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         return result;
     }
 
+    /** Дата поста для сортировки общей ленты — берём дату первого сообщения в группе. */
     private int postDate(FeedItem item) {
-        if (item.messages.isEmpty() || item.messages.get(0).messageOwner == null) return 0;
+        if (item.messages.isEmpty() || item.messages.get(0).messageOwner == null) {
+            return 0;
+        }
         return item.messages.get(0).messageOwner.date;
     }
 
     private void rebuildAndShowAllItems() {
         items.clear();
-        int hiddenPostsCount = 0;
         for (java.util.Map.Entry<String, ArrayList<FeedItem>> entry : channelItems.entrySet()) {
-            // Применяем фильтр — скрытые каналы не попадают в ленту
-            if (hiddenChannelIds.contains(entry.getKey())) {
-                hiddenPostsCount += entry.getValue().size();
-                continue;
-            }
+            if (hiddenChannelIds.contains(entry.getKey())) continue;
             items.addAll(entry.getValue());
         }
-        if (hiddenPostsCount > 0) {
-            PotokDebugLog.log("FEED", "rebuildAndShowAllItems: скрыто " + hiddenPostsCount + " постов из фильтра");
-        }
+        // смешиваем посты разных каналов в одну ленту, свежие сверху
         Collections.sort(items, (a, b) -> Integer.compare(postDate(b), postDate(a)));
         notifyWhenReady();
     }
 
     private void notifyWhenReady() {
-        if (listView == null || listView.getAdapter() == null) return;
+        if (listView == null || listView.getAdapter() == null) {
+            return;
+        }
         if (listView.isComputingLayout()) {
             listView.post(this::notifyWhenReady);
         } else {
@@ -494,6 +538,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         loadFeed();
     }
 
+    /**
+     * Простой шеврон "^" (две сходящиеся вверх линии, без стержня) — по просьбе
+     * убрать "стрелу", оставить только галочку.
+     */
     private static class ArrowUpView extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path path = new Path();
@@ -519,6 +567,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             float cy = h / 2f;
             float halfWidth = w * 0.34f;
             float halfHeight = h * 0.15f;
+
             path.moveTo(cx - halfWidth, cy + halfHeight);
             path.lineTo(cx, cy - halfHeight);
             path.lineTo(cx + halfWidth, cy + halfHeight);

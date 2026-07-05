@@ -196,7 +196,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         scrollToTopButton.setOnClickListener(v -> {
             if (listView == null || scrollHelper == null) return;
-            scrollHelper.scrollToPosition(0);
+            // Фикс компиляции: scrollToPosition требует минимум 2 аргумента, здесь —
+            // тот же вызов с мгновенным переносом к позиции 0 (см. предыдущие версии).
+            scrollHelper.setScrollDirection(org.telegram.ui.Components.RecyclerAnimationScrollHelper.SCROLL_DIRECTION_UP);
+            scrollHelper.scrollToPosition(0, 0, false, true);
         });
 
         FrameLayout.LayoutParams scrollBtnParams = new FrameLayout.LayoutParams(AndroidUtilities.dp(52), AndroidUtilities.dp(52));

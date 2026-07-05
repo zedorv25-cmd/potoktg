@@ -94,11 +94,13 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         org.telegram.ui.Components.SizeNotifierFrameLayout frameLayout = new org.telegram.ui.Components.SizeNotifierFrameLayout(context);
         fragmentView = frameLayout;
-        // Фикс "карнавал полосок": лента раньше рисовала сплошной фон темы под
-        // карточками, из-за чего фон не совпадал с обоями, которые пользователь
-        // выставил в самих чатах. Теперь используем тот же механизм, что и ChatActivity —
-        // SizeNotifierFrameLayout.setBackgroundImage с текущими обоями темы.
-        frameLayout.setBackgroundImage(Theme.getCachedWallpaper(), Theme.isWallpaperMotion());
+        // ВРЕМЕННЫЙ маркер для диагностики: если этот билд реально активен на устройстве,
+        // фон ленты будет ярко-розовым. Если после установки апк фон остался прежним —
+        // значит на телефоне физически не этот код (старый кэш/процесс/APK), и дальше
+        // разбираться в логике логотипа/кнопки бессмысленно, пока не решится это.
+        frameLayout.setBackgroundColor(0xFFFF00FF);
+        // ВРЕМЕННО ОТКЛЮЧЕНО для диагностики (иначе обои перекроют розовый маркер сверху):
+        // frameLayout.setBackgroundImage(Theme.getCachedWallpaper(), Theme.isWallpaperMotion());
 
         listView = new RecyclerListView(context);
         listViewLayoutManager = new LinearLayoutManager(context);

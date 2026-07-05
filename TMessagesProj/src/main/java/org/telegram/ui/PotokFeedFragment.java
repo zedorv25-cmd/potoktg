@@ -63,6 +63,19 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
     @Override
     public View createView(Context context) {
+        PotokDebugLog.log("PotokFeedLogo", "createView: НАЧАЛО");
+        try {
+            View result = createViewInternal(context);
+            PotokDebugLog.log("PotokFeedLogo", "createView: УСПЕШНО завершён, вернул " + (result != null ? result.getClass().getSimpleName() : "null"));
+            return result;
+        } catch (Throwable t) {
+            PotokDebugLog.log("PotokFeedLogo", "createView: ИСКЛЮЧЕНИЕ " + t.getClass().getName() + ": " + t.getMessage()
+                + "\n" + android.util.Log.getStackTraceString(t));
+            throw t;
+        }
+    }
+
+    private View createViewInternal(Context context) {
         org.telegram.ui.Components.SizeNotifierFrameLayout frameLayout = new org.telegram.ui.Components.SizeNotifierFrameLayout(context);
         fragmentView = frameLayout;
         // Фикс "карнавал полосок": лента раньше рисовала сплошной фон темы под
@@ -280,6 +293,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             AndroidUtilities.runOnUIThread(this::loadFeed, 1500);
             return;
         }
+        StringBuilder channelNames = new StringBuilder();
+        for (TLRPC.Chat channel : channels) {
+            channelNames.append(channel.title).append(" (id=").append(channel.id).append("); ");
+        }
+        PotokDebugLog.log("PotokFeedLogo", "loadFeed: найдено каналов = " + channels.size() + ": " + channelNames);
         for (TLRPC.Chat channel : channels) {
             String key = String.valueOf(channel.id);
             resolvedChannels.put(key, channel);

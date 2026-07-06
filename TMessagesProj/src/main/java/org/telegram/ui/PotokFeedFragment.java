@@ -94,13 +94,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         org.telegram.ui.Components.SizeNotifierFrameLayout frameLayout = new org.telegram.ui.Components.SizeNotifierFrameLayout(context);
         fragmentView = frameLayout;
-        // ВРЕМЕННЫЙ маркер для диагностики: если этот билд реально активен на устройстве,
-        // фон ленты будет ярко-розовым. Если после установки апк фон остался прежним —
-        // значит на телефоне физически не этот код (старый кэш/процесс/APK), и дальше
-        // разбираться в логике логотипа/кнопки бессмысленно, пока не решится это.
-        frameLayout.setBackgroundColor(0xFFFF00FF);
-        // ВРЕМЕННО ОТКЛЮЧЕНО для диагностики (иначе обои перекроют розовый маркер сверху):
-        // frameLayout.setBackgroundImage(Theme.getCachedWallpaper(), Theme.isWallpaperMotion());
+        // Фикс "карнавал полосок": лента раньше рисовала сплошной фон темы под
+        // карточками, из-за чего фон не совпадал с обоями, которые пользователь
+        // выставил в самих чатах. Теперь используем тот же механизм, что и ChatActivity —
+        // SizeNotifierFrameLayout.setBackgroundImage с текущими обоями темы.
+        frameLayout.setBackgroundImage(Theme.getCachedWallpaper(), Theme.isWallpaperMotion());
 
         listView = new RecyclerListView(context);
         listViewLayoutManager = new LinearLayoutManager(context);
@@ -198,9 +196,17 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         btnParams.bottomMargin = AndroidUtilities.dp(8);
         headerView.addView(feedMenuButton, btnParams);
 
-        // Высота шапки подстраивается под реальный statusBarHeight через WindowInsets
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(headerView, (v, insets) -> {
-            int statusBarH = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()).top;
+        // Высота шапки подстраивается под реальный statusBarHeight. WindowInsetsCompat
+        // callback (setOnApplyWindowInsetsListener) здесь не срабатывает — SizeNotifierFrameLayout
+        // не запрашивает insets сам, поэтому родительский callback никогда не вызывается.
+        // Вместо этого — прямой запрос insets через post{} сразу после attach к окну
+        // (тот же приём, что уже надёжно работает в PotokDrawerView.onMeasure).
+        headerView.post(() -> {
+            int statusBarH = 0;
+            androidx.core.view.WindowInsetsCompat insetsCompat = androidx.core.view.ViewCompat.getRootWindowInsets(headerView);
+            if (insetsCompat != null) {
+                statusBarH = insetsCompat.getInsetsIgnoringVisibility(androidx.core.view.WindowInsetsCompat.Type.systemBars()).top;
+            }
             FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) headerView.getLayoutParams();
             int newH = statusBarH + AndroidUtilities.dp(56);
             if (lp.height != newH) {
@@ -209,9 +215,9 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 headerView.setLayoutParams(lp);
                 // Обновляем topPadding у listView чтобы посты не уходили под шапку
                 listView.setPadding(0, newH, 0, listView.getPaddingBottom());
-                PotokDebugLog.log("PotokFeedLogo", "headerView: statusBarH=" + statusBarH + " totalH=" + newH);
             }
-            return insets;
+            PotokDebugLog.log("PotokFeedLogo", "headerView(post): statusBarH=" + statusBarH + " totalH=" + newH
+                + " insetsCompat=" + (insetsCompat != null));
         });
 
         FrameLayout.LayoutParams headerParams = new FrameLayout.LayoutParams(

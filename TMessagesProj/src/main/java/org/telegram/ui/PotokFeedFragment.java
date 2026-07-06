@@ -92,6 +92,13 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         hiddenChannelIds = new HashSet<>(prefs.getStringSet(PREFS_KEY_HIDDEN, new HashSet<>()));
 
+        // AndroidUtilities.statusBarHeight в этом проекте всегда 0 (fillStatusBarHeight
+        // здесь не вызывается), поэтому реальную высоту статусбара получаем синхронно
+        // через системный ресурс "status_bar_height" — без WindowInsets/post{}, которые
+        // раньше давали верное значение слишком поздно и нестабильно. Считаем один раз
+        // и переиспользуем во всех местах, где раньше подставлялся ненадёжный 0.
+        final int statusBarH = AndroidUtilities.getStatusBarHeight(context);
+
         org.telegram.ui.Components.SizeNotifierFrameLayout frameLayout = new org.telegram.ui.Components.SizeNotifierFrameLayout(context);
         fragmentView = frameLayout;
         // Фикс "карнавал полосок": лента раньше рисовала сплошной фон темы под
@@ -106,7 +113,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         scrollHelper = new org.telegram.ui.Components.RecyclerAnimationScrollHelper(listView, listViewLayoutManager);
 
         // Отступ сверху = статусбар + высота таббара снизу MainTabsActivity (не тулбар — его нет)
-        int topPadding = AndroidUtilities.statusBarHeight + AndroidUtilities.dp(56);
+        int topPadding = statusBarH + AndroidUtilities.dp(56);
         listView.setPadding(0, topPadding, 0, AndroidUtilities.dp(56));
         listView.setClipToPadding(false);
 
@@ -143,7 +150,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // Фикс: свайп сверху вниз на самом верху ленты — обновляет посты (как в
         // большинстве соцсетей), со стандартным материальным спиннером-индикатором.
         swipeRefreshLayout = new androidx.swiperefreshlayout.widget.SwipeRefreshLayout(context);
-        swipeRefreshLayout.setProgressViewOffset(false, AndroidUtilities.statusBarHeight + AndroidUtilities.dp(20), AndroidUtilities.statusBarHeight + AndroidUtilities.dp(76));
+        swipeRefreshLayout.setProgressViewOffset(false, statusBarH + AndroidUtilities.dp(20), statusBarH + AndroidUtilities.dp(76));
         swipeRefreshLayout.setColorSchemeColors(Theme.getColor(Theme.key_featuredStickers_addButton));
         swipeRefreshLayout.setOnRefreshListener(() -> {
             refreshingFeed = true;
@@ -192,15 +199,20 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         headerView.addView(feedMenuButton, LayoutHelper.createFrame(40, 40,
                 Gravity.RIGHT | Gravity.BOTTOM, 0, 0, 8, 8));
 
-        // Фиксированная высота с запасом (120dp) — гарантированно перекрывает статусбар
-        // на любом устройстве без необходимости асинхронно узнавать его точную высоту.
-        int headerHeight = AndroidUtilities.dp(120);
+        // Фиксированная высота 120dp "с запасом" давала лишний пустой зазор сверху
+        // (логотип/кнопка выровнены по НИЗУ полосы — Gravity.BOTTOM — поэтому при
+        // завышенной высоте они оказывались далеко под статусбаром, а не сразу
+        // под ним). statusBarH посчитан один раз в начале метода синхронно через
+        // системный ресурс "status_bar_height". rowHeight — высота строки с текстом
+        // и кнопкой, совпадает с margin'ами логотипа/кнопки (12dp/8dp снизу).
+        int rowHeight = AndroidUtilities.dp(56);
+        int headerHeight = statusBarH + rowHeight;
         FrameLayout.LayoutParams headerParams = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, headerHeight);
         headerParams.gravity = Gravity.TOP;
         frameLayout.addView(headerView, headerParams);
         headerView.bringToFront();
         listView.setPadding(0, headerHeight, 0, AndroidUtilities.dp(56));
-        PotokDebugLog.log("PotokFeedLogo", "headerView: упрощённая версия добавлена, height=" + headerHeight);
+        PotokDebugLog.log("PotokFeedLogo", "headerView: statusBarH=" + statusBarH + " headerHeight=" + headerHeight);
 
         // --- Кнопка "наверх" ---
         scrollToTopButton = new FrameLayout(context);

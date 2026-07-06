@@ -334,6 +334,26 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         });
     }
 
+    /**
+     * Скрывает канал из ленты через тот же механизм, что и общий фильтр каналов
+     * по кнопке в шапке (hiddenChannelIds/SharedPreferences). Вызывается из
+     * пункта "Не показывать посты из этого канала" в меню поста (PotokFeedPostCell).
+     */
+    public void hideChannel(TLRPC.Chat channel) {
+        if (channel == null) {
+            return;
+        }
+        String id = String.valueOf(channel.id);
+        hiddenChannelIds.add(id);
+        Context context = getParentActivity();
+        if (context != null) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putStringSet(PREFS_KEY_HIDDEN, hiddenChannelIds).apply();
+        }
+        PotokDebugLog.log("PotokFeedLogo", "Канал скрыт из поста: id=" + id + " скрыто всего=" + hiddenChannelIds.size());
+        rebuildAndShowAllItems();
+    }
+
     private void showChannelFilter(Context context) {
         if (allChannels.isEmpty()) {
             PotokDebugLog.log("PotokFeedLogo", "Фильтр: каналов пока нет");

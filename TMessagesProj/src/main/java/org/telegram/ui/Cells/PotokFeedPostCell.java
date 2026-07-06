@@ -906,6 +906,23 @@ public class PotokFeedPostCell extends LinearLayout {
             android.widget.Toast.makeText(getContext(), org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.FwdMessageToSavedMessages), android.widget.Toast.LENGTH_SHORT).show();
         });
 
+        // Не показывать посты из этого канала — тот же механизм hiddenChannelIds/
+        // SharedPreferences, что и общий фильтр каналов по кнопке в шапке ленты.
+        if (currentChannel != null) {
+            final TLRPC.Chat channelToHide = currentChannel;
+            ActionBarMenuSubItem hideChannel = new ActionBarMenuSubItem(getContext(), false, false, null);
+            hideChannel.setMinimumWidth(AndroidUtilities.dp(200));
+            hideChannel.setTextAndIcon("Не показывать посты из этого канала", org.telegram.messenger.R.drawable.msg_block2);
+            hideChannel.setColors(Theme.getColor(Theme.key_text_RedRegular), Theme.getColor(Theme.key_text_RedRegular));
+            layout.addView(hideChannel);
+            hideChannel.setOnClickListener(v -> {
+                if (postMenuWindow != null) postMenuWindow.dismiss();
+                if (parentFragment instanceof org.telegram.ui.PotokFeedFragment) {
+                    ((org.telegram.ui.PotokFeedFragment) parentFragment).hideChannel(channelToHide);
+                }
+            });
+        }
+
         // Пожаловаться
         layout.addView(new ActionBarPopupWindow.GapView(getContext(), null), LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 8));
         ActionBarMenuSubItem report = new ActionBarMenuSubItem(getContext(), true, true, null);

@@ -162,22 +162,23 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         swipeRefreshLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         frameLayout.addView(swipeRefreshLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
-        // Шапка ленты — отдельный слой поверх swipeRefreshLayout.
-        // Добавляем ПОСЛЕ swipeRefreshLayout чтобы гарантированно быть сверху в z-order.
-        // Высота шапки = statusBarHeight + 56dp, но statusBarHeight получаем через WindowInsets,
-        // так как AndroidUtilities.statusBarHeight в этом проекте всегда 0.
+        // Шапка ленты — упрощённая, надёжная версия. Раньше здесь были тень, курсивный
+        // шрифт и высота, вычисляемая асинхронно через post{} — всё это убрано, чтобы
+        // исключить любые скрытые причины невидимости. Сейчас: фиксированная высота
+        // с запасом (обязательно перекрывает статусбар на любом телефоне), явный
+        // полупрозрачный фон (чтобы сама полоса была видна в любом случае), и
+        // принудительный bringToFront().
         FrameLayout headerView = new FrameLayout(context);
-        headerView.setClickable(false);
-        headerView.setFocusable(false);
+        headerView.setBackgroundColor(0x33000000);
 
         TextView logoView = new TextView(context);
         logoView.setText("ПОТОК");
         logoView.setTextSize(22);
-        logoView.setTypeface(android.graphics.Typeface.create(AndroidUtilities.bold(), android.graphics.Typeface.BOLD_ITALIC));
+        logoView.setTypeface(AndroidUtilities.bold());
         logoView.setTextColor(0xFFFFFFFF);
-        logoView.setShadowLayer(AndroidUtilities.dp(3), 0, 0, 0x80000000);
-        logoView.setGravity(Gravity.BOTTOM);
-        logoView.setPadding(AndroidUtilities.dp(16), 0, 0, AndroidUtilities.dp(10));
+        logoView.setGravity(Gravity.CENTER_VERTICAL);
+        headerView.addView(logoView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
+                Gravity.LEFT | Gravity.BOTTOM, 16, 0, 0, 12));
 
         ImageView feedMenuButton = new ImageView(context);
         feedMenuButton.setImageResource(org.telegram.messenger.R.drawable.ic_ab_other);
@@ -188,42 +189,18 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             PotokDebugLog.log("PotokFeedLogo", "Клик: три точки — открываем фильтр каналов");
             showChannelFilter(context);
         });
+        headerView.addView(feedMenuButton, LayoutHelper.createFrame(40, 40,
+                Gravity.RIGHT | Gravity.BOTTOM, 0, 0, 8, 8));
 
-        headerView.addView(logoView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-        FrameLayout.LayoutParams btnParams = new FrameLayout.LayoutParams(AndroidUtilities.dp(40), AndroidUtilities.dp(40));
-        btnParams.gravity = Gravity.RIGHT | Gravity.BOTTOM;
-        btnParams.rightMargin = AndroidUtilities.dp(8);
-        btnParams.bottomMargin = AndroidUtilities.dp(8);
-        headerView.addView(feedMenuButton, btnParams);
-
-        // Высота шапки подстраивается под реальный statusBarHeight. WindowInsetsCompat
-        // callback (setOnApplyWindowInsetsListener) здесь не срабатывает — SizeNotifierFrameLayout
-        // не запрашивает insets сам, поэтому родительский callback никогда не вызывается.
-        // Вместо этого — прямой запрос insets через post{} сразу после attach к окну
-        // (тот же приём, что уже надёжно работает в PotokDrawerView.onMeasure).
-        headerView.post(() -> {
-            int statusBarH = 0;
-            androidx.core.view.WindowInsetsCompat insetsCompat = androidx.core.view.ViewCompat.getRootWindowInsets(headerView);
-            if (insetsCompat != null) {
-                statusBarH = insetsCompat.getInsetsIgnoringVisibility(androidx.core.view.WindowInsetsCompat.Type.systemBars()).top;
-            }
-            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) headerView.getLayoutParams();
-            int newH = statusBarH + AndroidUtilities.dp(56);
-            if (lp.height != newH) {
-                lp.height = newH;
-                lp.topMargin = 0;
-                headerView.setLayoutParams(lp);
-                // Обновляем topPadding у listView чтобы посты не уходили под шапку
-                listView.setPadding(0, newH, 0, listView.getPaddingBottom());
-            }
-            PotokDebugLog.log("PotokFeedLogo", "headerView(post): statusBarH=" + statusBarH + " totalH=" + newH
-                + " insetsCompat=" + (insetsCompat != null));
-        });
-
-        FrameLayout.LayoutParams headerParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, AndroidUtilities.statusBarHeight + AndroidUtilities.dp(56));
+        // Фиксированная высота с запасом (120dp) — гарантированно перекрывает статусбар
+        // на любом устройстве без необходимости асинхронно узнавать его точную высоту.
+        int headerHeight = AndroidUtilities.dp(120);
+        FrameLayout.LayoutParams headerParams = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, headerHeight);
         headerParams.gravity = Gravity.TOP;
         frameLayout.addView(headerView, headerParams);
+        headerView.bringToFront();
+        listView.setPadding(0, headerHeight, 0, AndroidUtilities.dp(56));
+        PotokDebugLog.log("PotokFeedLogo", "headerView: упрощённая версия добавлена, height=" + headerHeight);
 
         // --- Кнопка "наверх" ---
         scrollToTopButton = new FrameLayout(context);

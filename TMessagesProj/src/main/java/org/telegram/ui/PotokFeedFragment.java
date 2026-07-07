@@ -21,6 +21,7 @@ import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.ActionBar;
+import org.telegram.ui.ActionBar.ActionBarMenu;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Adapters.DialogsSearchAdapter;
@@ -80,6 +81,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     public View createView(Context context) {
         PotokDebugLog.log("PotokFeedLogo", "createView: НАЧАЛО");
         try {
+            // Раньше здесь стоял actionBar.setAddToContainer(false) — полностью прятали
+            // ActionBar, т.к. он же был источником "пустой полосы" (см. историю выше).
+            // Теперь используем его штатно: заголовок "POTOK ЛЕНТА" (второе слово другим
+            // цветом) + кнопка трёх точек. Настройка вынесена в setupActionBar(context).
+            setupActionBar(context);
             View result = createViewInternal(context);
             PotokDebugLog.log("PotokFeedLogo", "createView: УСПЕШНО завершён, вернул " + (result != null ? result.getClass().getSimpleName() : "null"));
             return result;
@@ -88,6 +94,35 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 + "\n" + android.util.Log.getStackTraceString(t));
             throw t;
         }
+    }
+
+    private static final int MENU_ITEM_FILTER = 1;
+
+    private void setupActionBar(Context context) {
+        if (actionBar == null) {
+            return;
+        }
+        // "POTOK " обычным цветом заголовка + "ЛЕНТА" акцентным цветом (тот же акцент,
+        // что используется у спиннера pull-to-refresh — key_featuredStickers_addButton).
+        android.text.SpannableStringBuilder title = new android.text.SpannableStringBuilder();
+        title.append("POTOK ");
+        int accentStart = title.length();
+        title.append("ЛЕНТА");
+        title.setSpan(new android.text.style.ForegroundColorSpan(Theme.getColor(Theme.key_featuredStickers_addButton)),
+                accentStart, title.length(), android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+        actionBar.setTitle(title);
+
+        ActionBarMenu menu = actionBar.createMenu();
+        menu.addItem(MENU_ITEM_FILTER, org.telegram.messenger.R.drawable.ic_ab_other);
+        actionBar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
+            @Override
+            public void onItemClick(int id) {
+                if (id == MENU_ITEM_FILTER) {
+                    PotokDebugLog.log("PotokFeedLogo", "Клик: три точки — открываем фильтр каналов");
+                    showChannelFilter(context);
+                }
+            }
+        });
     }
 
     private View createViewInternal(Context context) {
@@ -115,21 +150,21 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         listView.setLayoutManager(listViewLayoutManager);
         scrollHelper = new org.telegram.ui.Components.RecyclerAnimationScrollHelper(listView, listViewLayoutManager);
 
-        // Окно у нас edge-to-edge (WindowCompat.setDecorFitsSystemWindows(window, false) —
-        // см. AndroidUtilities), а MainTabsActivity гасит только НИЖНИЙ инсет
-        // (навигационную панель), верхний (статусбар) доходит до нас непотреблённым —
-        // то есть отступ сверху действительно нужен, иначе пост окажется под статусбаром.
-        // Раньше здесь брался статичный AndroidUtilities.getStatusBarHeight(context)
-        // (через ресурс "status_bar_height") — судя по разнице между этим числом и
-        // реально видимым зазором на экране, на этом устройстве он даёт неверное
-        // значение. Поэтому берём отступ из настоящих WindowInsets — это гарантированно
-        // совпадает с тем, что реально накрывает статусбар на данном конкретном экране.
-        listView.setPadding(0, 0, 0, AndroidUtilities.dp(56));
+        // Теперь у нас есть настоящий ActionBar (заголовок "POTOK ЛЕНТА" + три точки,
+        // см. setupActionBar) — он добавляется отдельным view поверх контента (общий
+        // механизм ViewPagerActivity), и резервирует статусбар + свою высоту (56dp,
+        // ActionBar.getCurrentActionBarHeight() — т.к. occupyStatusBar по умолчанию
+        // true). Чтобы пост не заезжал под него НИ НА ПИКСЕЛЬ, отступ ленты считаем
+        // ТОЧНО той же формулой: statusBarInset + getCurrentActionBarHeight().
+        // statusBar берём из настоящих WindowInsets (см. предыдущую диагностику — это
+        // совпало с getStatusBarHeight на тесте, но insets надёжнее в общем случае).
+        listView.setPadding(0, statusBarH + ActionBar.getCurrentActionBarHeight(), 0, AndroidUtilities.dp(56));
         ViewCompat.setOnApplyWindowInsetsListener(frameLayout, (v, insets) -> {
             int topInset = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
-            listView.setPadding(0, topInset, 0, AndroidUtilities.dp(56));
+            int totalTop = topInset + ActionBar.getCurrentActionBarHeight();
+            listView.setPadding(0, totalTop, 0, AndroidUtilities.dp(56));
             PotokDebugLog.log("PotokFeedLogo", "WindowInsets: statusBars().top=" + topInset
-                    + " (для сравнения — старый getStatusBarHeight=" + statusBarH + ")");
+                    + " + actionBarHeight=" + ActionBar.getCurrentActionBarHeight() + " = " + totalTop);
             return insets;
         });
         frameLayout.requestApplyInsets();
@@ -168,7 +203,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // Фикс: свайп сверху вниз на самом верху ленты — обновляет посты (как в
         // большинстве соцсетей), со стандартным материальным спиннером-индикатором.
         swipeRefreshLayout = new androidx.swiperefreshlayout.widget.SwipeRefreshLayout(context);
-        swipeRefreshLayout.setProgressViewOffset(false, statusBarH + AndroidUtilities.dp(20), statusBarH + AndroidUtilities.dp(76));
+        int actionBarTotalHeight = statusBarH + ActionBar.getCurrentActionBarHeight();
+        swipeRefreshLayout.setProgressViewOffset(false, actionBarTotalHeight + AndroidUtilities.dp(20), actionBarTotalHeight + AndroidUtilities.dp(76));
         swipeRefreshLayout.setColorSchemeColors(Theme.getColor(Theme.key_featuredStickers_addButton));
         swipeRefreshLayout.setOnRefreshListener(() -> {
             refreshingFeed = true;

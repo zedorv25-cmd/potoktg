@@ -169,14 +169,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         swipeRefreshLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         frameLayout.addView(swipeRefreshLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
-        // Шапка ленты — упрощённая, надёжная версия. Раньше здесь были тень, курсивный
-        // шрифт и высота, вычисляемая асинхронно через post{} — всё это убрано, чтобы
-        // исключить любые скрытые причины невидимости. Сейчас: фиксированная высота
-        // с запасом (обязательно перекрывает статусбар на любом телефоне), явный
-        // полупрозрачный фон (чтобы сама полоса была видна в любом случае), и
-        // принудительный bringToFront().
+        // Шапка ленты — без собственной заливки/подложки. Никакой отдельной
+        // "полосы" над лентой нет: логотип и кнопка лежат прямо на фоне ленты
+        // (обои чата), FrameLayout нужен только как контейнер для позиционирования.
         FrameLayout headerView = new FrameLayout(context);
-        headerView.setBackgroundColor(0x33000000);
 
         TextView logoView = new TextView(context);
         logoView.setText("ПОТОК");

@@ -112,8 +112,9 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         listView.setLayoutManager(listViewLayoutManager);
         scrollHelper = new org.telegram.ui.Components.RecyclerAnimationScrollHelper(listView, listViewLayoutManager);
 
-        // Отступ сверху = статусбар + высота таббара снизу MainTabsActivity (не тулбар — его нет)
-        int topPadding = statusBarH + AndroidUtilities.dp(56);
+        // Отступ сверху = только статусбар. Никакой шапки/полосы над лентой больше нет —
+        // первый пост должен идти сразу под системным статусбаром.
+        int topPadding = statusBarH;
         listView.setPadding(0, topPadding, 0, AndroidUtilities.dp(56));
         listView.setClipToPadding(false);
 
@@ -168,47 +169,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         });
         swipeRefreshLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         frameLayout.addView(swipeRefreshLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-
-        // Шапка ленты — без собственной заливки/подложки. Никакой отдельной
-        // "полосы" над лентой нет: логотип и кнопка лежат прямо на фоне ленты
-        // (обои чата), FrameLayout нужен только как контейнер для позиционирования.
-        FrameLayout headerView = new FrameLayout(context);
-
-        TextView logoView = new TextView(context);
-        logoView.setText("ПОТОК");
-        logoView.setTextSize(22);
-        logoView.setTypeface(AndroidUtilities.bold());
-        logoView.setTextColor(0xFFFFFFFF);
-        logoView.setGravity(Gravity.CENTER_VERTICAL);
-        headerView.addView(logoView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT,
-                Gravity.LEFT | Gravity.BOTTOM, 16, 0, 0, 12));
-
-        ImageView feedMenuButton = new ImageView(context);
-        feedMenuButton.setImageResource(org.telegram.messenger.R.drawable.ic_ab_other);
-        feedMenuButton.setColorFilter(0xFFFFFFFF);
-        feedMenuButton.setScaleType(ImageView.ScaleType.CENTER);
-        feedMenuButton.setBackground(Theme.createSelectorDrawable(0x33ffffff, Theme.RIPPLE_MASK_CIRCLE_20DP));
-        feedMenuButton.setOnClickListener(v -> {
-            PotokDebugLog.log("PotokFeedLogo", "Клик: три точки — открываем фильтр каналов");
-            showChannelFilter(context);
-        });
-        headerView.addView(feedMenuButton, LayoutHelper.createFrame(40, 40,
-                Gravity.RIGHT | Gravity.BOTTOM, 0, 0, 8, 8));
-
-        // Фиксированная высота 120dp "с запасом" давала лишний пустой зазор сверху
-        // (логотип/кнопка выровнены по НИЗУ полосы — Gravity.BOTTOM — поэтому при
-        // завышенной высоте они оказывались далеко под статусбаром, а не сразу
-        // под ним). statusBarH посчитан один раз в начале метода синхронно через
-        // системный ресурс "status_bar_height". rowHeight — высота строки с текстом
-        // и кнопкой, совпадает с margin'ами логотипа/кнопки (12dp/8dp снизу).
-        int rowHeight = AndroidUtilities.dp(56);
-        int headerHeight = statusBarH + rowHeight;
-        FrameLayout.LayoutParams headerParams = new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, headerHeight);
-        headerParams.gravity = Gravity.TOP;
-        frameLayout.addView(headerView, headerParams);
-        headerView.bringToFront();
-        listView.setPadding(0, headerHeight, 0, AndroidUtilities.dp(56));
-        PotokDebugLog.log("PotokFeedLogo", "headerView: statusBarH=" + statusBarH + " headerHeight=" + headerHeight);
 
         // --- Кнопка "наверх" ---
         scrollToTopButton = new FrameLayout(context);
@@ -328,12 +288,15 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 DialogsSearchAdapter.RecentSearchObject obj = arrayList.get(i);
                 if (obj.object instanceof TLRPC.Chat) {
                     TLRPC.Chat chat = (TLRPC.Chat) obj.object;
-                    if (chat.broadcast && !chat.megagroup && !chat.deactivated && !chat.left && !chat.kicked) {
+                    // chat.left = "вы не состоите в этом чате" — для каналов из истории
+                    // поиска, на которые пользователь НЕ подписан (именно такие и нужны
+                    // в ленте), этот флаг всегда true, поэтому раньше их отфильтровывало.
+                    if (chat.broadcast && !chat.megagroup && !chat.deactivated && !chat.kicked) {
                         recentChannels.add(chat);
                     }
                 }
             }
-            PotokDebugLog.log("PotokFeedLogo", "История поиска: найдено каналов=" + recentChannels.size());
+            PotokDebugLog.log("PotokFeedLogo", "История поиска: сырых записей=" + arrayList.size() + " каналов после фильтра=" + recentChannels.size());
             AndroidUtilities.runOnUIThread(() -> {
                 for (TLRPC.Chat channel : recentChannels) {
                     addChannelToFeed(channel);

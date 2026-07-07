@@ -13,6 +13,9 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.NotificationCenter;
@@ -112,10 +115,24 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         listView.setLayoutManager(listViewLayoutManager);
         scrollHelper = new org.telegram.ui.Components.RecyclerAnimationScrollHelper(listView, listViewLayoutManager);
 
-        // Отступ сверху = только статусбар. Никакой шапки/полосы над лентой больше нет —
-        // первый пост должен идти сразу под системным статусбаром.
-        int topPadding = statusBarH;
-        listView.setPadding(0, topPadding, 0, AndroidUtilities.dp(56));
+        // Окно у нас edge-to-edge (WindowCompat.setDecorFitsSystemWindows(window, false) —
+        // см. AndroidUtilities), а MainTabsActivity гасит только НИЖНИЙ инсет
+        // (навигационную панель), верхний (статусбар) доходит до нас непотреблённым —
+        // то есть отступ сверху действительно нужен, иначе пост окажется под статусбаром.
+        // Раньше здесь брался статичный AndroidUtilities.getStatusBarHeight(context)
+        // (через ресурс "status_bar_height") — судя по разнице между этим числом и
+        // реально видимым зазором на экране, на этом устройстве он даёт неверное
+        // значение. Поэтому берём отступ из настоящих WindowInsets — это гарантированно
+        // совпадает с тем, что реально накрывает статусбар на данном конкретном экране.
+        listView.setPadding(0, 0, 0, AndroidUtilities.dp(56));
+        ViewCompat.setOnApplyWindowInsetsListener(frameLayout, (v, insets) -> {
+            int topInset = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
+            listView.setPadding(0, topInset, 0, AndroidUtilities.dp(56));
+            PotokDebugLog.log("PotokFeedLogo", "WindowInsets: statusBars().top=" + topInset
+                    + " (для сравнения — старый getStatusBarHeight=" + statusBarH + ")");
+            return insets;
+        });
+        frameLayout.requestApplyInsets();
         listView.setClipToPadding(false);
 
         listView.setAdapter(new RecyclerView.Adapter<RecyclerListView.Holder>() {
@@ -299,6 +316,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             PotokDebugLog.log("PotokFeedLogo", "История поиска: сырых записей=" + arrayList.size() + " каналов после фильтра=" + recentChannels.size());
             AndroidUtilities.runOnUIThread(() -> {
                 for (TLRPC.Chat channel : recentChannels) {
+                    PotokDebugLog.log("PotokFeedLogo", "История поиска: добавляю в ленту канал id=" + channel.id + " (" + channel.title + ")");
                     addChannelToFeed(channel);
                 }
             });
@@ -380,6 +398,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 }
             }
             if (error != null || !(response instanceof TLRPC.messages_Messages)) {
+                PotokDebugLog.log("PotokFeedLogo", "loadHistory: ОШИБКА для канала id=" + channel.id + " (" + channel.title + ") error="
+                        + (error != null ? (error.code + " " + error.text) : "response не messages_Messages: " + response));
                 return;
             }
             TLRPC.messages_Messages res = (TLRPC.messages_Messages) response;

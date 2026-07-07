@@ -25,6 +25,7 @@ import androidx.recyclerview.widget.PagerSnapHelper;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.DownloadController;
 import org.telegram.messenger.FileLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.MediaController;
@@ -38,6 +39,8 @@ import org.telegram.ui.Components.AnimatedEmojiDrawable;
 import org.telegram.ui.Components.AvatarDrawable;
 import org.telegram.ui.Components.BackupImageView;
 import org.telegram.ui.Components.LayoutHelper;
+import org.telegram.ui.Components.MediaActionDrawable;
+import org.telegram.ui.Components.RadialProgress2;
 import org.telegram.ui.Components.SeekBar;
 import org.telegram.ui.PhotoViewer;
 import org.telegram.ui.ChatActivity;
@@ -141,13 +144,22 @@ public class PotokFeedPostCell extends LinearLayout {
 
         // --- Шапка ---
         // Фикс: полоса с названием канала теперь отдельного цвета от остального поста
-        // (full-width — через padding, а не margin, иначе цветной блок был бы "с отступами").
+        // (full-width, отступ строго 0 — раньше тут случайно стоял margin 1dp, из-за
+        // которого квадратный угол полосы почти вплотную к краю резал по дуге
+        // скругления карточки — обводка визуально "прерывалась" в верхних углах).
+        // Плюс сама полоса теперь скруглена сверху на те же 12dp, что и карточка —
+        // раньше клипались только "торчащие" углы через setClipToOutline на родителе,
+        // но угловая ТОЧКА самой полосы всё равно почти достигала края.
         LinearLayout headerRow = new LinearLayout(context);
         headerRow.setOrientation(HORIZONTAL);
         headerRow.setGravity(Gravity.CENTER_VERTICAL);
         headerRow.setPadding(dp(12), dp(12), dp(8), dp(10));
-        headerRow.setBackgroundColor(Theme.getColor(Theme.key_graySection, resourcesProvider));
-        addView(headerRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 1, 1, 1, 0));
+        android.graphics.drawable.GradientDrawable headerBg = new android.graphics.drawable.GradientDrawable();
+        headerBg.setColor(Theme.getColor(Theme.key_graySection, resourcesProvider));
+        float topRadius = AndroidUtilities.dp(12);
+        headerBg.setCornerRadii(new float[]{topRadius, topRadius, topRadius, topRadius, 0, 0, 0, 0});
+        headerRow.setBackground(headerBg);
+        addView(headerRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 0, 0, 0));
 
         avatarView = new BackupImageView(context);
         avatarView.setRoundRadius(dp(18));

@@ -143,13 +143,15 @@ public class PotokFeedPostCell extends LinearLayout {
         });
 
         // --- Шапка ---
-        // Фикс: полоса с названием канала теперь отдельного цвета от остального поста
-        // (full-width, отступ строго 0 — раньше тут случайно стоял margin 1dp, из-за
-        // которого квадратный угол полосы почти вплотную к краю резал по дуге
-        // скругления карточки — обводка визуально "прерывалась" в верхних углах).
-        // Плюс сама полоса теперь скруглена сверху на те же 12dp, что и карточка —
-        // раньше клипались только "торчащие" углы через setClipToOutline на родителе,
-        // но угловая ТОЧКА самой полосы всё равно почти достигала края.
+        // Фикс: полоса с названием канала теперь отдельного цвета от остального поста.
+        // ВАЖНО: margin именно 1dp (не 0!) — ровно по ширине обводки карточки (см.
+        // cardBg.setStroke(dp(1), ...) выше). При margin=0 полоса рисуется поверх
+        // рамки и полностью её закрывает — это и был регресс в прошлой правке
+        // ("обводка пропала"). При margin=1dp полоса сидит ВНУТРИ рамки, оставляя её
+        // видимой по всему периметру. Собственное скругление верхних углов полосы
+        // (те же 12dp, что и у карточки) при этом убирает разрыв дуги в углах —
+        // раньше здесь была ПРЯМОУГОЛЬНАЯ полоса почти вплотную к краю, чей квадратный
+        // угол резал по дуге скругления карточки.
         LinearLayout headerRow = new LinearLayout(context);
         headerRow.setOrientation(HORIZONTAL);
         headerRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -159,7 +161,7 @@ public class PotokFeedPostCell extends LinearLayout {
         float topRadius = AndroidUtilities.dp(12);
         headerBg.setCornerRadii(new float[]{topRadius, topRadius, topRadius, topRadius, 0, 0, 0, 0});
         headerRow.setBackground(headerBg);
-        addView(headerRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 0, 0, 0));
+        addView(headerRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 1, 1, 1, 0));
 
         avatarView = new BackupImageView(context);
         avatarView.setRoundRadius(dp(18));
@@ -1032,24 +1034,41 @@ public class PotokFeedPostCell extends LinearLayout {
             img.setRoundRadius(dp(8));
             wrapper.addView(img, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
-            // Значок play поверх превью — единственный способ в Ленте отличить видео
-            // от фото на глаз, так как сама карусель показывает только статичный кадр.
-            // По центру, компактный, векторный (PlayTriangleView рисует треугольник
-            // через Path) — растровый play_mini_video всего 24x30px даже в xxhdpi,
-            // поэтому при увеличении выглядит мутным; свой Path даёт чёткость на
-            // любом размере и densities.
-            FrameLayout playOverlay = new FrameLayout(parent.getContext());
-            playOverlay.setVisibility(GONE);
-            android.graphics.drawable.GradientDrawable circleBg = new android.graphics.drawable.GradientDrawable();
-            circleBg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-            circleBg.setColor(0x4D000000);
-            playOverlay.setBackground(circleBg);
-            PlayTriangleView playTriangle = new PlayTriangleView(parent.getContext());
-            playTriangle.setColor(0xFFFFFFFF);
-            playOverlay.addView(playTriangle, LayoutHelper.createFrame(16, 16, Gravity.CENTER, 2, 0, 0, 0));
-            wrapper.addView(playOverlay, LayoutHelper.createFrame(36, 36, Gravity.CENTER));
+            // Настоящая кнопка загрузки видео — точно та же механика, что в самом
+            // Telegram (ChatMessageCell/ContextLinkCell): RadialProgress2 рисует
+            // круг с иконкой (стрелка загрузки / крестик отмены с кольцом прогресса /
+            // play), состояние меняется по факту наличия файла в кэше и по колбэкам
+            // DownloadController. video/фото больше НЕ подгружаются сами по себе —
+            // только по тапу на эту кнопку (см. VideoDownloadOverlay ниже).
+            VideoDownloadOverlay downloadOverlay = new VideoDownloadOverlay(parent.getContext());
+            downloadOverlay.setVisibility(GONE);
+            wrapper.addView(downloadOverlay, LayoutHelper.createFrame(48, 48, Gravity.CENTER));
 
-            return new MediaHolder(wrapper, img, playOverlay);
+            // Бейдж длительности в левом верхнем углу — как в оригинальном Telegram
+            // и в скриншоте из Plus Messenger, который прислал пользователь: тёмная
+            // полупрозрачная плашка с текстом "м:сс".
+            TextView durationBadge = new TextView(parent.getContext());
+            durationBadge.setTextColor(0xFFFFFFFF);
+            durationBadge.setTextSize(12);
+            durationBadge.setTypeface(AndroidUtilities.bold());
+            durationBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
+            android.graphics.drawable.GradientDrawable badgeBg = new android.graphics.drawable.GradientDrawable();
+            badgeBg.setColor(0x99000000);
+            badgeBg.setCornerRadius(dp(4));
+            durationBadge.setBackground(badgeBg);
+            durationBadge.setVisibility(GONE);
+            wrapper.addView(durationBadge, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP, 6, 6, 0, 0));
+
+            return new MediaHolder(wrapper, img, downloadOverlay, durationBadge);
+        }
+
+        @Override
+        public void onViewRecycled(MediaHolder holder) {
+            super.onViewRecycled(holder);
+            // Обязательно отписываемся от DownloadController — иначе при переиспользовании
+            // ViewHolder'а (RecyclerView) колбэки о загрузке будут прилетать в "чужую",
+            // уже переиспользованную под другое видео ячейку.
+            holder.downloadOverlay.unbind();
         }
 
         @Override
@@ -1059,7 +1078,6 @@ public class PotokFeedPostCell extends LinearLayout {
 
             TLRPC.MessageMedia media = mo.messageOwner != null ? mo.messageOwner.media : null;
             boolean isVideo = mo.isVideo();
-            holder.playOverlay.setVisibility(isVideo ? VISIBLE : GONE);
 
             if (isVideo && media instanceof TLRPC.TL_messageMediaDocument
                     && media.document != null) {
@@ -1095,12 +1113,15 @@ public class PotokFeedPostCell extends LinearLayout {
                 String currentPhotoFilterThumb = currentPhotoObjectThumb != null
                     ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h + "_b" : "b1";
 
-                // Точный паттерн ChatMessageCell (DOCUMENT_ATTACH_TYPE_VIDEO, автоплей-ветка):
-                // mediaLocation = сам видеодокумент → ImageReceiver декодирует реальный кадр
-                // через стриминг (canStreamVideo), а не довольствуется маленьким серверным
-                // thumbnail — отсюда чёткость, как в самом чате. currentPhotoObject остаётся
-                // как thumb на время, пока кадр из видео не декодирован.
-                boolean canDecodeFromVideo = !mo.isRepostPreview && mo.canStreamVideo();
+                // ГЛАВНОЕ ИЗМЕНЕНИЕ: видео больше НЕ подгружается/не стримится само по
+                // себе при показе поста. canDecodeFromVideo (декодирование реального
+                // кадра через стриминг) теперь разрешено ТОЛЬКО если файл уже реально
+                // лежит в кэше (пользователь явно нажал кнопку загрузки раньше) — иначе
+                // просто статичный превью-thumbnail с сервера, без единого байта самого
+                // видео.
+                java.io.File cacheFile = FileLoader.getInstance(mo.currentAccount).getPathToAttach(document, true);
+                boolean fileExists = cacheFile != null && cacheFile.exists();
+                boolean canDecodeFromVideo = !mo.isRepostPreview && fileExists && mo.canStreamVideo();
                 if (canDecodeFromVideo) {
                     img.getImageReceiver().setAllowDecodeSingleFrame(true);
                     img.getImageReceiver().setAllowStartAnimation(false);
@@ -1126,7 +1147,34 @@ public class PotokFeedPostCell extends LinearLayout {
                         strippedThumb, (String) null, 0, 0, mo
                     );
                 }
+
+                // Бейдж длительности "м:сс" в левом верхнем углу (как в оригинальном
+                // Telegram и в присланном скрине из Plus Messenger).
+                long durationSec = 0;
+                for (TLRPC.DocumentAttribute attr : document.attributes) {
+                    if (attr instanceof TLRPC.TL_documentAttributeVideo) {
+                        durationSec = (long) attr.duration;
+                        break;
+                    }
+                }
+                if (durationSec > 0) {
+                    holder.durationBadge.setText(AndroidUtilities.formatShortDuration((int) durationSec));
+                    holder.durationBadge.setVisibility(VISIBLE);
+                } else {
+                    holder.durationBadge.setVisibility(GONE);
+                }
+
+                holder.downloadOverlay.setVisibility(VISIBLE);
+                final int bindPosition = position;
+                holder.downloadOverlay.bind(document, mo.currentAccount, fileExists, () -> {
+                    // Файл докачался — перепривязываем ячейку: canDecodeFromVideo теперь
+                    // увидит fileExists=true и покажет уже настоящий декодированный кадр.
+                    notifyItemChanged(bindPosition);
+                });
             } else {
+                holder.downloadOverlay.setVisibility(GONE);
+                holder.downloadOverlay.unbind();
+                holder.durationBadge.setVisibility(GONE);
                 // Фото — стандартный путь
                 ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;
                 TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
@@ -1154,12 +1202,144 @@ public class PotokFeedPostCell extends LinearLayout {
 
         class MediaHolder extends RecyclerView.ViewHolder {
             final BackupImageView img;
-            final FrameLayout playOverlay;
-            MediaHolder(View wrapper, BackupImageView img, FrameLayout playOverlay) {
+            final VideoDownloadOverlay downloadOverlay;
+            final TextView durationBadge;
+            MediaHolder(View wrapper, BackupImageView img, VideoDownloadOverlay downloadOverlay, TextView durationBadge) {
                 super(wrapper);
                 this.img = img;
-                this.playOverlay = playOverlay;
+                this.downloadOverlay = downloadOverlay;
+                this.durationBadge = durationBadge;
             }
+        }
+    }
+
+    // ------------------------------------------------------------------ VideoDownloadOverlay
+    /**
+     * Кнопка загрузки видео в кэш — та же механика, что в оригинальном Telegram
+     * (см. ContextLinkCell/ChatMessageCell): RadialProgress2 рисует круг с иконкой,
+     * которая меняется по факту наличия файла и по колбэкам DownloadController
+     * (загрузка / прогресс / готово). Пока файла нет — иконка "скачать", тап
+     * запускает FileLoader.loadFile(...). Во время загрузки — кольцо прогресса
+     * и крестик отмены. Когда файл скачан — колбэк onReady сообщает наверх
+     * (PotokFeedPostCell перепривязывает ячейку, чтобы показать декодированный кадр).
+     */
+    private static class VideoDownloadOverlay extends View implements DownloadController.FileDownloadProgressListener {
+        private final RadialProgress2 radialProgress;
+        private final int TAG;
+        private TLRPC.Document document;
+        private int currentAccount;
+        private String fileName;
+        private Runnable onReady;
+        private int buttonState; // -1 = скачан/ничего не показываем, 1 = грузится, 2 = скачать
+
+        VideoDownloadOverlay(Context context) {
+            super(context);
+            radialProgress = new RadialProgress2(this);
+            radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
+                    Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
+            TAG = DownloadController.getInstance(UserConfig.selectedAccount).generateObserverTag();
+            setOnClickListener(v -> onClick());
+        }
+
+        void bind(TLRPC.Document doc, int account, boolean fileExists, Runnable onReadyCallback) {
+            unbind();
+            document = doc;
+            currentAccount = account;
+            onReady = onReadyCallback;
+            fileName = FileLoader.getAttachFileName(doc);
+            updateState(false);
+        }
+
+        void unbind() {
+            if (fileName != null) {
+                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
+            }
+            document = null;
+            fileName = null;
+            onReady = null;
+        }
+
+        private void updateState(boolean animated) {
+            if (document == null || fileName == null) {
+                return;
+            }
+            java.io.File cacheFile = FileLoader.getInstance(currentAccount).getPathToAttach(document, true);
+            boolean fileExists = cacheFile != null && cacheFile.exists();
+            boolean isLoading = FileLoader.getInstance(currentAccount).isLoadingFile(fileName);
+            if (fileExists) {
+                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
+                buttonState = -1;
+                setVisibility(GONE);
+                if (onReady != null) {
+                    onReady.run();
+                }
+            } else {
+                setVisibility(VISIBLE);
+                DownloadController.getInstance(currentAccount).addLoadingFileObserver(fileName, this);
+                if (isLoading) {
+                    buttonState = 1;
+                    Float progress = org.telegram.messenger.ImageLoader.getInstance().getFileProgress(fileName);
+                    radialProgress.setProgress(progress != null ? progress : 0, animated);
+                    radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, animated);
+                } else {
+                    buttonState = 2;
+                    radialProgress.setIcon(MediaActionDrawable.ICON_DOWNLOAD, false, animated);
+                }
+            }
+            invalidate();
+        }
+
+        private void onClick() {
+            if (document == null) return;
+            if (buttonState == 2) {
+                // Тап по стрелке — запускаем реальную загрузку в кэш, ровно как жмут
+                // кнопку загрузки в самом Telegram/Plus Messenger.
+                FileLoader.getInstance(currentAccount).loadFile(document, null, FileLoader.PRIORITY_NORMAL, 0);
+                updateState(true);
+            } else if (buttonState == 1) {
+                // Тап по крестику во время загрузки — отмена.
+                FileLoader.getInstance(currentAccount).cancelLoadFile(document);
+                updateState(true);
+            }
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            radialProgress.setProgressRect(0, 0, w, h);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            radialProgress.draw(canvas);
+        }
+
+        @Override
+        public void onFailedDownload(String name, boolean canceled) {
+            updateState(true);
+        }
+
+        @Override
+        public void onSuccessDownload(String name) {
+            radialProgress.setProgress(1, true);
+            updateState(true);
+        }
+
+        @Override
+        public void onProgressDownload(String name, long downloadedSize, long totalSize) {
+            radialProgress.setProgress(Math.min(1f, downloadedSize / (float) totalSize), true);
+            if (buttonState != 1) {
+                updateState(true);
+            }
+        }
+
+        @Override
+        public void onProgressUpload(String name, long uploadedSize, long totalSize, boolean isEncrypted) {
+        }
+
+        @Override
+        public int getObserverTag() {
+            return TAG;
         }
     }
 

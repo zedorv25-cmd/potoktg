@@ -11,6 +11,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.core.view.ViewCompat;
@@ -22,6 +23,8 @@ import org.telegram.messenger.NotificationCenter;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.ActionBarMenu;
+import org.telegram.ui.ActionBar.ActionBarMenuSubItem;
+import org.telegram.ui.ActionBar.ActionBarPopupWindow;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Adapters.DialogsSearchAdapter;
@@ -113,13 +116,13 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         actionBar.setTitle(title);
 
         ActionBarMenu menu = actionBar.createMenu();
-        menu.addItem(MENU_ITEM_FILTER, org.telegram.messenger.R.drawable.ic_ab_other);
+        org.telegram.ui.ActionBar.ActionBarMenuItem menuItem = menu.addItem(MENU_ITEM_FILTER, org.telegram.messenger.R.drawable.ic_ab_other);
         actionBar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
             @Override
             public void onItemClick(int id) {
                 if (id == MENU_ITEM_FILTER) {
-                    PotokDebugLog.log("PotokFeedLogo", "Клик: три точки — открываем фильтр каналов");
-                    showChannelFilter(context);
+                    PotokDebugLog.log("PotokFeedLogo", "Клик: три точки — открываем меню ленты");
+                    showThreeDotsMenu(context, menuItem);
                 }
             }
         });
@@ -379,33 +382,143 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         rebuildAndShowAllItems();
     }
 
-    private void showChannelFilter(Context context) {
-        if (allChannels.isEmpty()) {
-            PotokDebugLog.log("PotokFeedLogo", "Фильтр: каналов пока нет");
-            return;
+    private ActionBarPopupWindow threeDotsMenuWindow;
+
+    /**
+     * Меню по кнопке "три точки" в шапке ленты — тот же тёмный стиль попапа,
+     * что и у меню поста (ActionBarPopupWindowLayout + popup_fixed_alert4), а
+     * не системный белый AlertDialog, как было раньше. Список каналов с
+     * чекбоксами открывается ВНУТРИ этого же попапа через встроенный в
+     * Telegram механизм swipe-back (FLAG_USE_SWIPEBACK/openForeground) — то
+     * же самое, чем в оригинальном приложении открывается, например, подменю
+     * "добавить в папку". Пункты "Отметить всё просмотренным", "Настройки
+     * медиа", "Очистка кэша" и "Обратная связь" пока не реализованы —
+     * заглушки, как и договаривались.
+     */
+    private void showThreeDotsMenu(Context context, View anchor) {
+        int flags = ActionBarPopupWindow.ActionBarPopupWindowLayout.FLAG_USE_SWIPEBACK;
+        ActionBarPopupWindow.ActionBarPopupWindowLayout layout =
+            new ActionBarPopupWindow.ActionBarPopupWindowLayout(context, org.telegram.messenger.R.drawable.popup_fixed_alert4, null, flags);
+
+        // ------------------------------------------------------------ подменю "Фильтр каналов"
+        LinearLayout filterMenuView = new LinearLayout(context);
+        filterMenuView.setOrientation(LinearLayout.VERTICAL);
+
+        ActionBarMenuSubItem backItem = new ActionBarMenuSubItem(context, true, false, null);
+        backItem.setTextAndIcon("Назад", org.telegram.messenger.R.drawable.ic_ab_back);
+        backItem.setMinimumWidth(AndroidUtilities.dp(220));
+        backItem.setOnClickListener(v -> layout.getSwipeBack().closeForeground());
+        filterMenuView.addView(backItem);
+        filterMenuView.addView(new ActionBarPopupWindow.GapView(context, null), LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 8));
+
+        // Скроллится, если каналов много — максимум 40% высоты экрана / 360dp,
+        // тот же приём, что и у оригинального подменю папок в DialogsActivity.
+        android.widget.ScrollView scrollView = new android.widget.ScrollView(context) {
+            @Override
+            protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+                super.onMeasure(widthMeasureSpec, android.view.View.MeasureSpec.makeMeasureSpec(
+                    (int) Math.min(
+                        android.view.View.MeasureSpec.getSize(heightMeasureSpec),
+                        Math.min(AndroidUtilities.displaySize.y * 0.4f, AndroidUtilities.dp(360))
+                    ),
+                    android.view.View.MeasureSpec.getMode(heightMeasureSpec)
+                ));
+            }
+        };
+        scrollView.setVerticalScrollBarEnabled(false);
+        LinearLayout channelsList = new LinearLayout(context);
+        channelsList.setOrientation(LinearLayout.VERTICAL);
+        scrollView.addView(channelsList);
+
+        // Изменения копятся в pendingHidden и применяются только по кнопке
+        // "Применить" — так же, как раньше вело себя "Отмена" в AlertDialog.
+        final Set<String> pendingHidden = new HashSet<>(hiddenChannelIds);
+        for (TLRPC.Chat ch : allChannels) {
+            final String chId = String.valueOf(ch.id);
+            org.telegram.ui.Cells.CheckBoxCell cell = new org.telegram.ui.Cells.CheckBoxCell(context, 1);
+            cell.setText(ch.title, "", !pendingHidden.contains(chId), false);
+            cell.setPadding(AndroidUtilities.dp(16), 0, AndroidUtilities.dp(16), 0);
+            cell.setOnClickListener(v -> {
+                boolean nowChecked = pendingHidden.contains(chId);
+                if (nowChecked) {
+                    pendingHidden.remove(chId);
+                } else {
+                    pendingHidden.add(chId);
+                }
+                ((org.telegram.ui.Cells.CheckBoxCell) v).setChecked(nowChecked, true);
+            });
+            channelsList.addView(cell, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48));
         }
-        String[] channelNames2 = new String[allChannels.size()];
-        boolean[] checked = new boolean[allChannels.size()];
-        for (int i = 0; i < allChannels.size(); i++) {
-            TLRPC.Chat ch = allChannels.get(i);
-            channelNames2[i] = ch.title;
-            checked[i] = !hiddenChannelIds.contains(String.valueOf(ch.id));
-        }
-        new android.app.AlertDialog.Builder(context)
-            .setTitle("Фильтр каналов")
-            .setMultiChoiceItems(channelNames2, checked, (dialog, which, isChecked) -> {
-                String id = String.valueOf(allChannels.get(which).id);
-                if (isChecked) hiddenChannelIds.remove(id);
-                else hiddenChannelIds.add(id);
-            })
-            .setPositiveButton("Применить", (dialog, which) -> {
-                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit().putStringSet(PREFS_KEY_HIDDEN, hiddenChannelIds).apply();
-                PotokDebugLog.log("PotokFeedLogo", "Фильтр применён: скрыто=" + hiddenChannelIds.size());
-                rebuildAndShowAllItems();
-            })
-            .setNegativeButton("Отмена", null)
-            .show();
+        filterMenuView.addView(scrollView);
+        filterMenuView.addView(new ActionBarPopupWindow.GapView(context, null), LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 8));
+
+        ActionBarMenuSubItem applyItem = new ActionBarMenuSubItem(context, false, true, null);
+        applyItem.setTextAndIcon("Применить", org.telegram.messenger.R.drawable.msg_check_s);
+        applyItem.setMinimumWidth(AndroidUtilities.dp(220));
+        applyItem.setOnClickListener(v -> {
+            hiddenChannelIds = new HashSet<>(pendingHidden);
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putStringSet(PREFS_KEY_HIDDEN, hiddenChannelIds).apply();
+            PotokDebugLog.log("PotokFeedLogo", "Фильтр применён: скрыто=" + hiddenChannelIds.size());
+            rebuildAndShowAllItems();
+            if (threeDotsMenuWindow != null) threeDotsMenuWindow.dismiss();
+        });
+        filterMenuView.addView(applyItem);
+
+        int filterMenuIndex = layout.addViewToSwipeBack(filterMenuView);
+
+        // ------------------------------------------------------------ главный список пунктов
+        ActionBarMenuSubItem filterItem = new ActionBarMenuSubItem(context, true, false, null);
+        filterItem.setTextAndIcon("Фильтр каналов", org.telegram.messenger.R.drawable.menu_tag_filter);
+        filterItem.setMinimumWidth(AndroidUtilities.dp(220));
+        filterItem.setOnClickListener(v -> {
+            if (allChannels.isEmpty()) {
+                PotokDebugLog.log("PotokFeedLogo", "Фильтр: каналов пока нет");
+                return;
+            }
+            layout.getSwipeBack().openForeground(filterMenuIndex);
+        });
+        layout.addView(filterItem);
+
+        // Пока заглушки без действия — как и договаривались, реализован только фильтр.
+        ActionBarMenuSubItem markReadItem = new ActionBarMenuSubItem(context, false, false, null);
+        markReadItem.setTextAndIcon("Отметить всё просмотренным", org.telegram.messenger.R.drawable.msg_markread);
+        markReadItem.setMinimumWidth(AndroidUtilities.dp(220));
+        layout.addView(markReadItem);
+
+        ActionBarMenuSubItem mediaSettingsItem = new ActionBarMenuSubItem(context, false, false, null);
+        mediaSettingsItem.setTextAndIcon("Настройки медиа", org.telegram.messenger.R.drawable.msg_photo_settings);
+        mediaSettingsItem.setMinimumWidth(AndroidUtilities.dp(220));
+        layout.addView(mediaSettingsItem);
+
+        ActionBarMenuSubItem clearCacheItem = new ActionBarMenuSubItem(context, false, false, null);
+        clearCacheItem.setTextAndIcon("Очистка кэша", org.telegram.messenger.R.drawable.msg_clearcache);
+        clearCacheItem.setMinimumWidth(AndroidUtilities.dp(220));
+        layout.addView(clearCacheItem);
+
+        ActionBarMenuSubItem feedbackItem = new ActionBarMenuSubItem(context, false, true, null);
+        feedbackItem.setTextAndIcon("Обратная связь", org.telegram.messenger.R.drawable.msg_help);
+        feedbackItem.setMinimumWidth(AndroidUtilities.dp(220));
+        layout.addView(feedbackItem);
+
+        threeDotsMenuWindow = new ActionBarPopupWindow(layout, LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT);
+        threeDotsMenuWindow.setFocusable(true);
+        threeDotsMenuWindow.setOutsideTouchable(true);
+        threeDotsMenuWindow.setClippingEnabled(true);
+        threeDotsMenuWindow.setAnimationStyle(org.telegram.messenger.R.style.PopupAnimation);
+        threeDotsMenuWindow.setOnDismissListener(() -> threeDotsMenuWindow = null);
+
+        layout.measure(
+            android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED),
+            android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED)
+        );
+
+        int[] location = new int[2];
+        anchor.getLocationInWindow(location);
+        int x = location[0] + anchor.getWidth() - layout.getMeasuredWidth();
+        int y = location[1] + anchor.getHeight();
+        threeDotsMenuWindow.showAtLocation(anchor, android.view.Gravity.LEFT | android.view.Gravity.TOP, x, y);
+        ActionBarPopupWindow.startAnimation(layout);
     }
 
     private void loadHistory(String key, TLRPC.Chat channel) {

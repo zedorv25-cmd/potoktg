@@ -1050,7 +1050,7 @@ public class PotokFeedPostCell extends LinearLayout {
             //    пропадает совсем.
             VideoDownloadOverlay downloadOverlay = new VideoDownloadOverlay(parent.getContext());
             downloadOverlay.setVisibility(GONE);
-            wrapper.addView(downloadOverlay, LayoutHelper.createFrame(30, 30, Gravity.LEFT | Gravity.TOP, 8, 8, 0, 0));
+            wrapper.addView(downloadOverlay, LayoutHelper.createFrame(30, 30, Gravity.LEFT | Gravity.TOP, 4, 28, 0, 0));
 
             // Бейдж длительности в левом верхнем углу — как в оригинальном Telegram
             // и в скриншоте из Plus Messenger, который прислал пользователь: тёмная

@@ -280,6 +280,9 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                     scrollToTopButton.animate().alpha(0f).setDuration(150)
                         .withEndAction(() -> scrollToTopButton.setVisibility(View.GONE)).start();
                 }
+                // Пост, докрутившийся до видимой области экрана, считается
+                // просмотренным — засчитываем это как прочтение в чате канала.
+                checkVisibleFeedItemsRead();
             }
         });
 
@@ -626,7 +629,67 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             listView.post(this::notifyWhenReady);
         } else {
             listView.getAdapter().notifyDataSetChanged();
+            // После обновления списка нужно дождаться прохода layout (позиции ещё не
+            // известны сразу после notifyDataSetChanged), иначе findFirstVisibleItemPosition
+            // ниже вернёт NO_POSITION.
+            listView.post(this::checkVisibleFeedItemsRead);
         }
+    }
+
+    /**
+     * Просмотр поста В ЛЕНТЕ засчитывается как просмотр этого же сообщения в самом
+     * чате канала — иначе цифра непрочитанных в списке чатов продолжает показывать
+     * то, что пользователь уже увидел здесь. Логика зеркалит то, как ChatActivity
+     * помечает видимые сообщения прочитанными при скролле (см. markDialogAsRead
+     * с maxPositiveId/maxDate, вычисленными по видимым сообщениям) — тут вместо
+     * позиций сообщений в чате берём позиции постов, реально видимых в RecyclerView
+     * ленты прямо сейчас.
+     */
+    private void checkVisibleFeedItemsRead() {
+        if (listView == null || listViewLayoutManager == null || items.isEmpty()) {
+            return;
+        }
+        int first = listViewLayoutManager.findFirstVisibleItemPosition();
+        int last = listViewLayoutManager.findLastVisibleItemPosition();
+        if (first == RecyclerView.NO_POSITION || last == RecyclerView.NO_POSITION) {
+            return;
+        }
+        for (int i = Math.max(0, first); i <= last && i < items.size(); i++) {
+            markFeedItemAsRead(items.get(i));
+        }
+    }
+
+    /**
+     * Помечает прочитанным (локально + серверу через отложенную read-задачу внутри
+     * markDialogAsRead) сообщение(я) одного поста в чате его канала. Пост в нашей
+     * ленте может быть альбомом из нескольких MessageObject — берём максимальный id
+     * и максимальную дату среди них, ровно как это делает сам Telegram при чтении
+     * альбома целиком. Если в посте нет ни одного реально непрочитанного сообщения
+     * (уже было прочитано раньше — в т.ч. нами же на предыдущем скролле), ничего не
+     * делаем, чтобы не слать лишние сетевые запросы при каждом скролле ленты.
+     */
+    private void markFeedItemAsRead(FeedItem item) {
+        if (item == null || item.messages.isEmpty()) {
+            return;
+        }
+        boolean hasUnread = false;
+        int maxId = 0;
+        int maxDate = 0;
+        long dialogId = 0;
+        for (MessageObject mo : item.messages) {
+            if (mo == null || mo.messageOwner == null) continue;
+            dialogId = mo.getDialogId();
+            if (mo.getId() > maxId) maxId = mo.getId();
+            if (mo.messageOwner.date > maxDate) maxDate = mo.messageOwner.date;
+            if (!mo.isOut() && mo.isUnread()) hasUnread = true;
+        }
+        if (!hasUnread || maxId <= 0 || dialogId == 0) {
+            return;
+        }
+        for (MessageObject mo : item.messages) {
+            if (mo != null) mo.setIsRead();
+        }
+        getMessagesController().markDialogAsRead(dialogId, maxId, maxId, maxDate, false, 0, 0, true, 0);
     }
 
     @Override

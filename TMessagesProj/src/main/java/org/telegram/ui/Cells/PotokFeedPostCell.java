@@ -1034,15 +1034,23 @@ public class PotokFeedPostCell extends LinearLayout {
             img.setRoundRadius(dp(8));
             wrapper.addView(img, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
-            // Настоящая кнопка загрузки видео — точно та же механика, что в самом
-            // Telegram (ChatMessageCell/ContextLinkCell): RadialProgress2 рисует
-            // круг с иконкой (стрелка загрузки / крестик отмены с кольцом прогресса /
-            // play), состояние меняется по факту наличия файла в кэше и по колбэкам
-            // DownloadController. video/фото больше НЕ подгружаются сами по себе —
-            // только по тапу на эту кнопку (см. VideoDownloadOverlay ниже).
+            // Как в оригинальном Telegram (ChatMessageCell) — это ДВЕ разные кнопки,
+            // не одна:
+            // 1) Большая play-кнопка по центру, с фоновым кругом — всегда видна на
+            //    видео независимо от того, скачано оно или нет. Тап по ней (как и по
+            //    самому кадру) открывает видео в полноэкранном просмотрщике.
+            PlayIndicatorView playIndicator = new PlayIndicatorView(parent.getContext());
+            playIndicator.setVisibility(GONE);
+            wrapper.addView(playIndicator, LayoutHelper.createFrame(48, 48, Gravity.CENTER));
+
+            // 2) Маленькая кнопка загрузки в кэш — левый верхний угол, БЕЗ фонового
+            //    круга, отступ 8dp от края (videoRadialProgress в ChatMessageCell).
+            //    Стрелка "скачать" -> тап -> FileLoader.loadFile(), во время загрузки
+            //    кольцо прогресса + крестик отмены, после успешной загрузки иконка
+            //    пропадает совсем.
             VideoDownloadOverlay downloadOverlay = new VideoDownloadOverlay(parent.getContext());
             downloadOverlay.setVisibility(GONE);
-            wrapper.addView(downloadOverlay, LayoutHelper.createFrame(48, 48, Gravity.CENTER));
+            wrapper.addView(downloadOverlay, LayoutHelper.createFrame(30, 30, Gravity.LEFT | Gravity.TOP, 8, 8, 0, 0));
 
             // Бейдж длительности в левом верхнем углу — как в оригинальном Telegram
             // и в скриншоте из Plus Messenger, который прислал пользователь: тёмная
@@ -1059,7 +1067,7 @@ public class PotokFeedPostCell extends LinearLayout {
             durationBadge.setVisibility(GONE);
             wrapper.addView(durationBadge, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP, 6, 6, 0, 0));
 
-            return new MediaHolder(wrapper, img, downloadOverlay, durationBadge);
+            return new MediaHolder(wrapper, img, playIndicator, downloadOverlay, durationBadge);
         }
 
         @Override
@@ -1164,6 +1172,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     holder.durationBadge.setVisibility(GONE);
                 }
 
+                holder.playIndicator.setVisibility(VISIBLE);
                 holder.downloadOverlay.setVisibility(VISIBLE);
                 final int bindPosition = position;
                 holder.downloadOverlay.bind(document, mo.currentAccount, fileExists, () -> {
@@ -1172,6 +1181,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     notifyItemChanged(bindPosition);
                 });
             } else {
+                holder.playIndicator.setVisibility(GONE);
                 holder.downloadOverlay.setVisibility(GONE);
                 holder.downloadOverlay.unbind();
                 holder.durationBadge.setVisibility(GONE);
@@ -1189,6 +1199,9 @@ public class PotokFeedPostCell extends LinearLayout {
 
             final int idx = position;
             img.setOnClickListener(v -> openMediaViewer(mo, idx, items));
+            // Тап по play-кнопке в центре — то же самое действие, что и тап по кадру
+            // (открыть в полноэкранном просмотрщике), она не занимается загрузкой.
+            holder.playIndicator.setOnClickListener(v -> openMediaViewer(mo, idx, items));
             // Фикс: карусель (RecyclerView) сама перехватывает долгое нажатие для своих
             // touch-жестов (скролл/свайп), поэтому долгий тап по фото не долетал до
             // long-click на самой карточке поста. Дублируем обработчик прямо здесь.
@@ -1202,11 +1215,13 @@ public class PotokFeedPostCell extends LinearLayout {
 
         class MediaHolder extends RecyclerView.ViewHolder {
             final BackupImageView img;
+            final PlayIndicatorView playIndicator;
             final VideoDownloadOverlay downloadOverlay;
             final TextView durationBadge;
-            MediaHolder(View wrapper, BackupImageView img, VideoDownloadOverlay downloadOverlay, TextView durationBadge) {
+            MediaHolder(View wrapper, BackupImageView img, PlayIndicatorView playIndicator, VideoDownloadOverlay downloadOverlay, TextView durationBadge) {
                 super(wrapper);
                 this.img = img;
+                this.playIndicator = playIndicator;
                 this.downloadOverlay = downloadOverlay;
                 this.durationBadge = durationBadge;
             }
@@ -1237,6 +1252,12 @@ public class PotokFeedPostCell extends LinearLayout {
             radialProgress = new RadialProgress2(this);
             radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
                     Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
+            // Без фонового круга и маленького радиуса — точно как videoRadialProgress
+            // в оригинальном ChatMessageCell (там setDrawBackground(false) +
+            // setCircleRadius(dp(15))), это отдельная маленькая кнопка в углу, а не
+            // большая кнопка по центру.
+            radialProgress.setDrawBackground(false);
+            radialProgress.setCircleRadius(dp(15));
             TAG = DownloadController.getInstance(UserConfig.selectedAccount).generateObserverTag();
             setOnClickListener(v -> onClick());
         }
@@ -1340,6 +1361,38 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         public int getObserverTag() {
             return TAG;
+        }
+    }
+
+    // ------------------------------------------------------------------ PlayIndicatorView
+    /**
+     * Большая play-кнопка по центру видео — с фоновым кругом, как в оригинальном
+     * Telegram/Plus Messenger. В отличие от VideoDownloadOverlay, она НЕ занимается
+     * загрузкой и не меняет иконку в зависимости от состояния кэша — всегда
+     * показывает треугольник play, потому что тап по ней (как и тап по самому
+     * кадру) просто открывает видео в полноэкранном просмотрщике, независимо от
+     * того, скачано оно в кэш или нет.
+     */
+    private static class PlayIndicatorView extends View {
+        private final RadialProgress2 radialProgress;
+
+        PlayIndicatorView(Context context) {
+            super(context);
+            radialProgress = new RadialProgress2(this);
+            radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
+                    Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
+            radialProgress.setIcon(MediaActionDrawable.ICON_PLAY, false, false);
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            radialProgress.setProgressRect(0, 0, w, h);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            radialProgress.draw(canvas);
         }
     }
 

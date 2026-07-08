@@ -1043,31 +1043,23 @@ public class PotokFeedPostCell extends LinearLayout {
             playIndicator.setVisibility(GONE);
             wrapper.addView(playIndicator, LayoutHelper.createFrame(48, 48, Gravity.CENTER));
 
-            // 2) Маленькая кнопка загрузки в кэш — левый верхний угол, БЕЗ фонового
-            //    круга, отступ 8dp от края (videoRadialProgress в ChatMessageCell).
-            //    Стрелка "скачать" -> тап -> FileLoader.loadFile(), во время загрузки
-            //    кольцо прогресса + крестик отмены, после успешной загрузки иконка
-            //    пропадает совсем.
-            VideoDownloadOverlay downloadOverlay = new VideoDownloadOverlay(parent.getContext());
-            downloadOverlay.setVisibility(GONE);
-            wrapper.addView(downloadOverlay, LayoutHelper.createFrame(30, 30, Gravity.LEFT | Gravity.TOP, 4, 28, 0, 0));
+            // 2) Единая тёмная плашка загрузки — левый верхний угол, как в референсе
+            //    настоящего Telegram, который прислал пользователь: стрелка загрузки
+            //    слева + справа от неё в две строки длительность ("0:12") и размер
+            //    файла ("385,4 KB"), всё внутри одной скруглённой тёмной подложки.
+            //    Пока видео не скачано — плашка видна целиком. Во время загрузки —
+            //    вместо стрелки крутится кольцо прогресса + крестик отмены. Как только
+            //    файл скачан — плашка пропадает целиком (не по частям), остаётся
+            //    только play-кнопка по центру. Если файл потом удалили из кэша
+            //    (например, через системную очистку) — при следующем показе ячейки
+            //    (возврат в ленту, notifyDataSetChanged) плашка появляется снова,
+            //    т.к. bind() каждый раз заново проверяет реальное наличие файла на
+            //    диске, а не полагается на старое состояние.
+            VideoDownloadPlate downloadPlate = new VideoDownloadPlate(parent.getContext());
+            downloadPlate.setVisibility(GONE);
+            wrapper.addView(downloadPlate, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP, 6, 6, 0, 0));
 
-            // Бейдж длительности в левом верхнем углу — как в оригинальном Telegram
-            // и в скриншоте из Plus Messenger, который прислал пользователь: тёмная
-            // полупрозрачная плашка с текстом "м:сс".
-            TextView durationBadge = new TextView(parent.getContext());
-            durationBadge.setTextColor(0xFFFFFFFF);
-            durationBadge.setTextSize(12);
-            durationBadge.setTypeface(AndroidUtilities.bold());
-            durationBadge.setPadding(dp(6), dp(2), dp(6), dp(2));
-            android.graphics.drawable.GradientDrawable badgeBg = new android.graphics.drawable.GradientDrawable();
-            badgeBg.setColor(0x99000000);
-            badgeBg.setCornerRadius(dp(4));
-            durationBadge.setBackground(badgeBg);
-            durationBadge.setVisibility(GONE);
-            wrapper.addView(durationBadge, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP, 6, 6, 0, 0));
-
-            return new MediaHolder(wrapper, img, playIndicator, downloadOverlay, durationBadge);
+            return new MediaHolder(wrapper, img, playIndicator, downloadPlate);
         }
 
         @Override
@@ -1076,7 +1068,7 @@ public class PotokFeedPostCell extends LinearLayout {
             // Обязательно отписываемся от DownloadController — иначе при переиспользовании
             // ViewHolder'а (RecyclerView) колбэки о загрузке будут прилетать в "чужую",
             // уже переиспользованную под другое видео ячейку.
-            holder.downloadOverlay.unbind();
+            holder.downloadPlate.unbind();
         }
 
         @Override
@@ -1156,35 +1148,20 @@ public class PotokFeedPostCell extends LinearLayout {
                     );
                 }
 
-                // Бейдж длительности "м:сс" в левом верхнем углу (как в оригинальном
-                // Telegram и в присланном скрине из Plus Messenger).
-                long durationSec = 0;
-                for (TLRPC.DocumentAttribute attr : document.attributes) {
-                    if (attr instanceof TLRPC.TL_documentAttributeVideo) {
-                        durationSec = (long) attr.duration;
-                        break;
-                    }
-                }
-                if (durationSec > 0) {
-                    holder.durationBadge.setText(AndroidUtilities.formatShortDuration((int) durationSec));
-                    holder.durationBadge.setVisibility(VISIBLE);
-                } else {
-                    holder.durationBadge.setVisibility(GONE);
-                }
-
                 holder.playIndicator.setVisibility(VISIBLE);
-                holder.downloadOverlay.setVisibility(VISIBLE);
+                // Плашка сама решает, показываться ли ей (видно только пока файл не
+                // скачан/качается) — bind() пересчитывает fileExists и duration/size
+                // текст заново на каждый вызов.
                 final int bindPosition = position;
-                holder.downloadOverlay.bind(document, mo.currentAccount, fileExists, () -> {
+                holder.downloadPlate.bind(document, mo.currentAccount, () -> {
                     // Файл докачался — перепривязываем ячейку: canDecodeFromVideo теперь
                     // увидит fileExists=true и покажет уже настоящий декодированный кадр.
                     notifyItemChanged(bindPosition);
                 });
             } else {
                 holder.playIndicator.setVisibility(GONE);
-                holder.downloadOverlay.setVisibility(GONE);
-                holder.downloadOverlay.unbind();
-                holder.durationBadge.setVisibility(GONE);
+                holder.downloadPlate.setVisibility(GONE);
+                holder.downloadPlate.unbind();
                 // Фото — стандартный путь
                 ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;
                 TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
@@ -1216,58 +1193,99 @@ public class PotokFeedPostCell extends LinearLayout {
         class MediaHolder extends RecyclerView.ViewHolder {
             final BackupImageView img;
             final PlayIndicatorView playIndicator;
-            final VideoDownloadOverlay downloadOverlay;
-            final TextView durationBadge;
-            MediaHolder(View wrapper, BackupImageView img, PlayIndicatorView playIndicator, VideoDownloadOverlay downloadOverlay, TextView durationBadge) {
+            final VideoDownloadPlate downloadPlate;
+            MediaHolder(View wrapper, BackupImageView img, PlayIndicatorView playIndicator, VideoDownloadPlate downloadPlate) {
                 super(wrapper);
                 this.img = img;
                 this.playIndicator = playIndicator;
-                this.downloadOverlay = downloadOverlay;
-                this.durationBadge = durationBadge;
+                this.downloadPlate = downloadPlate;
             }
         }
     }
 
-    // ------------------------------------------------------------------ VideoDownloadOverlay
+    // ------------------------------------------------------------------ VideoDownloadPlate
     /**
-     * Кнопка загрузки видео в кэш — та же механика, что в оригинальном Telegram
-     * (см. ContextLinkCell/ChatMessageCell): RadialProgress2 рисует круг с иконкой,
-     * которая меняется по факту наличия файла и по колбэкам DownloadController
-     * (загрузка / прогресс / готово). Пока файла нет — иконка "скачать", тап
-     * запускает FileLoader.loadFile(...). Во время загрузки — кольцо прогресса
-     * и крестик отмены. Когда файл скачан — колбэк onReady сообщает наверх
-     * (PotokFeedPostCell перепривязывает ячейку, чтобы показать декодированный кадр).
+     * Единая плашка загрузки видео — как в оригинальном Telegram (референс, который
+     * прислал пользователь): тёмная скруглённая подложка, внутри слева иконка
+     * загрузки (RadialProgress2, без своего фонового круга — фон рисует сама
+     * плашка), справа от неё в две строки длительность видео и размер файла.
+     *
+     * Состояния:
+     * - Файла нет в кэше: плашка целиком видна, иконка — стрелка "скачать".
+     * - Идёт загрузка: иконка меняется на кольцо прогресса + крестик отмены,
+     *   текст (длительность/размер) остаётся на месте.
+     * - Файл скачан: плашка целиком пропадает (setVisibility(GONE)) — не по
+     *   частям, как раньше, а вся сразу, остаётся только play-кнопка по центру.
+     *
+     * Если файл потом удалили из кэша (вручную или системной очисткой), это
+     * само по себе не отслеживается никаким колбэком — TDLib/DownloadController
+     * не уведомляют о удалении файлов извне. Вместо постоянного опроса диска
+     * (лишняя нагрузка на каждый кадр) состояние честно пересчитывается заново
+     * при каждом bind() — то есть при любом пересоздании/переприкреплении ячейки:
+     * возврат на вкладку ленты (PotokFeedFragment.onResume -> loadFeed ->
+     * notifyDataSetChanged), обновление свайпом вниз, скролл с переиспользованием
+     * ViewHolder'а. Поэтому если пользователь удалил видео из кэша, уйдя из ленты
+     * и вернувшись — плашка появится снова, кнопка загрузки корректно вернётся.
      */
-    private static class VideoDownloadOverlay extends View implements DownloadController.FileDownloadProgressListener {
+    private static class VideoDownloadPlate extends View implements DownloadController.FileDownloadProgressListener {
+        private static final int ICON_AREA = dp(24);
+        private static final int PAD_H = dp(8);
+        private static final int PAD_V = dp(5);
+        private static final int GAP = dp(6);
+
         private final RadialProgress2 radialProgress;
+        private final android.text.TextPaint textPaint;
         private final int TAG;
         private TLRPC.Document document;
         private int currentAccount;
         private String fileName;
         private Runnable onReady;
         private int buttonState; // -1 = скачан/ничего не показываем, 1 = грузится, 2 = скачать
+        private String durationText = "";
+        private String sizeText = "";
 
-        VideoDownloadOverlay(Context context) {
+        VideoDownloadPlate(Context context) {
             super(context);
             radialProgress = new RadialProgress2(this);
             radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
                     Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
-            // Без фонового круга и маленького радиуса — точно как videoRadialProgress
-            // в оригинальном ChatMessageCell (там setDrawBackground(false) +
-            // setCircleRadius(dp(15))), это отдельная маленькая кнопка в углу, а не
-            // большая кнопка по центру.
+            // Фон-круг под иконкой не нужен — вся плашка уже тёмная (см. bg ниже),
+            // поэтому у самой иконки фона нет, как и раньше у стрелки.
             radialProgress.setDrawBackground(false);
-            radialProgress.setCircleRadius(dp(15));
+            radialProgress.setCircleRadius(ICON_AREA / 2);
+
+            textPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
+            textPaint.setColor(0xFFFFFFFF);
+            textPaint.setTextSize(dp(11));
+            textPaint.setTypeface(AndroidUtilities.bold());
+
+            android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+            bg.setColor(0x99000000);
+            bg.setCornerRadius(dp(14));
+            setBackground(bg);
+
             TAG = DownloadController.getInstance(UserConfig.selectedAccount).generateObserverTag();
             setOnClickListener(v -> onClick());
         }
 
-        void bind(TLRPC.Document doc, int account, boolean fileExists, Runnable onReadyCallback) {
+        void bind(TLRPC.Document doc, int account, Runnable onReadyCallback) {
             unbind();
             document = doc;
             currentAccount = account;
             onReady = onReadyCallback;
             fileName = FileLoader.getAttachFileName(doc);
+
+            long durationSec = 0;
+            for (TLRPC.DocumentAttribute attr : doc.attributes) {
+                if (attr instanceof TLRPC.TL_documentAttributeVideo) {
+                    durationSec = (long) attr.duration;
+                    break;
+                }
+            }
+            durationText = durationSec > 0 ? AndroidUtilities.formatShortDuration((int) durationSec) : "";
+            sizeText = AndroidUtilities.formatFileSize(doc.size);
+            requestLayout();
+
             updateState(false);
         }
 
@@ -1288,6 +1306,8 @@ public class PotokFeedPostCell extends LinearLayout {
             boolean fileExists = cacheFile != null && cacheFile.exists();
             boolean isLoading = FileLoader.getInstance(currentAccount).isLoadingFile(fileName);
             if (fileExists) {
+                // Файл на месте — плашка (стрелка/прогресс + длительность + размер)
+                // пропадает ВСЯ целиком, ничего от неё не остаётся видимым.
                 DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
                 buttonState = -1;
                 setVisibility(GONE);
@@ -1295,6 +1315,9 @@ public class PotokFeedPostCell extends LinearLayout {
                     onReady.run();
                 }
             } else {
+                // Файла нет (либо ещё не качали, либо его удалили из кэша уже после
+                // того, как раньше он был скачан) — плашка снова видна целиком,
+                // кнопка загрузки доступна для повторного скачивания.
                 setVisibility(VISIBLE);
                 DownloadController.getInstance(currentAccount).addLoadingFileObserver(fileName, this);
                 if (isLoading) {
@@ -1325,14 +1348,37 @@ public class PotokFeedPostCell extends LinearLayout {
         }
 
         @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            float w1 = textPaint.measureText(durationText);
+            float w2 = textPaint.measureText(sizeText);
+            int textWidth = (int) Math.ceil(Math.max(w1, w2));
+            int width = PAD_H + ICON_AREA + GAP + textWidth + PAD_H;
+            int height = PAD_V + ICON_AREA + PAD_V;
+            setMeasuredDimension(width, height);
+        }
+
+        @Override
         protected void onSizeChanged(int w, int h, int oldw, int oldh) {
             super.onSizeChanged(w, h, oldw, oldh);
-            radialProgress.setProgressRect(0, 0, w, h);
+            int top = (h - ICON_AREA) / 2;
+            radialProgress.setProgressRect(PAD_H, top, PAD_H + ICON_AREA, top + ICON_AREA);
         }
 
         @Override
         protected void onDraw(Canvas canvas) {
             radialProgress.draw(canvas);
+            if (TextUtils.isEmpty(durationText) && TextUtils.isEmpty(sizeText)) {
+                return;
+            }
+            float textX = PAD_H + ICON_AREA + GAP;
+            float lineHeight = textPaint.getTextSize() + dp(2);
+            float centerY = getHeight() / 2f;
+            float baseline1 = TextUtils.isEmpty(sizeText) ? centerY + textPaint.getTextSize() / 2.8f
+                    : centerY - dp(1);
+            canvas.drawText(durationText, textX, baseline1, textPaint);
+            if (!TextUtils.isEmpty(sizeText)) {
+                canvas.drawText(sizeText, textX, baseline1 + lineHeight, textPaint);
+            }
         }
 
         @Override

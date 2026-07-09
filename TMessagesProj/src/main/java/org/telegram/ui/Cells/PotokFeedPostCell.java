@@ -9,6 +9,7 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.RectF;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -82,6 +83,9 @@ public class PotokFeedPostCell extends LinearLayout {
     private final AudioSeekBarView audioSeekBarView;
     private final TextView audioTimeView;
     private final LinearLayout audioSeekRow;
+
+    // --- Опрос ---
+    private final PollView pollView;
 
     // --- Футер ---
     private final ImageView viewsIcon;
@@ -320,6 +324,18 @@ public class PotokFeedPostCell extends LinearLayout {
         audioSeekRow.addView(audioTimeView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL, 8, 0, 0, 0));
         this.audioSeekRow = audioSeekRow;
 
+        // --- Опрос ---
+        // Раньше посты-опросы показывались в ленте пустыми: TL_messageMediaPoll не
+        // подходит ни под одну из веток (не фото/видео, не аудио), а вопрос опроса
+        // лежит не в messageOwner.message (как обычный текст поста), а отдельно в
+        // media.poll.question — findPostCaption() его никогда не находил. Теперь
+        // под опрос отдельный вью, максимально похожий на оригинальный Telegram:
+        // вопрос жирным, варианты ответов строками с шкалой % (когда результаты
+        // видны), пометка "Анонимный опрос"/"Опрос" и число проголосовавших внизу.
+        pollView = new PollView(context, resourcesProvider);
+        pollView.setVisibility(GONE);
+        addView(pollView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 10, 12, 0));
+
         // --- Футер ---
         // Фикс: раньше было тесно (иконки 16dp, текст 13sp) и комментарии шли сразу
         // после реакции слева. Теперь — 4 условные колонки: просмотры | реакция |
@@ -449,6 +465,11 @@ public class PotokFeedPostCell extends LinearLayout {
 
         // Медиа
         boolean isVoiceOrMusic = messageObject.isVoice() || messageObject.isMusic();
+        // Опрос — media.poll.question лежит отдельно от messageOwner.message,
+        // поэтому findPostCaption() выше его не находит и textView для опроса
+        // всегда пуст; весь контент опроса рисует отдельный pollView (см. ниже).
+        TLRPC.MessageMedia postMedia = messageObject.messageOwner != null ? messageObject.messageOwner.media : null;
+        boolean isPoll = postMedia instanceof TLRPC.TL_messageMediaPoll;
 
         // Собираем медиа-сообщения из группы (только с фото/видео)
         ArrayList<MessageObject> mediaMessages = new ArrayList<>();
@@ -459,7 +480,20 @@ public class PotokFeedPostCell extends LinearLayout {
             }
         }
 
-        if (isVoiceOrMusic) {
+        if (isPoll) {
+            hideCarousel();
+            if (audioCell.getParent() != null) audioContainer.removeView(audioCell);
+            audioContainer.setVisibility(GONE);
+            audioSeekRow.setVisibility(GONE);
+            audioSeekBarView.setMessageObject(null);
+            pollView.bind((TLRPC.TL_messageMediaPoll) postMedia);
+        } else {
+            pollView.setVisibility(GONE);
+        }
+
+        if (isPoll) {
+            // Уже полностью обработано выше — карусель/аудио опросу не нужны.
+        } else if (isVoiceOrMusic) {
             hideCarousel();
             if (audioCell.getParent() == null) {
                 audioContainer.addView(audioCell, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
@@ -1119,7 +1153,16 @@ public class PotokFeedPostCell extends LinearLayout {
                 // лежит в кэше (пользователь явно нажал кнопку загрузки раньше) — иначе
                 // просто статичный превью-thumbnail с сервера, без единого байта самого
                 // видео.
-                java.io.File cacheFile = FileLoader.getInstance(mo.currentAccount).getPathToAttach(document, true);
+                // ВАЖНО: forceCache=false (не true!). getPathToAttach(doc, true) всегда
+                // смотрит в общую директорию MEDIA_DIR_CACHE независимо от типа файла —
+                // а видео реально сохраняется Telegram-ом в отдельную MEDIA_DIR_VIDEO.
+                // С forceCache=true проверка ВСЕГДА возвращала "файла нет", даже для
+                // уже скачанных видео (это и был баг "плашка не пропадает после
+                // скачивания" — не спасали ни выход из вкладки, ни рестарт приложения,
+                // потому что проверялась в принципе не та папка). См. также
+                // MessageObject.checkMediaExistance(), где оригинал делает точно так же:
+                // forceCache=false для документов, кроме wallpaper.
+                java.io.File cacheFile = FileLoader.getInstance(mo.currentAccount).getPathToAttach(document, false);
                 boolean fileExists = cacheFile != null && cacheFile.exists();
                 boolean canDecodeFromVideo = !mo.isRepostPreview && fileExists && mo.canStreamVideo();
                 if (canDecodeFromVideo) {
@@ -1242,7 +1285,16 @@ public class PotokFeedPostCell extends LinearLayout {
         private Runnable onReady;
         private int buttonState; // -1 = скачан/ничего не показываем, 1 = грузится, 2 = скачать
         private String durationText = "";
+        // sizeText — статичный размер файла целиком ("5 MB"), показывается пока
+        // загрузка не идёт. progressText — "2,5 MB / 5 MB", показывается вместо
+        // sizeText только во время реальной закачки (buttonState == 1). Оба текста
+        // выводятся во второй строке — они никогда не показываются одновременно.
         private String sizeText = "";
+        private String progressText = "";
+        // Ширина плашки измеряется по самому длинному из возможных вариантов второй
+        // строки (полный размер и "полный/полный"), чтобы во время закачки, когда
+        // progressText меняется на каждый тик прогресса, ширина плашки не дёргалась.
+        private String widestSizeVariant = "";
 
         VideoDownloadPlate(Context context) {
             super(context);
@@ -1284,6 +1336,10 @@ public class PotokFeedPostCell extends LinearLayout {
             }
             durationText = durationSec > 0 ? AndroidUtilities.formatShortDuration((int) durationSec) : "";
             sizeText = AndroidUtilities.formatFileSize(doc.size);
+            progressText = sizeText;
+            // Худший случай по длине текста — "X / X" с одинаковым (максимальным)
+            // значением с обеих сторон, т.к. скачано <= всего всегда.
+            widestSizeVariant = sizeText + " / " + sizeText;
             requestLayout();
 
             updateState(false);
@@ -1302,7 +1358,11 @@ public class PotokFeedPostCell extends LinearLayout {
             if (document == null || fileName == null) {
                 return;
             }
-            java.io.File cacheFile = FileLoader.getInstance(currentAccount).getPathToAttach(document, true);
+            // forceCache=false — см. подробное объяснение у аналогичной проверки в
+            // onBindViewHolder выше. С forceCache=true плашка всегда "видела" файл как
+            // отсутствующий (смотрела не в ту папку), поэтому не пропадала после
+            // скачивания вообще никогда, даже после полного рестарта приложения.
+            java.io.File cacheFile = FileLoader.getInstance(currentAccount).getPathToAttach(document, false);
             boolean fileExists = cacheFile != null && cacheFile.exists();
             boolean isLoading = FileLoader.getInstance(currentAccount).isLoadingFile(fileName);
             if (fileExists) {
@@ -1327,6 +1387,9 @@ public class PotokFeedPostCell extends LinearLayout {
                     radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, animated);
                 } else {
                     buttonState = 2;
+                    // Загрузка не идёт (ещё не начата, отменена или упала с ошибкой) —
+                    // вторая строка возвращается к статичному полному размеру файла.
+                    progressText = sizeText;
                     radialProgress.setIcon(MediaActionDrawable.ICON_DOWNLOAD, false, animated);
                 }
             }
@@ -1337,7 +1400,10 @@ public class PotokFeedPostCell extends LinearLayout {
             if (document == null) return;
             if (buttonState == 2) {
                 // Тап по стрелке — запускаем реальную загрузку в кэш, ровно как жмут
-                // кнопку загрузки в самом Telegram/Plus Messenger.
+                // кнопку загрузки в самом Telegram/Plus Messenger. Выставляем "0 MB / X"
+                // сразу, не дожидаясь первого колбэка onProgressDownload — иначе на
+                // долю секунды видна старая надпись со статичным полным размером.
+                progressText = AndroidUtilities.formatFileSize(0) + " / " + sizeText;
                 FileLoader.getInstance(currentAccount).loadFile(document, null, FileLoader.PRIORITY_NORMAL, 0);
                 updateState(true);
             } else if (buttonState == 1) {
@@ -1350,8 +1416,12 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
             float w1 = textPaint.measureText(durationText);
-            float w2 = textPaint.measureText(sizeText);
+            // Меряем по widestSizeVariant ("X / X"), а не по текущему sizeText/progressText —
+            // так ширина плашки не "прыгает" на каждый тик прогресса при закачке.
+            float w2 = textPaint.measureText(widestSizeVariant);
             int textWidth = (int) Math.ceil(Math.max(w1, w2));
+            // Симметрия: правый паддинг (текст -> край) точно равен левому (край -> иконка),
+            // оба PAD_H. Слева иконка тоже центрирована в своей области (см. onSizeChanged).
             int width = PAD_H + ICON_AREA + GAP + textWidth + PAD_H;
             int height = PAD_V + ICON_AREA + PAD_V;
             setMeasuredDimension(width, height);
@@ -1367,17 +1437,35 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         protected void onDraw(Canvas canvas) {
             radialProgress.draw(canvas);
-            if (TextUtils.isEmpty(durationText) && TextUtils.isEmpty(sizeText)) {
+            // Во время закачки вторая строка — живой прогресс, иначе — статичный
+            // полный размер файла (см. updateState()/onProgressDownload()).
+            String secondLine = buttonState == 1 ? progressText : sizeText;
+            if (TextUtils.isEmpty(durationText) && TextUtils.isEmpty(secondLine)) {
                 return;
             }
             float textX = PAD_H + ICON_AREA + GAP;
-            float lineHeight = textPaint.getTextSize() + dp(2);
             float centerY = getHeight() / 2f;
-            float baseline1 = TextUtils.isEmpty(sizeText) ? centerY + textPaint.getTextSize() / 2.8f
-                    : centerY - dp(1);
-            canvas.drawText(durationText, textX, baseline1, textPaint);
-            if (!TextUtils.isEmpty(sizeText)) {
-                canvas.drawText(sizeText, textX, baseline1 + lineHeight, textPaint);
+            // Симметрия по вертикали: раньше строки позиционировались через грубое
+            // приближение (centerY ± фиксированный dp), из-за чего блок текста
+            // визуально "провисал" ниже центра плашки и сидел ближе к нижнему краю,
+            // чем к верхнему — это и была замеченная асимметрия. Теперь блок из
+            // одной/двух строк целиком центрируется вокруг centerY через реальные
+            // метрики шрифта (ascent/descent), точно как центрируется иконка слева
+            // (top = (h - ICON_AREA) / 2, см. onSizeChanged) — оба элемента получают
+            // одинаковые отступы сверху/снизу от центра плашки.
+            Paint.FontMetrics fm = textPaint.getFontMetrics();
+            float lineH = fm.descent - fm.ascent;
+            float lineGap = dp(2);
+            if (!TextUtils.isEmpty(durationText) && !TextUtils.isEmpty(secondLine)) {
+                float blockTop = centerY - (2 * lineH + lineGap) / 2f;
+                float baseline1 = blockTop - fm.ascent;
+                float baseline2 = baseline1 + lineH + lineGap;
+                canvas.drawText(durationText, textX, baseline1, textPaint);
+                canvas.drawText(secondLine, textX, baseline2, textPaint);
+            } else {
+                String single = !TextUtils.isEmpty(durationText) ? durationText : secondLine;
+                float baseline = centerY - (fm.ascent + fm.descent) / 2f;
+                canvas.drawText(single, textX, baseline, textPaint);
             }
         }
 
@@ -1395,8 +1483,15 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         public void onProgressDownload(String name, long downloadedSize, long totalSize) {
             radialProgress.setProgress(Math.min(1f, downloadedSize / (float) totalSize), true);
+            // Пункт 1 из ТЗ: пока файл качается, вторая строка показывает живой
+            // прогресс "2,5 MB / 5 MB" вместо статичного "5 MB". Ширина плашки уже
+            // зарезервирована под самый длинный вариант в bind()/onMeasure(), поэтому
+            // достаточно invalidate() — requestLayout() на каждый тик прогресса не нужен.
+            progressText = AndroidUtilities.formatFileSize(downloadedSize) + " / " + AndroidUtilities.formatFileSize(totalSize);
             if (buttonState != 1) {
                 updateState(true);
+            } else {
+                invalidate();
             }
         }
 
@@ -1551,6 +1646,219 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         protected void onDraw(Canvas canvas) {
             canvas.drawPath(path, paint);
+        }
+    }
+
+    // ------------------------------------------------------------------ PollView
+
+    /**
+     * Карточка опроса внутри поста ленты. Оригинальный Telegram рисует опрос
+     * сложной canvas-отрисовкой прямо в ChatMessageCell (PollButton и десятки
+     * полей вроде vibrateOnProgressUp, pollAnimatedVoteCounter и т.п.) — заводить
+     * такую же машинерию под один тип контента ленты избыточно, поэтому здесь —
+     * эквивалент из обычных Android-view (тот же подход, что раньше был выбран
+     * для durationBadge), но по всем содержательным элементам максимально близко
+     * к оригиналу: тип опроса, вопрос, варианты со шкалой процентов и подсветкой
+     * выбранного/правильного варианта, число проголосовавших.
+     */
+    private static class PollView extends LinearLayout {
+        private final Theme.ResourcesProvider resourcesProvider;
+        private final TextView typeLabel;
+        private final TextView questionView;
+        private final LinearLayout answersContainer;
+        private final TextView votersView;
+        private final ArrayList<PollAnswerRow> rows = new ArrayList<>();
+
+        PollView(Context context, Theme.ResourcesProvider resourcesProvider) {
+            super(context);
+            this.resourcesProvider = resourcesProvider;
+            setOrientation(VERTICAL);
+
+            typeLabel = new TextView(context);
+            typeLabel.setTextSize(13);
+            typeLabel.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
+            addView(typeLabel, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT));
+
+            questionView = new TextView(context);
+            questionView.setTextSize(16);
+            questionView.setTypeface(AndroidUtilities.bold());
+            questionView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider));
+            addView(questionView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
+
+            answersContainer = new LinearLayout(context);
+            answersContainer.setOrientation(VERTICAL);
+            addView(answersContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 10, 0, 0));
+
+            votersView = new TextView(context);
+            votersView.setTextSize(13);
+            votersView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
+            addView(votersView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 8, 0, 0));
+        }
+
+        void bind(TLRPC.TL_messageMediaPoll media) {
+            if (media == null || media.poll == null) {
+                setVisibility(GONE);
+                return;
+            }
+            TLRPC.Poll poll = media.poll;
+            TLRPC.PollResults results = media.results;
+
+            // Тип опроса — та же формулировка, что использует оригинальный клиент.
+            String type;
+            if (poll.quiz) {
+                type = "Викторина";
+            } else if (poll.public_voters) {
+                type = "Опрос";
+            } else {
+                type = "Анонимный опрос";
+            }
+            if (poll.closed) {
+                type += " • завершён";
+            } else if (poll.multiple_choice) {
+                type += " • можно выбрать несколько";
+            }
+            typeLabel.setText(type);
+            questionView.setText(poll.question != null ? poll.question.text : "");
+
+            int totalVoters = results != null ? results.total_voters : 0;
+            java.util.Map<String, TLRPC.PollAnswerVoters> votersByOption = new java.util.HashMap<>();
+            boolean hasResults = results != null && results.results != null;
+            if (hasResults) {
+                for (TLRPC.PollAnswerVoters v : results.results) {
+                    if (v != null && v.option != null) {
+                        votersByOption.put(bytesToKey(v.option), v);
+                    }
+                }
+            }
+
+            answersContainer.removeAllViews();
+            rows.clear();
+            if (poll.answers != null) {
+                for (TLRPC.PollAnswer answer : poll.answers) {
+                    if (answer == null) continue;
+                    PollAnswerRow row = new PollAnswerRow(getContext(), resourcesProvider);
+                    TLRPC.PollAnswerVoters voters = answer.option != null ? votersByOption.get(bytesToKey(answer.option)) : null;
+                    int optionVotes = voters != null ? voters.voters : 0;
+                    int percent = (hasResults && totalVoters > 0) ? Math.round(100f * optionVotes / totalVoters) : -1;
+                    boolean chosen = voters != null && voters.chosen;
+                    boolean correct = voters != null && voters.correct;
+                    row.bind(answer.text != null ? answer.text.text : "", percent, chosen, correct && poll.quiz);
+                    answersContainer.addView(row, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 0, 0, 6));
+                    rows.add(row);
+                }
+            }
+
+            if (totalVoters > 0) {
+                votersView.setVisibility(VISIBLE);
+                votersView.setText(LocaleController.formatPluralString("Vote", totalVoters));
+            } else {
+                votersView.setVisibility(GONE);
+            }
+
+            setVisibility(VISIBLE);
+        }
+
+        /** byte[] нельзя использовать как ключ HashMap напрямую (сравнение по ссылке) — переводим в строку. */
+        private static String bytesToKey(byte[] bytes) {
+            StringBuilder sb = new StringBuilder(bytes.length * 2);
+            for (byte b : bytes) sb.append(Integer.toHexString(b & 0xFF));
+            return sb.toString();
+        }
+    }
+
+    /**
+     * Один вариант ответа: скруглённая строка с рамкой, внутри — заливка-шкала
+     * пропорционально проценту голосов (когда результаты видны) и текст варианта
+     * слева / процент справа. Выбранный пользователем и (для квиза) правильный
+     * вариант — акцентным цветом, как в оригинале.
+     */
+    private static class PollAnswerRow extends View {
+        private static final int HEIGHT = dp(38);
+        private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final android.text.TextPaint textPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
+        private final android.text.TextPaint percentPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
+        private final int normalTextColor;
+        private final int accentColor;
+        private final int neutralFillColor;
+        private String optionText = "";
+        private int percent = -1; // -1 = результаты ещё не видны, рисуем просто строку без шкалы
+        private boolean highlighted = false;
+
+        PollAnswerRow(Context context, Theme.ResourcesProvider resourcesProvider) {
+            super(context);
+            normalTextColor = Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider);
+            accentColor = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider);
+            neutralFillColor = Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider);
+            int dividerColor = Theme.getColor(Theme.key_divider, resourcesProvider);
+
+            borderPaint.setStyle(Paint.Style.STROKE);
+            borderPaint.setStrokeWidth(dp(1));
+            borderPaint.setColor(dividerColor);
+
+            fillPaint.setStyle(Paint.Style.FILL);
+
+            textPaint.setTextSize(dp(14));
+            percentPaint.setTextSize(dp(14));
+            percentPaint.setTypeface(AndroidUtilities.bold());
+        }
+
+        void bind(String text, int percentValue, boolean chosen, boolean correctQuizAnswer) {
+            optionText = text != null ? text : "";
+            percent = percentValue;
+            highlighted = chosen || correctQuizAnswer;
+            int color = highlighted ? accentColor : normalTextColor;
+            textPaint.setColor(color);
+            percentPaint.setColor(color);
+            fillPaint.setColor(((highlighted ? accentColor : neutralFillColor) & 0x00FFFFFF) | 0x33000000);
+            requestLayout();
+            invalidate();
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            int width = MeasureSpec.getSize(widthMeasureSpec);
+            setMeasuredDimension(width, HEIGHT);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            int w = getWidth(), h = getHeight();
+            float radius = h / 2f;
+            RectF rect = new RectF(dp(0.5f), dp(0.5f), w - dp(0.5f), h - dp(0.5f));
+
+            // Заливка-шкала пропорционально проценту — рисуется ДО рамки и текста,
+            // поэтому не перекрывает их. Рисуется только когда результаты видны
+            // (percent >= 0); пока опрос не раскрыт — просто пустая строка с рамкой.
+            if (percent >= 0) {
+                float fillWidth = Math.max(h, w * (percent / 100f));
+                canvas.save();
+                // Обрезаем прямоугольником по ширине заливки, а скруглённую форму
+                // получаем рисованием ТОЙ ЖЕ скруглённой фигуры целиком (rect на всю
+                // строку) — видна только часть внутри clipRect. Так не нужен Path
+                // с вложенным Path.Direction (лишний класс, не импортированный
+                // отдельно нигде в файле).
+                canvas.clipRect(0, 0, fillWidth, h);
+                canvas.drawRoundRect(rect, radius, radius, fillPaint);
+                canvas.restore();
+            }
+
+            canvas.drawRoundRect(rect, radius, radius, borderPaint);
+
+            float textX = dp(14);
+            Paint.FontMetrics fm = textPaint.getFontMetrics();
+            float baseline = h / 2f - (fm.ascent + fm.descent) / 2f;
+
+            String percentStr = percent >= 0 ? percent + "%" : null;
+            float percentW = percentStr != null ? percentPaint.measureText(percentStr) : 0;
+            float maxTextWidth = w - textX - dp(14) - (percentStr != null ? percentW + dp(8) : 0);
+
+            CharSequence ellipsized = TextUtils.ellipsize(optionText, textPaint, Math.max(0, maxTextWidth), TextUtils.TruncateAt.END);
+            canvas.drawText(ellipsized, 0, ellipsized.length(), textX, baseline, textPaint);
+
+            if (percentStr != null) {
+                canvas.drawText(percentStr, w - dp(14) - percentW, baseline, percentPaint);
+            }
         }
     }
 

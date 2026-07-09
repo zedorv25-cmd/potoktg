@@ -846,6 +846,51 @@ public class PotokFeedPostCell extends LinearLayout {
             idx++;
         }
 
+        // Удалить из кэша — по образцу пункта меню сообщения в самом Telegram
+        // (между "Статистика сообщения" и "Сохранить в галерею"). Проверяем реальное
+        // наличие файла на диске тем же методом, что и оригинал (MessageObject.
+        // checkMediaExistance() + getPathToMessage()), а не своей отдельной логикой —
+        // так поведение гарантированно совпадает с тем, что считает "скачанным" сам
+        // Telegram. Пункт виден, только если хотя бы один медиафайл поста реально
+        // лежит в кэше. Удаление идёт по конкретным файлам этого поста (FileLoader.
+        // deleteFiles), а не по всему кэшу целиком — т.к. кэш общий для чата и ленты
+        // (см. диагностику из предыдущей сессии), удаление здесь удаляет файл и для
+        // канала тоже, это ожидаемое поведение, а не побочный эффект.
+        final ArrayList<java.io.File> cachedFilesToDelete = new ArrayList<>();
+        for (MessageObject mo : groupMessages) {
+            boolean hasMedia = mo.isVoice() || mo.isMusic() || mo.isVideo()
+                || (mo.photoThumbs != null && !mo.photoThumbs.isEmpty());
+            if (!hasMedia) continue;
+            mo.checkMediaExistance(false);
+            if (mo.mediaExists) {
+                java.io.File f = FileLoader.getInstance(mo.currentAccount).getPathToMessage(mo.messageOwner, false);
+                if (f != null && f.exists()) {
+                    cachedFilesToDelete.add(f);
+                }
+            }
+        }
+        if (!cachedFilesToDelete.isEmpty()) {
+            final int deleteAccount = groupMessages.get(0).currentAccount;
+            ActionBarMenuSubItem clearCache = new ActionBarMenuSubItem(getContext(), idx == 0, false, null);
+            clearCache.setMinimumWidth(AndroidUtilities.dp(200));
+            clearCache.setTextAndIcon("Удалить из кэша", org.telegram.messenger.R.drawable.msg_clearcache);
+            layout.addView(clearCache);
+            clearCache.setOnClickListener(v -> {
+                if (postMenuWindow != null) postMenuWindow.dismiss();
+                FileLoader.getInstance(deleteAccount).deleteFiles(cachedFilesToDelete, 0);
+                // Видео в этом посте (если было) было проигрываемым напрямую из кэша —
+                // теперь файла нет, нужно перепривязать карусель, чтобы плашка загрузки
+                // появилась заново (тот же путь, что и notifyItemChanged после докачки,
+                // см. CarouselAdapter — но здесь вызов идёт из клика по меню, а не из
+                // асинхронного колбэка загрузки, так что мы НЕ внутри layout/scroll
+                // прохода RecyclerView и notifyDataSetChanged() безопасен напрямую).
+                if (carouselAdapter != null) {
+                    carouselAdapter.notifyDataSetChanged();
+                }
+            });
+            idx++;
+        }
+
         // Скачать медиа (фото/видео/аудио поста)
         ArrayList<MessageObject> mediaToSave = new ArrayList<>();
         for (MessageObject mo : groupMessages) {
@@ -1199,7 +1244,21 @@ public class PotokFeedPostCell extends LinearLayout {
                 holder.downloadPlate.bind(document, mo.currentAccount, () -> {
                     // Файл докачался — перепривязываем ячейку: canDecodeFromVideo теперь
                     // увидит fileExists=true и покажет уже настоящий декодированный кадр.
-                    notifyItemChanged(bindPosition);
+                    // КРИТИЧНО: этот колбэк прилетает из DownloadController в произвольный
+                    // момент — в том числе прямо во время скролла/layout-прохода самой
+                    // карусели (пользователь свайпает, пока видео докачивается). Прямой
+                    // notifyItemChanged() в такой момент — это классический
+                    // IllegalStateException ("Cannot call this method while RecyclerView is
+                    // computing a layout or scrolling"), который и был причиной краша:
+                    // кадр "подвисал" затемнённым на последнем отрисованном состоянии,
+                    // скролл переставал отвечать, дальше приложение вылетало. Откладываем
+                    // через post() на следующий цикл отрисовки — к этому моменту текущий
+                    // layout-проход уже завершён, вызывать notifyItemChanged() безопасно.
+                    carouselView.post(() -> {
+                        if (carouselAdapter != null) {
+                            notifyItemChanged(bindPosition);
+                        }
+                    });
                 });
             } else {
                 holder.playIndicator.setVisibility(GONE);
@@ -1291,10 +1350,6 @@ public class PotokFeedPostCell extends LinearLayout {
         // выводятся во второй строке — они никогда не показываются одновременно.
         private String sizeText = "";
         private String progressText = "";
-        // Ширина плашки измеряется по самому длинному из возможных вариантов второй
-        // строки (полный размер и "полный/полный"), чтобы во время закачки, когда
-        // progressText меняется на каждый тик прогресса, ширина плашки не дёргалась.
-        private String widestSizeVariant = "";
 
         VideoDownloadPlate(Context context) {
             super(context);
@@ -1304,7 +1359,16 @@ public class PotokFeedPostCell extends LinearLayout {
             // Фон-круг под иконкой не нужен — вся плашка уже тёмная (см. bg ниже),
             // поэтому у самой иконки фона нет, как и раньше у стрелки.
             radialProgress.setDrawBackground(false);
-            radialProgress.setCircleRadius(ICON_AREA / 2);
+            // ВАЖНО: радиус кольца НЕ равен половине области иконки (ICON_AREA/2 = dp(12)).
+            // В оригинале (ChatMessageCell.videoRadialProgress) для точно такой же плашки
+            // используется videoRadialProgress.setCircleRadius(dp(15)) при области иконки
+            // ровно dp(24) — то есть кольцо специально крупнее своей области и "вылезает"
+            // за неё, из-за чего между кольцом и иконкой отмены (крестиком) внутри остаётся
+            // нормальный зазор. С радиусом ровно dp(12) (ICON_AREA/2) кольцо плотно
+            // заполняло всю область встык — отсюда и слипшийся с крестиком вид, который
+            // был замечен. Область тапа/раскладки (ICON_AREA=24) не меняется, меняется
+            // только визуальный радиус самого кольца — один в один как в оригинале.
+            radialProgress.setCircleRadius(dp(15));
 
             textPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
             textPaint.setColor(0xFFFFFFFF);
@@ -1337,10 +1401,6 @@ public class PotokFeedPostCell extends LinearLayout {
             durationText = durationSec > 0 ? AndroidUtilities.formatShortDuration((int) durationSec) : "";
             sizeText = AndroidUtilities.formatFileSize(doc.size);
             progressText = sizeText;
-            // Худший случай по длине текста — "X / X" с одинаковым (максимальным)
-            // значением с обеих сторон, т.к. скачано <= всего всегда.
-            widestSizeVariant = sizeText + " / " + sizeText;
-            requestLayout();
 
             updateState(false);
         }
@@ -1393,6 +1453,13 @@ public class PotokFeedPostCell extends LinearLayout {
                     radialProgress.setIcon(MediaActionDrawable.ICON_DOWNLOAD, false, animated);
                 }
             }
+            // Подложка должна быть адаптивной по ширине под текущий текст (как в
+            // оригинале), а не зарезервированной заранее под "худший случай". Пересчёт
+            // размера — только здесь, на реальных переходах состояния (появилась/пропала
+            // плашка, начало/остановка закачки), а НЕ на каждый тик прогресса — тики
+            // (onProgressDownload) обновляют текст и зовут invalidate() напрямую, минуя
+            // updateState(), поэтому requestLayout() не спамится 20 раз в секунду.
+            requestLayout();
             invalidate();
         }
 
@@ -1416,9 +1483,14 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
             float w1 = textPaint.measureText(durationText);
-            // Меряем по widestSizeVariant ("X / X"), а не по текущему sizeText/progressText —
-            // так ширина плашки не "прыгает" на каждый тик прогресса при закачке.
-            float w2 = textPaint.measureText(widestSizeVariant);
+            // Меряем по РЕАЛЬНО показываемой сейчас второй строке (как в оригинале —
+            // подложка адаптивна и меняет размер при смене состояния/контента), а не по
+            // заранее зарезервированному "худшему случаю". requestLayout() зовётся из
+            // updateState() только на настоящих переходах состояния (см. там), поэтому
+            // это не пересчитывается на каждый тик прогресса — ширина "прыгает" только
+            // в моменты смены состояния, один в один как в оригинальном Telegram.
+            String secondLine = buttonState == 1 ? progressText : sizeText;
+            float w2 = textPaint.measureText(secondLine);
             int textWidth = (int) Math.ceil(Math.max(w1, w2));
             // Симметрия: правый паддинг (текст -> край) точно равен левому (край -> иконка),
             // оба PAD_H. Слева иконка тоже центрирована в своей области (см. onSizeChanged).
@@ -1484,9 +1556,10 @@ public class PotokFeedPostCell extends LinearLayout {
         public void onProgressDownload(String name, long downloadedSize, long totalSize) {
             radialProgress.setProgress(Math.min(1f, downloadedSize / (float) totalSize), true);
             // Пункт 1 из ТЗ: пока файл качается, вторая строка показывает живой
-            // прогресс "2,5 MB / 5 MB" вместо статичного "5 MB". Ширина плашки уже
-            // зарезервирована под самый длинный вариант в bind()/onMeasure(), поэтому
-            // достаточно invalidate() — requestLayout() на каждый тик прогресса не нужен.
+            // прогресс "2,5 MB / 5 MB" вместо статичного "5 MB". Плашка адаптивна по
+            // ширине (см. onMeasure()/updateState()), но пересчитывается только на
+            // переходах состояния, а не на каждый тик — как и в оригинале, ширина не
+            // "гуляет" на каждое обновление процента, достаточно invalidate().
             progressText = AndroidUtilities.formatFileSize(downloadedSize) + " / " + AndroidUtilities.formatFileSize(totalSize);
             if (buttonState != 1) {
                 updateState(true);

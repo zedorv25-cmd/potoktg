@@ -767,6 +767,27 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     public void onResume() {
         super.onResume();
         updateWallpaper();
+    }
+
+    // ВАЖНО: раньше loadFeed() вызывался из onResume(). Проблема в том, что
+    // onResume() здесь дёргается НЕ только при реальном переключении на вкладку
+    // "Лента" — в архитектуре ViewPagerActivity (см. setVisibility()) он также
+    // срабатывает при любом возврате фокуса ко всей Activity целиком, например
+    // при закрытии PhotoViewer/системных диалогов/смене приложений, даже если
+    // пользователь всё это время сидел на вкладке "Лента" и никуда с неё не
+    // уходил. Из-за этого лента лишний раз дёргала messages.getHistory по всем
+    // каналам — та самая "лишняя трата ресурсов". onBecomeFullyVisible(), в
+    // отличие от onResume(), вызывается строго тогда, когда эта вкладка реально
+    // становится полностью видимой страницей пейджера (см. ViewPagerActivity.
+    // PageAdapter.setVisibility(), fragment.onBecomeFullyVisible() при
+    // newVisibility >= 1) — это и есть корректный третий триггер обновления
+    // ("вернулся в ленту с другого раздела"), не срабатывающий на посторонние
+    // события. Итого обновление ленты теперь строго по 3 триггерам: первый показ
+    // (createView() -> loadFeed(), см. выше), свайп-обновление (swipeRefreshLayout)
+    // и вот этот — реальный возврат на вкладку.
+    @Override
+    public void onBecomeFullyVisible() {
+        super.onBecomeFullyVisible();
         loadFeed();
     }
 

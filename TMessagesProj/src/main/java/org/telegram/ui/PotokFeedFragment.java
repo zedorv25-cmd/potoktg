@@ -329,6 +329,16 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
     private void addChannelToFeed(TLRPC.Chat channel) {
         String key = String.valueOf(channel.id);
+        // Баг был здесь: loadHistory() раньше вызывался ТОЛЬКО внутри этого if,
+        // то есть ровно один раз за всё время жизни фрагмента на канал — второй и
+        // любой последующий вызов addChannelToFeed() для уже известного канала
+        // (обновление свайпом вниз, повторный loadFeed() на onResume) ничего не
+        // делал вообще. Поэтому новые посты не подтягивались никогда, кроме
+        // самого первого раза — а он происходит только при пересоздании
+        // фрагмента с нуля, то есть при полном рестарте приложения. Теперь
+        // "канал уже известен" (resolvedChannels/allChannels — нужно только
+        // чтобы не дублировать канал в списке фильтра) и "нужно перезапросить
+        // историю" — две независимые вещи: второе происходит при каждом вызове.
         if (!resolvedChannels.containsKey(key)) {
             resolvedChannels.put(key, channel);
             boolean alreadyInList = false;
@@ -336,8 +346,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 if (ch.id == channel.id) { alreadyInList = true; break; }
             }
             if (!alreadyInList) allChannels.add(channel);
-            loadHistory(key, channel);
         }
+        loadHistory(key, channel);
     }
 
     private void loadRecentSearchChannels() {
@@ -560,6 +570,14 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
             ArrayList<MessageObject> messageObjects = new ArrayList<>();
             for (TLRPC.Message message : res.messages) {
+                // Служебные сообщения (TL_messageService) — это не посты канала, а
+                // системные строки вида "X закрепил(а) фотографию", "канал создан",
+                // смена фото канала и т.п. Раньше они не отфильтровывались нигде и
+                // попадали в ленту как пустой/странный пост. Пропускаем их целиком —
+                // в ленте должны быть только настоящие посты (TL_message).
+                if (message instanceof TLRPC.TL_messageService) {
+                    continue;
+                }
                 messageObjects.add(new MessageObject(currentAccount, message, true, true));
             }
             channelItems.put(key, buildChannelItems(messageObjects, channel));
@@ -672,7 +690,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         if (item == null || item.messages.isEmpty()) {
             return;
         }
-        boolean hasUnread = false;
         int maxId = 0;
         int maxDate = 0;
         long dialogId = 0;
@@ -681,9 +698,20 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             dialogId = mo.getDialogId();
             if (mo.getId() > maxId) maxId = mo.getId();
             if (mo.messageOwner.date > maxDate) maxDate = mo.messageOwner.date;
-            if (!mo.isOut() && mo.isUnread()) hasUnread = true;
         }
-        if (!hasUnread || maxId <= 0 || dialogId == 0) {
+        if (maxId <= 0 || dialogId == 0) {
+            return;
+        }
+        // Баг был здесь: mo.isUnread() читает messageOwner.unread — а это поле
+        // выставляется MessagesController/MessagesStorage ТОЛЬКО когда сообщение
+        // проходит через обычный локальный пайплайн загрузки диалога. Наши посты
+        // ленты строятся напрямую из ответа messages.getHistory (см. loadHistory())
+        // в обход этого пайплайна, поэтому messageOwner.unread у них всегда false
+        // по умолчанию — hasUnread был всегда false, и markDialogAsRead ниже
+        // молча никогда не вызывался. Реальное "прочитано ли" сравниваем вручную
+        // с read_inbox_max_id диалога канала: пост непрочитан, если его id больше.
+        TLRPC.Dialog dialog = getMessagesController().getDialog(dialogId);
+        if (dialog == null || maxId <= dialog.read_inbox_max_id) {
             return;
         }
         for (MessageObject mo : item.messages) {

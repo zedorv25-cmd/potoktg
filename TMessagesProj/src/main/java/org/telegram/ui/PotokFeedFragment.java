@@ -179,6 +179,21 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         listView = new RecyclerListView(context);
         listViewLayoutManager = new LinearLayoutManager(context);
         listView.setLayoutManager(listViewLayoutManager);
+        // Лента обновляется полным notifyDataSetChanged() (см. notifyWhenReady()) —
+        // при loadFeed() на КАЖДЫЙ реальный возврат на вкладку (в т.ч. возврат из
+        // комментариев или закрытие полноэкранного просмотра фото/видео, которые
+        // временно скрывают эту вкладку — см. комментарий у onBecomeFullyVisible()).
+        // Стандартный ItemAnimator RecyclerView по умолчанию (DefaultItemAnimator)
+        // на полный notifyDataSetChanged() запускает анимацию "сдвига" уже видимых
+        // элементов на их (по факту те же самые) позиции — именно это и davало
+        // видимое дёрганье постов на пару пикселей вверх-вниз, которое само
+        // прекращается, как только анимация доигрывает. Список не полагается на
+        // покадровые move/change-анимации между обновлениями (это полная
+        // перестройка данных, а не точечное изменение одного элемента), поэтому
+        // отключаем анимации переиспользования элементов целиком — так же, как это
+        // сделано в других местах Telegram для списков, которые часто обновляются
+        // целиком, а не точечно через DiffUtil.
+        listView.setItemAnimator(null);
         scrollHelper = new org.telegram.ui.Components.RecyclerAnimationScrollHelper(listView, listViewLayoutManager);
 
         // Теперь у нас есть настоящий ActionBar (заголовок "POTOK ЛЕНТА" + три точки,

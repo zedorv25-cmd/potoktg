@@ -80,6 +80,28 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(key, enabled).apply();
     }
 
+    // Потолок размера файла для АВТОматической (не по тапу) загрузки — те же самые
+    // цифры, что в системных настройках самого Telegram ("Соединение..." ->
+    // "Автозагрузка медиа", см. скрин пользователя): видео — 10 МБ через мобильную
+    // сеть / 15 МБ через Wi-Fi; аудио/файлы — 1 МБ / 3 МБ. У фото отдельного лимита
+    // в самом Telegram нет (сервер и так уже отдаёт сжатую версию) — поэтому для
+    // фото проверка размера не применяется, только переключатель вкл/выкл.
+    // Ручная загрузка по тапу на кнопку — всегда без лимита, независимо от размера.
+    private static final long VIDEO_AUTOLOAD_MAX_MOBILE = 10L * 1024 * 1024;
+    private static final long VIDEO_AUTOLOAD_MAX_WIFI = 15L * 1024 * 1024;
+    private static final long AUDIO_AUTOLOAD_MAX_MOBILE = 1L * 1024 * 1024;
+    private static final long AUDIO_AUTOLOAD_MAX_WIFI = 3L * 1024 * 1024;
+
+    public static boolean isSizeOkForVideoAutoload(long sizeBytes) {
+        long max = org.telegram.messenger.ApplicationLoader.isConnectedOrConnectingToWiFi() ? VIDEO_AUTOLOAD_MAX_WIFI : VIDEO_AUTOLOAD_MAX_MOBILE;
+        return sizeBytes <= max;
+    }
+
+    public static boolean isSizeOkForAudioAutoload(long sizeBytes) {
+        long max = org.telegram.messenger.ApplicationLoader.isConnectedOrConnectingToWiFi() ? AUDIO_AUTOLOAD_MAX_WIFI : AUDIO_AUTOLOAD_MAX_MOBILE;
+        return sizeBytes <= max;
+    }
+
     private RecyclerListView listView;
     private androidx.swiperefreshlayout.widget.SwipeRefreshLayout swipeRefreshLayout;
     private boolean refreshingFeed = false;
@@ -93,6 +115,25 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     // username -> посты этого канала, уже собранные в FeedItem (альбомы объединены)
     private final java.util.Map<String, ArrayList<FeedItem>> channelItems = new java.util.HashMap<>();
     private final java.util.Set<String> historyInFlight = new java.util.HashSet<>();
+    // Когда каждый канал последний раз реально успешно подгружался — нужно, чтобы
+    // onBecomeFullyVisible() (срабатывает на КАЖДОЕ возвращение в ленту, в т.ч. из
+    // комментариев) не долбил messages.getHistory по всем каналам заново каждый
+    // раз, если данные и так свежие (см. addChannelToFeed()).
+    private final java.util.Map<String, Long> lastChannelFetchTime = new java.util.HashMap<>();
+    private static final long MIN_CHANNEL_REFETCH_INTERVAL_MS = 20_000;
+    // "Тряска" постов на пару пикселей была вызвана вот чем: у ленты обычно 10-20+
+    // каналов, и каждый отвечает на messages.getHistory В СВОЙ момент времени
+    // (сетевой round-trip у каждого разный). Раньше КАЖДЫЙ такой ответ поодиночке
+    // звал rebuildAndShowAllItems() -> notifyDataSetChanged() по ВСЕМУ списку —
+    // то есть один заход в ленту после комментариев мог вызвать 10-20 отдельных
+    // notifyDataSetChanged() подряд за секунду-другую, и на каждом RecyclerView
+    // заново раскладывал видимые ячейки (сортировка ленты пересчитывается заново
+    // и порядок постов НАД текущим скроллом мог на пиксель-два сместиться) — это и
+    // выглядело как "трясётся и потом останавливается": по одному лёгкому дёрганию
+    // на каждый ответ канала. Дебаунс схлопывает всю пачку ответов, пришедших
+    // почти одновременно, в ОДИН финальный rebuild уже после того, как всё утихло.
+    private final Runnable debouncedRebuildRunnable = this::rebuildAndShowAllItems;
+    private static final long REBUILD_DEBOUNCE_MS = 220;
 
     // Все каналы в ленте (подписки + поиск) — для фильтра
     private final ArrayList<TLRPC.Chat> allChannels = new ArrayList<>();
@@ -390,6 +431,18 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             }
             if (!alreadyInList) allChannels.add(channel);
         }
+        // Троттлинг: onBecomeFullyVisible() дёргает loadFeed() -> addChannelToFeed()
+        // по ВСЕМ каналам при каждом реальном возврате в ленту (в т.ч. закрыл
+        // комментарии и вернулся) — если у канала данные и так свежие (недавно уже
+        // подгружали), повторный запрос не нужен. Явный pull-to-refresh
+        // (refreshingFeed == true) всегда игнорирует троттлинг — пользователь явно
+        // попросил обновить именно сейчас.
+        if (!refreshingFeed) {
+            Long lastFetch = lastChannelFetchTime.get(key);
+            if (lastFetch != null && System.currentTimeMillis() - lastFetch < MIN_CHANNEL_REFETCH_INTERVAL_MS) {
+                return;
+            }
+        }
         loadHistory(key, channel);
     }
 
@@ -679,7 +732,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 messageObjects.add(new MessageObject(currentAccount, message, true, true));
             }
             channelItems.put(key, buildChannelItems(messageObjects, channel));
-            rebuildAndShowAllItems();
+            lastChannelFetchTime.put(key, System.currentTimeMillis());
+            scheduleRebuild();
         }));
     }
 
@@ -724,6 +778,23 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             return 0;
         }
         return item.messages.get(0).messageOwner.date;
+    }
+
+    /**
+     * Debounce-обёртка над rebuildAndShowAllItems() для сетевых колбэков loadHistory():
+     * ответы от 10-20 каналов приходят почти одновременно, но не строго синхронно —
+     * без дебаунса каждый из них поодиночке вызывал полный notifyDataSetChanged(),
+     * из-за чего лента визуально "трясло" (см. подробный комментарий у
+     * lastChannelFetchTime выше). Каждый новый вызов откладывает пересборку ещё на
+     * REBUILD_DEBOUNCE_MS — реальная пересборка происходит один раз, уже после того,
+     * как вся пачка ответов, пришедшая почти одновременно, утихла.
+     * Instant-действия пользователя (применить фильтр каналов, скрыть канал) по-
+     * прежнему зовут rebuildAndShowAllItems() напрямую, без дебаунса — там задержка
+     * в отклике на явный тап была бы, наоборот, вредна.
+     */
+    private void scheduleRebuild() {
+        AndroidUtilities.cancelRunOnUIThread(debouncedRebuildRunnable);
+        AndroidUtilities.runOnUIThread(debouncedRebuildRunnable, REBUILD_DEBOUNCE_MS);
     }
 
     private void rebuildAndShowAllItems() {
@@ -932,17 +1003,23 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         }
         int count = listView.getChildCount();
         for (int a = 0; a < count; a++) {
-            View view = listView.getChildAt(a);
-            if (!(view instanceof PotokFeedPostCell)) continue;
-            PotokFeedPostCell cell = (PotokFeedPostCell) view;
+            View cellView = listView.getChildAt(a);
+            if (!(cellView instanceof PotokFeedPostCell)) continue;
+            PotokFeedPostCell cell = (PotokFeedPostCell) cellView;
             if (!cell.containsMessageId(messageObject.getId())) continue;
-            ImageReceiver imageReceiver = cell.getPhotoImageForMessage(messageObject);
-            if (imageReceiver == null) continue;
+            // Координаты нужно брать у САМОГО BackupImageView с фото (вложен в
+            // карусель внутри ячейки), а не у ячейки поста целиком — иначе
+            // PhotoViewer разворачивает анимацию от верха всей карточки (шапки
+            // канала), а не от реального места фото. См. подробный комментарий в
+            // PotokFeedPostCell.getPhotoImageViewForMessage().
+            org.telegram.ui.Components.BackupImageView photoImageView = cell.getPhotoImageViewForMessage(messageObject);
+            if (photoImageView == null) continue;
+            ImageReceiver imageReceiver = photoImageView.getImageReceiver();
             int[] coords = new int[2];
-            view.getLocationInWindow(coords);
+            photoImageView.getLocationInWindow(coords);
             PhotoViewer.PlaceProviderObject object = new PhotoViewer.PlaceProviderObject();
             object.viewX = coords[0];
-            object.viewY = coords[1] + view.getPaddingTop();
+            object.viewY = coords[1];
             object.parentView = listView;
             object.imageReceiver = imageReceiver;
             object.thumb = imageReceiver.getBitmapSafe();
@@ -967,6 +1044,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
     @Override
     public void onFragmentDestroy() {
+        AndroidUtilities.cancelRunOnUIThread(debouncedRebuildRunnable);
         getNotificationCenter().removeObserver(this, NotificationCenter.messagePlayingProgressDidChanged);
         getNotificationCenter().removeObserver(this, NotificationCenter.didSetNewTheme);
         getNotificationCenter().removeObserver(this, NotificationCenter.didUpdatePollResults);

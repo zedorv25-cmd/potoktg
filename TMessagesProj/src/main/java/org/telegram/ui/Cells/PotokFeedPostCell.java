@@ -1265,7 +1265,13 @@ public class PotokFeedPostCell extends LinearLayout {
             downloadPlate.setVisibility(GONE);
             wrapper.addView(downloadPlate, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP, 6, 6, 0, 0));
 
-            return new MediaHolder(wrapper, img, playIndicator, downloadPlate);
+            // Оверлей притемнения + кнопки загрузки для фото (аналог downloadPlate,
+            // но для фото, а не видео) — во весь размер карточки, поверх фото.
+            PhotoDownloadOverlay photoOverlay = new PhotoDownloadOverlay(parent.getContext());
+            photoOverlay.setVisibility(GONE);
+            wrapper.addView(photoOverlay, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+            return new MediaHolder(wrapper, img, playIndicator, downloadPlate, photoOverlay);
         }
 
         @Override
@@ -1275,6 +1281,7 @@ public class PotokFeedPostCell extends LinearLayout {
             // ViewHolder'а (RecyclerView) колбэки о загрузке будут прилетать в "чужую",
             // уже переиспользованную под другое видео ячейку.
             holder.downloadPlate.unbind();
+            holder.photoOverlay.unbind();
         }
 
         @Override
@@ -1344,14 +1351,25 @@ public class PotokFeedPostCell extends LinearLayout {
                 // стрип-thumb, который и так приходит вместе с самим сообщением бесплатно.
                 boolean videoAutoload = PotokFeedFragment.isAutoloadVideoEnabled(getContext());
                 if (canDecodeFromVideo) {
+                    // Бесшумное инлайн-автовоспроизведение кэшированного видео — как GIF,
+                    // точная копия ветки DOCUMENT_ATTACH_TYPE_VIDEO из оригинального
+                    // ChatMessageCell.setMessageObject(): AUTOPLAY_FILTER (не NONLOOP —
+                    // видео должно зацикливаться, а не проигрываться один раз и
+                    // застревать на первом кадре) + setAllowStartAnimation(true) +
+                    // явный startAnimation(). Именно setAllowStartAnimation(false) в
+                    // предыдущей версии и было причиной "дёргания" — декодер получал
+                    // кадры, но анимации явно запрещалось стартовать, поэтому
+                    // ImageReceiver дёргался на новый кадр и тут же откатывался обратно
+                    // на статичный.
                     img.getImageReceiver().setAllowDecodeSingleFrame(true);
-                    img.getImageReceiver().setAllowStartAnimation(false);
+                    img.getImageReceiver().setAllowStartAnimation(true);
                     img.getImageReceiver().setImage(
-                        ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER_NONLOOP,
+                        ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER,
                         ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
                         ImageLocation.getForObject(currentPhotoObjectThumb, document), currentPhotoFilterThumb,
                         strippedThumb, document.size, (String) null, mo, 0
                     );
+                    img.getImageReceiver().startAnimation();
                 } else if (!videoAutoload && !fileExists) {
                     // Автозагрузка выключена — только стрип-thumb/маленькая миниатюра,
                     // без полноразмерного превью. Тап по кадру (openMediaViewer, см. ниже)
@@ -1378,7 +1396,14 @@ public class PotokFeedPostCell extends LinearLayout {
                     );
                 }
 
-                holder.playIndicator.setVisibility(VISIBLE);
+                // Пока видео уже в кэше и проигрывается инлайн бесшумно (как GIF) —
+                // ни play-кнопка, ни плашка загрузки не нужны, ролик и так виден и
+                // воспроизводится. Они возвращаются, только если файл больше не в
+                // кэше (canDecodeFromVideo пересчитывается в bind() заново на каждый
+                // показ ячейки — в т.ч. после удаления из кэша через меню поста).
+                holder.playIndicator.setVisibility(canDecodeFromVideo ? GONE : VISIBLE);
+                holder.photoOverlay.setVisibility(GONE);
+                holder.photoOverlay.unbind();
                 // Плашка сама решает, показываться ли ей (видно только пока файл не
                 // скачан/качается) — bind() пересчитывает fileExists и duration/size
                 // текст заново на каждый вызов.
@@ -1432,6 +1457,19 @@ public class PotokFeedPostCell extends LinearLayout {
                         (Drawable) null, (String) null, 0, 0, mo
                     );
                 }
+                // Притемнение + кнопка загрузки поверх фото — как в оригинале. bind()
+                // сам решит, показываться ли ему: если файл уже реально в кэше — сразу
+                // скрывается; если качается (в т.ч. запущено автозагрузкой чуть выше
+                // через img.setImage) — покажет прогресс с крестиком отмены; если не
+                // качается и не скачано — покажет стрелку загрузки по тапу.
+                final int photoBindPosition = position;
+                holder.photoOverlay.bind(photoSize, mo.photoThumbsObject, mo.currentAccount, () -> {
+                    carouselView.post(() -> {
+                        if (carouselAdapter != null) {
+                            notifyItemChanged(photoBindPosition);
+                        }
+                    });
+                });
             }
 
             final int idx = position;
@@ -1454,11 +1492,13 @@ public class PotokFeedPostCell extends LinearLayout {
             final BackupImageView img;
             final PlayIndicatorView playIndicator;
             final VideoDownloadPlate downloadPlate;
-            MediaHolder(View wrapper, BackupImageView img, PlayIndicatorView playIndicator, VideoDownloadPlate downloadPlate) {
+            final PhotoDownloadOverlay photoOverlay;
+            MediaHolder(View wrapper, BackupImageView img, PlayIndicatorView playIndicator, VideoDownloadPlate downloadPlate, PhotoDownloadOverlay photoOverlay) {
                 super(wrapper);
                 this.img = img;
                 this.playIndicator = playIndicator;
                 this.downloadPlate = downloadPlate;
+                this.photoOverlay = photoOverlay;
             }
         }
     }
@@ -1795,6 +1835,172 @@ public class PotokFeedPostCell extends LinearLayout {
                 // происходит мгновенно только когда реально нужно больше места, а
                 // визуальная анимация — забота animatedWidth в onDraw.
                 syncWidth();
+            }
+        }
+
+        @Override
+        public void onProgressUpload(String name, long uploadedSize, long totalSize, boolean isEncrypted) {
+        }
+
+        @Override
+        public int getObserverTag() {
+            return TAG;
+        }
+    }
+
+    // ------------------------------------------------------------------ PhotoDownloadOverlay
+    /**
+     * Аналог VideoDownloadPlate, но для фото — один в один по поведению с
+     * оригинальным Telegram: пока полноразмерное фото не в кэше, вся область
+     * притемняется (как photoImage.setAlpha(.5f) + полупрозрачная тёмная
+     * подложка поверх в ChatMessageCell.drawPhotoBlurRect), а по центру — круглая
+     * кнопка загрузки (RadialProgress2 с фоном, как в оригинале — не как у
+     * видео-плашки, где фон отключён, потому что там своя тёмная "таблетка").
+     * Тап — скачивает полноразмерное фото; во время загрузки иконка меняется на
+     * крестик отмены с кольцом прогресса. Как только файл на диске — оверлей
+     * пропадает целиком, показывается уже чёткое фото. Состояние, как и у
+     * VideoDownloadPlate, пересчитывается заново на каждый bind() — если фото
+     * удалили из кэша, при следующем показе ячейки оверлей вернётся сам.
+     */
+    private static class PhotoDownloadOverlay extends View implements DownloadController.FileDownloadProgressListener {
+        private final RadialProgress2 radialProgress;
+        private final Paint dimPaint;
+        private final RectF bgRect = new RectF();
+        private final int TAG;
+        private TLRPC.PhotoSize photoSize;
+        private Object parentObject;
+        private int currentAccount;
+        private String fileName;
+        private Runnable onReady;
+        private int buttonState; // -1 = скачано/скрыто, 1 = грузится, 2 = скачать
+
+        PhotoDownloadOverlay(Context context) {
+            super(context);
+            radialProgress = new RadialProgress2(this);
+            // В отличие от VideoDownloadPlate — фон у кнопки НЕ отключаем: у видео своя
+            // тёмная "таблетка" вокруг иконки+текста, а тут отдельного фона под кольцом
+            // нет, поэтому нужен штатный тёмный круг RadialProgress2 (как в оригинале
+            // для кнопки скачивания фото), иначе кольцо/иконка потеряются на светлых
+            // фото.
+            radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
+                    Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
+            radialProgress.setCircleRadius(dp(20));
+
+            dimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            // 0x66 ~ 40% непрозрачности — то же самое притемнение, что и в оригинале
+            // (dimPaint alpha * .4f поверх photoImage.setAlpha(.5f)); здесь фото под
+            // оверлеем не занижается по alpha отдельно (сложнее без доступа к
+            // ImageReceiver карусели напрямую из этого View), сам полупрозрачный слой
+            // поверх даёт визуально тот же тусклый эффект.
+            dimPaint.setColor(0x66000000);
+
+            TAG = DownloadController.getInstance(UserConfig.selectedAccount).generateObserverTag();
+            setOnClickListener(v -> onClick());
+        }
+
+        void bind(TLRPC.PhotoSize size, Object parent, int account, Runnable onReadyCallback) {
+            unbind();
+            photoSize = size;
+            parentObject = parent;
+            currentAccount = account;
+            onReady = onReadyCallback;
+            fileName = FileLoader.getAttachFileName(size);
+            updateState(false);
+        }
+
+        void unbind() {
+            if (fileName != null) {
+                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
+            }
+            photoSize = null;
+            parentObject = null;
+            fileName = null;
+            onReady = null;
+        }
+
+        private void updateState(boolean animated) {
+            if (photoSize == null || fileName == null) {
+                return;
+            }
+            // forceCache=false — та же причина, что и у VideoDownloadPlate.updateState():
+            // с forceCache=true проверка всегда смотрит не в ту папку и никогда не видит
+            // уже скачанный файл.
+            java.io.File cacheFile = FileLoader.getInstance(currentAccount).getPathToAttach(photoSize, false);
+            boolean fileExists = cacheFile != null && cacheFile.exists();
+            boolean isLoading = FileLoader.getInstance(currentAccount).isLoadingFile(fileName);
+            if (fileExists) {
+                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
+                buttonState = -1;
+                setVisibility(GONE);
+                if (onReady != null) {
+                    onReady.run();
+                }
+            } else {
+                setVisibility(VISIBLE);
+                DownloadController.getInstance(currentAccount).addLoadingFileObserver(fileName, this);
+                if (isLoading) {
+                    buttonState = 1;
+                    Float progress = org.telegram.messenger.ImageLoader.getInstance().getFileProgress(fileName);
+                    radialProgress.setProgress(progress != null ? progress : 0, animated);
+                    radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, animated);
+                } else {
+                    buttonState = 2;
+                    radialProgress.setIcon(MediaActionDrawable.ICON_DOWNLOAD, false, animated);
+                }
+            }
+            invalidate();
+        }
+
+        private void onClick() {
+            if (photoSize == null) return;
+            if (buttonState == 2) {
+                FileLoader.getInstance(currentAccount).loadFile(
+                    ImageLocation.getForObject(photoSize, parentObject), parentObject, null,
+                    FileLoader.PRIORITY_NORMAL, 0
+                );
+                updateState(true);
+            } else if (buttonState == 1) {
+                FileLoader.getInstance(currentAccount).cancelLoadFile(photoSize);
+                updateState(true);
+            }
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            int r = dp(24);
+            int cx = w / 2, cy = h / 2;
+            radialProgress.setProgressRect(cx - r, cy - r, cx + r, cy + r);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            if (buttonState == -1) {
+                return;
+            }
+            bgRect.set(0, 0, getWidth(), getHeight());
+            canvas.drawRoundRect(bgRect, dp(8), dp(8), dimPaint);
+            radialProgress.draw(canvas);
+        }
+
+        @Override
+        public void onFailedDownload(String name, boolean canceled) {
+            updateState(true);
+        }
+
+        @Override
+        public void onSuccessDownload(String name) {
+            radialProgress.setProgress(1, true);
+            updateState(true);
+        }
+
+        @Override
+        public void onProgressDownload(String name, long downloadedSize, long totalSize) {
+            radialProgress.setProgress(Math.min(1f, downloadedSize / (float) totalSize), true);
+            if (buttonState != 1) {
+                updateState(true);
+            } else {
+                invalidate();
             }
         }
 

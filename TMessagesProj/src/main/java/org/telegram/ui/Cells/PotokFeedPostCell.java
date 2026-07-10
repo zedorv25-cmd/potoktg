@@ -31,14 +31,17 @@ import org.telegram.messenger.FileLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.MediaController;
 import org.telegram.messenger.ImageLocation;
+import org.telegram.messenger.ImageReceiver;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.AnimatedEmojiDrawable;
+import org.telegram.ui.Components.AnimatedFloat;
 import org.telegram.ui.Components.AvatarDrawable;
 import org.telegram.ui.Components.BackupImageView;
+import org.telegram.ui.Components.CubicBezierInterpolator;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.MediaActionDrawable;
 import org.telegram.ui.Components.RadialProgress2;
@@ -48,6 +51,7 @@ import org.telegram.ui.ChatActivity;
 import org.telegram.ui.DialogsActivity;
 import org.telegram.ui.ActionBar.ActionBarPopupWindow;
 import org.telegram.ui.ActionBar.ActionBarMenuSubItem;
+import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.Components.TranslateAlert2;
 import org.telegram.ui.ReportBottomSheet;
 
@@ -86,6 +90,10 @@ public class PotokFeedPostCell extends LinearLayout {
 
     // --- Опрос ---
     private final PollView pollView;
+    // Сообщение группы, чей media — конкретно опрос (см. setPost()); нужно отдельно
+    // от pollView, чтобы по NotificationCenter.didUpdatePollResults сверить id опроса
+    // и передать актуальные media.poll/results обратно в MessageObject перед перерисовкой.
+    private MessageObject pollMessageObject;
 
     // --- Футер ---
     private final ImageView viewsIcon;
@@ -228,6 +236,16 @@ public class PotokFeedPostCell extends LinearLayout {
         expandButton.setPadding(dp(12), dp(2), dp(12), 0);
         expandButton.setOnClickListener(v -> {
             isExpanded = !isExpanded;
+            // Плавная анимация вместо мгновенного скачка: TransitionManager сам
+            // анимирует итоговое изменение layout (высоту textView и сдвиг всего, что
+            // ниже — карусели, футера с реакциями и т.д.), не требуя вручную считать
+            // высоту под конкретный текст (он у каждого поста разный, а текст ещё и
+            // может переноситься по-разному на разных ширинах экрана).
+            android.transition.TransitionSet transition = new android.transition.TransitionSet()
+                .addTransition(new android.transition.ChangeBounds())
+                .setDuration(220)
+                .setInterpolator(CubicBezierInterpolator.EASE_OUT);
+            android.transition.TransitionManager.beginDelayedTransition(this, transition);
             if (isExpanded) {
                 textView.setMaxLines(Integer.MAX_VALUE);
                 textView.setEllipsize(null);
@@ -468,8 +486,21 @@ public class PotokFeedPostCell extends LinearLayout {
         // Опрос — media.poll.question лежит отдельно от messageOwner.message,
         // поэтому findPostCaption() выше его не находит и textView для опроса
         // всегда пуст; весь контент опроса рисует отдельный pollView (см. ниже).
-        TLRPC.MessageMedia postMedia = messageObject.messageOwner != null ? messageObject.messageOwner.media : null;
-        boolean isPoll = postMedia instanceof TLRPC.TL_messageMediaPoll;
+        // Опрос ищем по ВСЕЙ группе, а не только в messages.get(0) — пост-альбом
+        // может состоять из сообщения с опросом + отдельных сообщений с фото/видео
+        // (у одного TL-сообщения media — это ЛИБО опрос, ЛИБО фото, никогда оба
+        // сразу; поэтому медиа поста с опросом физически лежит в соседних
+        // сообщениях той же группы, а не в самом опросе).
+        MessageObject pollMessage = null;
+        for (MessageObject mo : messages) {
+            if (mo.messageOwner != null && mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll) {
+                pollMessage = mo;
+                break;
+            }
+        }
+        boolean isPoll = pollMessage != null;
+        TLRPC.MessageMedia postMedia = isPoll ? pollMessage.messageOwner.media : null;
+        this.pollMessageObject = pollMessage;
 
         // Собираем медиа-сообщения из группы (только с фото/видео)
         ArrayList<MessageObject> mediaMessages = new ArrayList<>();
@@ -481,19 +512,22 @@ public class PotokFeedPostCell extends LinearLayout {
         }
 
         if (isPoll) {
-            hideCarousel();
             if (audioCell.getParent() != null) audioContainer.removeView(audioCell);
             audioContainer.setVisibility(GONE);
             audioSeekRow.setVisibility(GONE);
             audioSeekBarView.setMessageObject(null);
-            pollView.bind((TLRPC.TL_messageMediaPoll) postMedia);
+            pollView.bind((TLRPC.TL_messageMediaPoll) postMedia, pollMessage);
         } else {
             pollView.setVisibility(GONE);
         }
 
-        if (isPoll) {
-            // Уже полностью обработано выше — карусель/аудио опросу не нужны.
-        } else if (isVoiceOrMusic) {
+        // Раньше карусель у постов с опросом принудительно скрывалась (hideCarousel())
+        // безусловно, из-за чего медиа соседних сообщений той же группы никогда не
+        // показывалось, даже если оно реально есть (баг, замеченный пользователем —
+        // в самом канале медиа видно, а в ленте нет). Опрос и медиа не взаимоисключающие
+        // друг друга — просто дальше используется тот же самый mediaMessages/carousel
+        // путь, что и для обычных постов, независимо от isPoll.
+        if (isVoiceOrMusic) {
             hideCarousel();
             if (audioCell.getParent() == null) {
                 audioContainer.addView(audioCell, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
@@ -732,6 +766,68 @@ public class PotokFeedPostCell extends LinearLayout {
         updateAudioTimeText(currentMessage);
     }
 
+    /**
+     * Тот же паттерн, что и updateAudioProgressIfPlaying выше: PotokFeedFragment
+     * подписан на NotificationCenter.didUpdatePollResults централизованно (один раз
+     * на фрагмент) и рассылает по всем реально видимым сейчас ячейкам ленты — эта
+     * ячейка перерисовывает опрос, только если он у неё сейчас реально показан
+     * (id опроса совпадает), в точности как обрабатывает то же самое уведомление
+     * ChatActivity.didReceivedNotification для обычных чатов.
+     */
+    public void updatePollIfMatching(long pollId, TLRPC.TL_poll poll, TLRPC.PollResults results) {
+        if (pollMessageObject == null || pollMessageObject.getPollId() != pollId) return;
+        TLRPC.TL_messageMediaPoll media = (TLRPC.TL_messageMediaPoll) pollMessageObject.messageOwner.media;
+        if (poll != null) {
+            media.poll = poll;
+        }
+        MessageObject.updatePollResults(media, results);
+        pollView.bind(media, pollMessageObject);
+    }
+
+    /** Входит ли сообщение с этим id в пост, который сейчас показывает эта ячейка. */
+    public boolean containsMessageId(int messageId) {
+        if (currentMessages != null) {
+            for (MessageObject mo : currentMessages) {
+                if (mo != null && mo.getId() == messageId) return true;
+            }
+        }
+        return currentMessage != null && currentMessage.getId() == messageId;
+    }
+
+    /**
+     * ImageReceiver конкретного медиа-сообщения из карусели поста — нужен
+     * PotokFeedFragment.getPlaceForPhoto() (см. там) для анимации "разворота"
+     * PhotoViewer из миниатюры в полный экран (и обратно), один в один с тем, как
+     * это делает getPlaceForPhoto в самом ChatActivity для ChatMessageCell.
+     * Возвращает null, если это медиа сейчас реально не видно на экране (карусель
+     * прокручена дальше, или ViewHolder ещё не создан) — тогда PhotoViewer просто
+     * откроется без анимации разворота, как и раньше, без падений.
+     */
+    public ImageReceiver getPhotoImageForMessage(MessageObject mo) {
+        if (mo == null || carouselAdapter == null || carouselView == null || carouselView.getVisibility() != VISIBLE) {
+            return null;
+        }
+        int index = -1;
+        for (int i = 0; i < carouselAdapter.items.size(); i++) {
+            MessageObject item = carouselAdapter.items.get(i);
+            if (item != null && item.getId() == mo.getId()) {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) return null;
+        int childCount = carouselView.getChildCount();
+        for (int i = 0; i < childCount; i++) {
+            View child = carouselView.getChildAt(i);
+            if (carouselView.getChildAdapterPosition(child) != index) continue;
+            RecyclerView.ViewHolder vh = carouselView.getChildViewHolder(child);
+            if (vh instanceof CarouselAdapter.MediaHolder) {
+                return ((CarouselAdapter.MediaHolder) vh).img.getImageReceiver();
+            }
+        }
+        return null;
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private int calcMediaHeight(MessageObject mo) {
@@ -767,14 +863,25 @@ public class PotokFeedPostCell extends LinearLayout {
         if (mo == null || parentActivity == null) return;
         PhotoViewer.getInstance().setParentActivity(parentActivity);
         long dialogId = mo.getDialogId();
+        // Раньше здесь стоял EmptyPhotoViewerProvider — он намеренно НЕ даёт PhotoViewer
+        // никакой информации об исходной миниатюре (getPlaceForPhoto у него всегда
+        // возвращает null), из-за чего просмотрщик открывался/закрывался простым
+        // появлением/исчезновением без анимации "разворота" из карточки. Теперь
+        // передаём провайдер, который умеет найти реальный ImageReceiver миниатюры в
+        // карусели ленты (см. PotokFeedFragment.getPhotoViewerProvider() /
+        // getPlaceForPhoto()) — тот же самый механизм getPlaceForPhoto, которым в
+        // самом ChatActivity анимируется открытие фото/видео из обычного чата.
+        PhotoViewer.PhotoViewerProvider provider = (parentFragment instanceof org.telegram.ui.PotokFeedFragment)
+            ? ((org.telegram.ui.PotokFeedFragment) parentFragment).getPhotoViewerProvider()
+            : new PhotoViewer.EmptyPhotoViewerProvider();
         if (all != null && all.size() > 1) {
             // Группа из нескольких медиа (альбом) — открываем со списком и индексом,
             // независимо от того видео это или фото, чтобы PhotoViewer мог свайпать
             // между элементами и правильно инициализировать видеоплеер в контексте группы.
-            PhotoViewer.getInstance().openPhoto(all, index, dialogId, 0L, 0L, new PhotoViewer.EmptyPhotoViewerProvider());
+            PhotoViewer.getInstance().openPhoto(all, index, dialogId, 0L, 0L, provider);
         } else {
             // Одиночное медиа — старая логика подходит, отдельный путь для видео не нужен
-            PhotoViewer.getInstance().openPhoto(mo, dialogId, 0, 0, new PhotoViewer.EmptyPhotoViewerProvider(), true);
+            PhotoViewer.getInstance().openPhoto(mo, dialogId, 0, 0, provider, true);
         }
     }
 
@@ -871,22 +978,41 @@ public class PotokFeedPostCell extends LinearLayout {
         }
         if (!cachedFilesToDelete.isEmpty()) {
             final int deleteAccount = groupMessages.get(0).currentAccount;
+            long totalDeleteSize = 0;
+            for (java.io.File f : cachedFilesToDelete) totalDeleteSize += f.length();
+            final long finalTotalDeleteSize = totalDeleteSize;
+            // Название для диалога: если файл один — его реальное имя (как в
+            // референсе Plus Messenger), если несколько — просто количество.
+            final String deleteLabel = cachedFilesToDelete.size() == 1
+                ? cachedFilesToDelete.get(0).getName()
+                : cachedFilesToDelete.size() + " файлов";
             ActionBarMenuSubItem clearCache = new ActionBarMenuSubItem(getContext(), idx == 0, false, null);
             clearCache.setMinimumWidth(AndroidUtilities.dp(200));
             clearCache.setTextAndIcon("Удалить из кэша", org.telegram.messenger.R.drawable.msg_clearcache);
             layout.addView(clearCache);
             clearCache.setOnClickListener(v -> {
                 if (postMenuWindow != null) postMenuWindow.dismiss();
-                FileLoader.getInstance(deleteAccount).deleteFiles(cachedFilesToDelete, 0);
-                // Видео в этом посте (если было) было проигрываемым напрямую из кэша —
-                // теперь файла нет, нужно перепривязать карусель, чтобы плашка загрузки
-                // появилась заново (тот же путь, что и notifyItemChanged после докачки,
-                // см. CarouselAdapter — но здесь вызов идёт из клика по меню, а не из
-                // асинхронного колбэка загрузки, так что мы НЕ внутри layout/scroll
-                // прохода RecyclerView и notifyDataSetChanged() безопасен напрямую).
-                if (carouselAdapter != null) {
-                    carouselAdapter.notifyDataSetChanged();
-                }
+                // Подтверждение "Да/Отмена" перед реальным удалением — по образцу
+                // Plus Messenger, который пользователь прислал как референс: тот же
+                // текст ("Удалить из кэша" / имя файла / "Очистить X?" / "Вы можете
+                // скачать файл позже"), но с явным выбором вместо одной кнопки "OK".
+                AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
+                builder.setTitle("Удалить из кэша");
+                builder.setMessage(deleteLabel + "\n\nОчистить " + AndroidUtilities.formatFileSize(finalTotalDeleteSize) + "?\n\nВы можете скачать файл позже");
+                builder.setNegativeButton("Отмена", null);
+                builder.setPositiveButton("Да", (d, w) -> {
+                    FileLoader.getInstance(deleteAccount).deleteFiles(cachedFilesToDelete, 0);
+                    // Видео в этом посте (если было) было проигрываемым напрямую из кэша —
+                    // теперь файла нет, нужно перепривязать карусель, чтобы плашка загрузки
+                    // появилась заново (тот же путь, что и notifyItemChanged после докачки,
+                    // см. CarouselAdapter — но здесь вызов идёт из клика по меню, а не из
+                    // асинхронного колбэка загрузки, так что мы НЕ внутри layout/scroll
+                    // прохода RecyclerView и notifyDataSetChanged() безопасен напрямую).
+                    if (carouselAdapter != null) {
+                        carouselAdapter.notifyDataSetChanged();
+                    }
+                });
+                builder.show();
             });
             idx++;
         }
@@ -1210,6 +1336,12 @@ public class PotokFeedPostCell extends LinearLayout {
                 java.io.File cacheFile = FileLoader.getInstance(mo.currentAccount).getPathToAttach(document, false);
                 boolean fileExists = cacheFile != null && cacheFile.exists();
                 boolean canDecodeFromVideo = !mo.isRepostPreview && fileExists && mo.canStreamVideo();
+                // Настройка "Скачивать видео" из меню трёх точек (по умолчанию включена).
+                // Если выключена и сам видеофайл ещё не докачан пользователем вручную —
+                // НЕ подгружаем даже полноразмерный статичный превью-кадр с сервера сам
+                // по себе (это отдельный сетевой запрос за картинкой) — только маленький
+                // стрип-thumb, который и так приходит вместе с самим сообщением бесплатно.
+                boolean videoAutoload = PotokFeedFragment.isAutoloadVideoEnabled(getContext());
                 if (canDecodeFromVideo) {
                     img.getImageReceiver().setAllowDecodeSingleFrame(true);
                     img.getImageReceiver().setAllowStartAnimation(false);
@@ -1218,6 +1350,15 @@ public class PotokFeedPostCell extends LinearLayout {
                         ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
                         ImageLocation.getForObject(currentPhotoObjectThumb, document), currentPhotoFilterThumb,
                         strippedThumb, document.size, (String) null, mo, 0
+                    );
+                } else if (!videoAutoload && !fileExists) {
+                    // Автозагрузка выключена — только стрип-thumb/маленькая миниатюра,
+                    // без полноразмерного превью. Тап по кадру (openMediaViewer, см. ниже)
+                    // всё равно скачает и покажет видео целиком независимо от этой настройки.
+                    img.setImage(
+                        currentPhotoObjectThumb != null ? ImageLocation.getForObject(currentPhotoObjectThumb, document) : null, currentPhotoFilterThumb,
+                        (ImageLocation) null, (String) null,
+                        strippedThumb, (String) null, 0, 0, mo
                     );
                 } else if (currentPhotoObjectThumb != null || strippedThumb != null) {
                     // 10-param: mediaLocation, mediaFilter, imageLocation, imageFilter, thumbLocation, thumbFilter, ext, size, cacheType, parentObject
@@ -1269,11 +1410,27 @@ public class PotokFeedPostCell extends LinearLayout {
                 TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
                 if (photoSize == null) photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
                 TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50, false, null, true);
-                img.setImage(
-                    ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
-                    thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50",
-                    (Drawable) null, (String) null, 0, 0, mo
-                );
+                // Настройка "Скачивать фото" (по умолчанию включена). Если выключена И
+                // полноразмерное фото ещё не лежит в кэше — грузим только маленький
+                // thumbSize ("50_50", уже скачан вместе с сообщением или качается почти
+                // бесплатно из-за крошечного размера) вместо полноразмерного photoSize.
+                // Тап по фото (openMediaViewer, см. ниже) всё равно скачивает и
+                // показывает полный размер независимо от этой настройки.
+                boolean photoAutoload = PotokFeedFragment.isAutoloadPhotoEnabled(getContext());
+                mo.checkMediaExistance(false);
+                if (photoAutoload || mo.mediaExists) {
+                    img.setImage(
+                        ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
+                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50",
+                        (Drawable) null, (String) null, 0, 0, mo
+                    );
+                } else {
+                    img.setImage(
+                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50",
+                        (ImageLocation) null, (String) null,
+                        (Drawable) null, (String) null, 0, 0, mo
+                    );
+                }
             }
 
             final int idx = position;
@@ -1351,6 +1508,21 @@ public class PotokFeedPostCell extends LinearLayout {
         private String sizeText = "";
         private String progressText = "";
 
+        // measuredContentWidth — фактическая ширина, которую плашка заявляет системе
+        // компоновки (то, что вернёт onMeasure). Растёт МГНОВЕННО, как только новому
+        // тексту не хватает места (это безопасно — канвас становится шире, обрезать
+        // нечего), а уменьшается только ПОСЛЕ того, как анимация до нового (меньшего)
+        // значения полностью доиграет в onDraw — иначе границы View схлопнулись бы
+        // раньше, чем анимация закончится, и обрезали бы недорисованный текст.
+        // -1 — ещё ни разу не считалось (до первого bind()).
+        private int measuredContentWidth = -1;
+        private final RectF bgRect = new RectF();
+        private final Paint bgPaint;
+        // animatedWidth анимирует ТОЛЬКО визуально нарисованную ширину подложки в
+        // onDraw (см. там) — реальные границы View (measuredContentWidth) меняются
+        // отдельно по правилам выше, а не одномоментно с текстом, как было раньше.
+        private final AnimatedFloat animatedWidth;
+
         VideoDownloadPlate(Context context) {
             super(context);
             radialProgress = new RadialProgress2(this);
@@ -1375,10 +1547,13 @@ public class PotokFeedPostCell extends LinearLayout {
             textPaint.setTextSize(dp(11));
             textPaint.setTypeface(AndroidUtilities.bold());
 
-            android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-            bg.setColor(0x99000000);
-            bg.setCornerRadius(dp(14));
-            setBackground(bg);
+            // Фон рисуем вручную в onDraw (см. там), а не через setBackground —
+            // setBackground всегда закрашивает ровно текущие границы View целиком, а
+            // подложке нужно уметь анимированно менять ширину независимо от реальных
+            // границ (см. measuredContentWidth/animatedWidth выше).
+            bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            bgPaint.setColor(0x99000000);
+            animatedWidth = new AnimatedFloat(this, 220, CubicBezierInterpolator.EASE_OUT);
 
             TAG = DownloadController.getInstance(UserConfig.selectedAccount).generateObserverTag();
             setOnClickListener(v -> onClick());
@@ -1402,7 +1577,28 @@ public class PotokFeedPostCell extends LinearLayout {
             sizeText = AndroidUtilities.formatFileSize(doc.size);
             progressText = sizeText;
 
+            // Ячейка переиспользуется RecyclerView'ом под другой пост — ширина здесь
+            // не "переход состояния внутри одного поста", а смена контента целиком,
+            // поэтому выставляем её МГНОВЕННО (force), без анимации между чужими
+            // друг другу значениями.
+            measuredContentWidth = computeDesiredWidth();
+            animatedWidth.force(measuredContentWidth);
+
             updateState(false);
+        }
+
+        // Общая формула ширины подложки под текущий текст (длительность + вторая
+        // строка — прогресс или статичный размер). Вызывается и из onMeasure (что
+        // фактически заявлено системе компоновки), и из syncWidth() (что реально
+        // нужно ПРЯМО СЕЙЧАС по актуальному тексту).
+        private int computeDesiredWidth() {
+            float w1 = textPaint.measureText(durationText);
+            String secondLine = buttonState == 1 ? progressText : sizeText;
+            float w2 = textPaint.measureText(secondLine);
+            int textWidth = (int) Math.ceil(Math.max(w1, w2));
+            // Симметрия: правый паддинг (текст -> край) точно равен левому (край -> иконка),
+            // оба PAD_H. Слева иконка тоже центрирована в своей области (см. onSizeChanged).
+            return PAD_H + ICON_AREA + GAP + textWidth + PAD_H;
         }
 
         void unbind() {
@@ -1454,13 +1650,14 @@ public class PotokFeedPostCell extends LinearLayout {
                 }
             }
             // Подложка должна быть адаптивной по ширине под текущий текст (как в
-            // оригинале), а не зарезервированной заранее под "худший случай". Пересчёт
-            // размера — только здесь, на реальных переходах состояния (появилась/пропала
-            // плашка, начало/остановка закачки), а НЕ на каждый тик прогресса — тики
-            // (onProgressDownload) обновляют текст и зовут invalidate() напрямую, минуя
-            // updateState(), поэтому requestLayout() не спамится 20 раз в секунду.
-            requestLayout();
-            invalidate();
+            // оригинале), а не зарезервированной заранее под "худший случай". Раньше
+            // requestLayout() звался здесь только на переходах состояния, а тики
+            // прогресса (onProgressDownload) обновляли текст напрямую, минуя пересчёт
+            // ширины — из-за этого при докачке текст ("2,5 MB / 5 MB") становился
+            // длиннее подложки, замеренной ещё под короткое "0 B / 5 MB", и обрезался.
+            // syncWidth() теперь пересчитывает ширину на КАЖДОМ изменении текста —
+            // и здесь, и на каждом тике прогресса (см. onProgressDownload).
+            syncWidth();
         }
 
         private void onClick() {
@@ -1480,23 +1677,33 @@ public class PotokFeedPostCell extends LinearLayout {
             }
         }
 
+        // Вызывается при любом реальном изменении текста второй строки: и из
+        // updateState() (переход состояния), и из onProgressDownload() (каждый тик
+        // закачки). Раньше тик прогресса не пересчитывал ширину вообще — отсюда и
+        // была обрезка текста.
+        private void syncWidth() {
+            int desired = computeDesiredWidth();
+            if (measuredContentWidth < 0 || desired > measuredContentWidth) {
+                // Расширяем МГНОВЕННО — канвас становится шире, обрезать нечего, а
+                // визуальный рост подложки всё равно доиграет через animatedWidth в
+                // onDraw (см. там).
+                measuredContentWidth = desired;
+                requestLayout();
+            }
+            // Если desired МЕНЬШЕ текущего — реальные границы View пока не трогаем:
+            // тронуть их сейчас значило бы обрезать canvas раньше, чем анимация
+            // сужения доиграет. Это доделает сам onDraw(), когда animatedWidth дойдёт
+            // до цели (см. проверку в конце onDraw).
+            invalidate();
+        }
+
         @Override
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            float w1 = textPaint.measureText(durationText);
-            // Меряем по РЕАЛЬНО показываемой сейчас второй строке (как в оригинале —
-            // подложка адаптивна и меняет размер при смене состояния/контента), а не по
-            // заранее зарезервированному "худшему случаю". requestLayout() зовётся из
-            // updateState() только на настоящих переходах состояния (см. там), поэтому
-            // это не пересчитывается на каждый тик прогресса — ширина "прыгает" только
-            // в моменты смены состояния, один в один как в оригинальном Telegram.
-            String secondLine = buttonState == 1 ? progressText : sizeText;
-            float w2 = textPaint.measureText(secondLine);
-            int textWidth = (int) Math.ceil(Math.max(w1, w2));
-            // Симметрия: правый паддинг (текст -> край) точно равен левому (край -> иконка),
-            // оба PAD_H. Слева иконка тоже центрирована в своей области (см. onSizeChanged).
-            int width = PAD_H + ICON_AREA + GAP + textWidth + PAD_H;
+            if (measuredContentWidth < 0) {
+                measuredContentWidth = computeDesiredWidth();
+            }
             int height = PAD_V + ICON_AREA + PAD_V;
-            setMeasuredDimension(width, height);
+            setMeasuredDimension(measuredContentWidth, height);
         }
 
         @Override
@@ -1508,36 +1715,52 @@ public class PotokFeedPostCell extends LinearLayout {
 
         @Override
         protected void onDraw(Canvas canvas) {
+            // Целевая ширина берётся из АКТУАЛЬНОГО текста прямо сейчас (а не из
+            // measuredContentWidth, который может быть шире — см. syncWidth) — именно
+            // к этому значению едет анимация подложки.
+            int targetWidth = computeDesiredWidth();
+            float drawWidth = animatedWidth.set(targetWidth);
+            bgRect.set(0, 0, drawWidth, getHeight());
+            canvas.drawRoundRect(bgRect, dp(14), dp(14), bgPaint);
+
             radialProgress.draw(canvas);
             // Во время закачки вторая строка — живой прогресс, иначе — статичный
             // полный размер файла (см. updateState()/onProgressDownload()).
             String secondLine = buttonState == 1 ? progressText : sizeText;
-            if (TextUtils.isEmpty(durationText) && TextUtils.isEmpty(secondLine)) {
-                return;
+            if (!TextUtils.isEmpty(durationText) || !TextUtils.isEmpty(secondLine)) {
+                float textX = PAD_H + ICON_AREA + GAP;
+                float centerY = getHeight() / 2f;
+                // Симметрия по вертикали: раньше строки позиционировались через грубое
+                // приближение (centerY ± фиксированный dp), из-за чего блок текста
+                // визуально "провисал" ниже центра плашки и сидел ближе к нижнему краю,
+                // чем к верхнему — это и была замеченная асимметрия. Теперь блок из
+                // одной/двух строк целиком центрируется вокруг centerY через реальные
+                // метрики шрифта (ascent/descent), точно как центрируется иконка слева
+                // (top = (h - ICON_AREA) / 2, см. onSizeChanged) — оба элемента получают
+                // одинаковые отступы сверху/снизу от центра плашки.
+                Paint.FontMetrics fm = textPaint.getFontMetrics();
+                float lineH = fm.descent - fm.ascent;
+                float lineGap = dp(2);
+                if (!TextUtils.isEmpty(durationText) && !TextUtils.isEmpty(secondLine)) {
+                    float blockTop = centerY - (2 * lineH + lineGap) / 2f;
+                    float baseline1 = blockTop - fm.ascent;
+                    float baseline2 = baseline1 + lineH + lineGap;
+                    canvas.drawText(durationText, textX, baseline1, textPaint);
+                    canvas.drawText(secondLine, textX, baseline2, textPaint);
+                } else {
+                    String single = !TextUtils.isEmpty(durationText) ? durationText : secondLine;
+                    float baseline = centerY - (fm.ascent + fm.descent) / 2f;
+                    canvas.drawText(single, textX, baseline, textPaint);
+                }
             }
-            float textX = PAD_H + ICON_AREA + GAP;
-            float centerY = getHeight() / 2f;
-            // Симметрия по вертикали: раньше строки позиционировались через грубое
-            // приближение (centerY ± фиксированный dp), из-за чего блок текста
-            // визуально "провисал" ниже центра плашки и сидел ближе к нижнему краю,
-            // чем к верхнему — это и была замеченная асимметрия. Теперь блок из
-            // одной/двух строк целиком центрируется вокруг centerY через реальные
-            // метрики шрифта (ascent/descent), точно как центрируется иконка слева
-            // (top = (h - ICON_AREA) / 2, см. onSizeChanged) — оба элемента получают
-            // одинаковые отступы сверху/снизу от центра плашки.
-            Paint.FontMetrics fm = textPaint.getFontMetrics();
-            float lineH = fm.descent - fm.ascent;
-            float lineGap = dp(2);
-            if (!TextUtils.isEmpty(durationText) && !TextUtils.isEmpty(secondLine)) {
-                float blockTop = centerY - (2 * lineH + lineGap) / 2f;
-                float baseline1 = blockTop - fm.ascent;
-                float baseline2 = baseline1 + lineH + lineGap;
-                canvas.drawText(durationText, textX, baseline1, textPaint);
-                canvas.drawText(secondLine, textX, baseline2, textPaint);
-            } else {
-                String single = !TextUtils.isEmpty(durationText) ? durationText : secondLine;
-                float baseline = centerY - (fm.ascent + fm.descent) / 2f;
-                canvas.drawText(single, textX, baseline, textPaint);
+
+            if (!animatedWidth.isInProgress() && measuredContentWidth != targetWidth) {
+                // Анимация сужения подложки доиграла — теперь можно безопасно уменьшить
+                // реальные границы View до фактической цели. Делать это раньше (сразу
+                // на смене текста) было бы неверно: границы схлопнулись бы ДО того, как
+                // анимация закончится, и обрезали бы недорисованный кадр.
+                measuredContentWidth = targetWidth;
+                post(() -> requestLayout());
             }
         }
 
@@ -1564,7 +1787,13 @@ public class PotokFeedPostCell extends LinearLayout {
             if (buttonState != 1) {
                 updateState(true);
             } else {
-                invalidate();
+                // Раньше здесь звался только invalidate() — текст обновлялся, а
+                // ширина подложки нет, отсюда и была обрезка на каждом тике закачки.
+                // syncWidth() пересчитывает ширину на каждом тике; сама перерисовка
+                // при этом не "спамит" requestLayout 20 раз в секунду — расширение
+                // происходит мгновенно только когда реально нужно больше места, а
+                // визуальная анимация — забота animatedWidth в onDraw.
+                syncWidth();
             }
         }
 
@@ -1740,7 +1969,12 @@ public class PotokFeedPostCell extends LinearLayout {
         private final TextView questionView;
         private final LinearLayout answersContainer;
         private final TextView votersView;
+        private final TextView voteButton;
         private final ArrayList<PollAnswerRow> rows = new ArrayList<>();
+        private final ArrayList<TLRPC.PollAnswer> selectedAnswers = new ArrayList<>();
+        private MessageObject messageObject;
+        private TLRPC.TL_messageMediaPoll media;
+        private boolean sendingVote = false;
 
         PollView(Context context, Theme.ResourcesProvider resourcesProvider) {
             super(context);
@@ -1762,17 +1996,37 @@ public class PotokFeedPostCell extends LinearLayout {
             answersContainer.setOrientation(VERTICAL);
             addView(answersContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 10, 0, 0));
 
+            // Кнопка "Проголосовать" — видна только для многовариантных опросов ДО
+            // голосования (одиночный выбор голосует сразу по тапу на вариант, как в
+            // оригинальном Telegram — отдельная кнопка ему не нужна).
+            voteButton = new TextView(context);
+            voteButton.setTextSize(14);
+            voteButton.setTypeface(AndroidUtilities.bold());
+            voteButton.setGravity(Gravity.CENTER);
+            voteButton.setText("Проголосовать");
+            voteButton.setPadding(0, dp(10), 0, dp(10));
+            voteButton.setVisibility(GONE);
+            voteButton.setOnClickListener(v -> {
+                if (!selectedAnswers.isEmpty()) {
+                    submitVote(new ArrayList<>(selectedAnswers));
+                }
+            });
+            addView(voteButton, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
+
             votersView = new TextView(context);
             votersView.setTextSize(13);
             votersView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
             addView(votersView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 8, 0, 0));
         }
 
-        void bind(TLRPC.TL_messageMediaPoll media) {
-            if (media == null || media.poll == null) {
+        void bind(TLRPC.TL_messageMediaPoll media, MessageObject messageObject) {
+            if (media == null || media.poll == null || messageObject == null) {
                 setVisibility(GONE);
                 return;
             }
+            this.media = media;
+            this.messageObject = messageObject;
+            selectedAnswers.clear();
             TLRPC.Poll poll = media.poll;
             TLRPC.PollResults results = media.results;
 
@@ -1793,6 +2047,12 @@ public class PotokFeedPostCell extends LinearLayout {
             typeLabel.setText(type);
             questionView.setText(poll.question != null ? poll.question.text : "");
 
+            // Режим голосования (чекбоксы, без процентов) — пока пользователь не
+            // проголосовал и опрос не завершён, один в один как в самом канале
+            // (см. скрины пользователя: до голоса — пустые строки с чекбоксами и
+            // кнопкой "Проголосовать", после — шкалы с процентами).
+            boolean votingMode = !messageObject.isVoted() && !poll.closed;
+
             int totalVoters = results != null ? results.total_voters : 0;
             java.util.Map<String, TLRPC.PollAnswerVoters> votersByOption = new java.util.HashMap<>();
             boolean hasResults = results != null && results.results != null;
@@ -1812,14 +2072,23 @@ public class PotokFeedPostCell extends LinearLayout {
                     PollAnswerRow row = new PollAnswerRow(getContext(), resourcesProvider);
                     TLRPC.PollAnswerVoters voters = answer.option != null ? votersByOption.get(bytesToKey(answer.option)) : null;
                     int optionVotes = voters != null ? voters.voters : 0;
-                    int percent = (hasResults && totalVoters > 0) ? Math.round(100f * optionVotes / totalVoters) : -1;
+                    int percent = (!votingMode && hasResults && totalVoters > 0) ? Math.round(100f * optionVotes / totalVoters) : -1;
                     boolean chosen = voters != null && voters.chosen;
                     boolean correct = voters != null && voters.correct;
-                    row.bind(answer.text != null ? answer.text.text : "", percent, chosen, correct && poll.quiz);
+                    row.bind(answer.text != null ? answer.text.text : "", percent, chosen, correct && poll.quiz, votingMode, poll.multiple_choice);
+                    if (votingMode) {
+                        row.setOnClickListener(v -> onRowTapped(answer, poll, row));
+                    } else {
+                        row.setOnClickListener(null);
+                        row.setClickable(false);
+                    }
                     answersContainer.addView(row, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 0, 0, 6));
                     rows.add(row);
                 }
             }
+
+            voteButton.setVisibility(votingMode && poll.multiple_choice ? VISIBLE : GONE);
+            updateVoteButtonState();
 
             if (totalVoters > 0) {
                 votersView.setVisibility(VISIBLE);
@@ -1829,6 +2098,53 @@ public class PotokFeedPostCell extends LinearLayout {
             }
 
             setVisibility(VISIBLE);
+        }
+
+        /**
+         * Одиночный выбор — голос уходит сразу по тапу (как в оригинале, отдельной
+         * кнопки не требуется). Множественный выбор — тап только переключает
+         * чекбокс, реальная отправка — по кнопке "Проголосовать".
+         */
+        private void onRowTapped(TLRPC.PollAnswer answer, TLRPC.Poll poll, PollAnswerRow row) {
+            if (sendingVote || messageObject == null) return;
+            if (poll.multiple_choice) {
+                boolean nowSelected = !selectedAnswers.contains(answer);
+                if (nowSelected) {
+                    selectedAnswers.add(answer);
+                } else {
+                    selectedAnswers.remove(answer);
+                }
+                row.setSelectedForVote(nowSelected);
+                updateVoteButtonState();
+            } else {
+                ArrayList<TLRPC.PollAnswer> answers = new ArrayList<>();
+                answers.add(answer);
+                submitVote(answers);
+            }
+        }
+
+        private void updateVoteButtonState() {
+            boolean enabled = !selectedAnswers.isEmpty() && !sendingVote;
+            voteButton.setAlpha(enabled ? 1f : 0.5f);
+            voteButton.setEnabled(enabled);
+            voteButton.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider));
+        }
+
+        private void submitVote(ArrayList<TLRPC.PollAnswer> answers) {
+            if (messageObject == null) return;
+            sendingVote = true;
+            updateVoteButtonState();
+            // Реальный API-вызов — TL_messages_sendVote, тот же самый метод, которым
+            // голосует сам оригинальный Telegram-клиент. Ответ сервера приходит через
+            // MessagesController.processUpdates() -> NotificationCenter.didUpdatePollResults,
+            // на который подписан PotokFeedFragment (см. PotokFeedPostCell.updatePollIfMatching) —
+            // именно оттуда прилетит перерисовка с уже посчитанными процентами, а не
+            // отсюда напрямую, чтобы результат совпадал с тем, что реально подтвердил сервер.
+            org.telegram.messenger.SendMessagesHelper.getInstance(messageObject.currentAccount)
+                .sendVote(messageObject, answers, () -> {
+                    sendingVote = false;
+                    updateVoteButtonState();
+                });
         }
 
         /** byte[] нельзя использовать как ключ HashMap напрямую (сравнение по ссылке) — переводим в строку. */
@@ -1847,44 +2163,72 @@ public class PotokFeedPostCell extends LinearLayout {
      */
     private static class PollAnswerRow extends View {
         private static final int HEIGHT = dp(38);
+        private static final int CHECK_SIZE = dp(20);
         private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint checkBorderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint checkFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint checkMarkPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final android.text.TextPaint textPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
         private final android.text.TextPaint percentPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
         private final int normalTextColor;
         private final int accentColor;
         private final int neutralFillColor;
+        private final int neutralBorderColor;
         private String optionText = "";
         private int percent = -1; // -1 = результаты ещё не видны, рисуем просто строку без шкалы
         private boolean highlighted = false;
+        // --- режим голосования (до отправки голоса) ---
+        private boolean votingMode = false;
+        private boolean multipleChoice = false;
+        private boolean selectedForVote = false;
 
         PollAnswerRow(Context context, Theme.ResourcesProvider resourcesProvider) {
             super(context);
             normalTextColor = Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider);
             accentColor = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider);
             neutralFillColor = Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider);
-            int dividerColor = Theme.getColor(Theme.key_divider, resourcesProvider);
+            neutralBorderColor = Theme.getColor(Theme.key_divider, resourcesProvider);
 
             borderPaint.setStyle(Paint.Style.STROKE);
             borderPaint.setStrokeWidth(dp(1));
-            borderPaint.setColor(dividerColor);
+            borderPaint.setColor(neutralBorderColor);
 
             fillPaint.setStyle(Paint.Style.FILL);
+
+            checkBorderPaint.setStyle(Paint.Style.STROKE);
+            checkBorderPaint.setStrokeWidth(dp(1.5f));
+            checkFillPaint.setStyle(Paint.Style.FILL);
+            checkMarkPaint.setStyle(Paint.Style.STROKE);
+            checkMarkPaint.setStrokeWidth(dp(2));
+            checkMarkPaint.setStrokeCap(Paint.Cap.ROUND);
+            checkMarkPaint.setStrokeJoin(Paint.Join.ROUND);
+            checkMarkPaint.setColor(0xFFFFFFFF);
 
             textPaint.setTextSize(dp(14));
             percentPaint.setTextSize(dp(14));
             percentPaint.setTypeface(AndroidUtilities.bold());
         }
 
-        void bind(String text, int percentValue, boolean chosen, boolean correctQuizAnswer) {
+        void bind(String text, int percentValue, boolean chosen, boolean correctQuizAnswer, boolean votingMode, boolean multipleChoice) {
             optionText = text != null ? text : "";
             percent = percentValue;
             highlighted = chosen || correctQuizAnswer;
+            this.votingMode = votingMode;
+            this.multipleChoice = multipleChoice;
+            this.selectedForVote = false;
             int color = highlighted ? accentColor : normalTextColor;
             textPaint.setColor(color);
             percentPaint.setColor(color);
             fillPaint.setColor(((highlighted ? accentColor : neutralFillColor) & 0x00FFFFFF) | 0x33000000);
+            setClickable(votingMode);
             requestLayout();
+            invalidate();
+        }
+
+        /** Вызывается из PollView при тапе на чекбокс в режиме множественного выбора. */
+        void setSelectedForVote(boolean selected) {
+            selectedForVote = selected;
             invalidate();
         }
 
@@ -1899,6 +2243,43 @@ public class PotokFeedPostCell extends LinearLayout {
             int w = getWidth(), h = getHeight();
             float radius = h / 2f;
             RectF rect = new RectF(dp(0.5f), dp(0.5f), w - dp(0.5f), h - dp(0.5f));
+
+            // Режим голосования — до отправки: только рамка строки и чекбокс слева
+            // (круг для одиночного выбора, квадрат для множественного — как в самом
+            // канале), без шкалы процентов и без текста результатов.
+            if (votingMode) {
+                canvas.drawRoundRect(rect, radius, radius, borderPaint);
+                float cy = h / 2f;
+                float checkLeft = dp(10);
+                float checkTop = cy - CHECK_SIZE / 2f;
+                boolean checked = multipleChoice ? selectedForVote : false;
+                checkFillPaint.setColor(accentColor);
+                checkBorderPaint.setColor(checked ? accentColor : neutralBorderColor);
+                if (multipleChoice) {
+                    // Квадрат (со скруглёнными углами) — множественный выбор.
+                    RectF box = new RectF(checkLeft, checkTop, checkLeft + CHECK_SIZE, checkTop + CHECK_SIZE);
+                    if (checked) {
+                        canvas.drawRoundRect(box, dp(4), dp(4), checkFillPaint);
+                        float m = dp(4.5f);
+                        canvas.drawLine(box.left + m, box.top + CHECK_SIZE / 2f, box.left + CHECK_SIZE / 2f - dp(1), box.bottom - m, checkMarkPaint);
+                        canvas.drawLine(box.left + CHECK_SIZE / 2f - dp(1), box.bottom - m, box.right - m + dp(1), box.top + m, checkMarkPaint);
+                    } else {
+                        canvas.drawRoundRect(box, dp(4), dp(4), checkBorderPaint);
+                    }
+                } else {
+                    // Круг — одиночный выбор (сам выбор отправляется сразу по тапу,
+                    // поэтому "включённого" состояния тут по факту не бывает — рисуем
+                    // просто пустой кружок-индикатор варианта, как в оригинале).
+                    float ccx = checkLeft + CHECK_SIZE / 2f, ccy = cy, cr = CHECK_SIZE / 2f;
+                    canvas.drawCircle(ccx, ccy, cr, checkBorderPaint);
+                }
+                float textX = checkLeft + CHECK_SIZE + dp(10);
+                Paint.FontMetrics fm = textPaint.getFontMetrics();
+                float baseline = h / 2f - (fm.ascent + fm.descent) / 2f;
+                CharSequence ellipsized = TextUtils.ellipsize(optionText, textPaint, Math.max(0, w - textX - dp(14)), TextUtils.TruncateAt.END);
+                canvas.drawText(ellipsized, 0, ellipsized.length(), textX, baseline, textPaint);
+                return;
+            }
 
             // Заливка-шкала пропорционально проценту — рисуется ДО рамки и текста,
             // поэтому не перекрывает их. Рисуется только когда результаты видны

@@ -47,6 +47,7 @@ import org.telegram.ui.Components.MediaActionDrawable;
 import org.telegram.ui.Components.RadialProgress2;
 import org.telegram.ui.Components.SeekBar;
 import org.telegram.ui.PhotoViewer;
+import org.telegram.ui.PotokFeedFragment;
 import org.telegram.ui.ChatActivity;
 import org.telegram.ui.DialogsActivity;
 import org.telegram.ui.ActionBar.ActionBarPopupWindow;

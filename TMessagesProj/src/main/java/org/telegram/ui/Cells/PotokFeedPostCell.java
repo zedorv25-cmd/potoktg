@@ -35,6 +35,7 @@ import org.telegram.messenger.ImageReceiver;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.UserConfig;
+import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.AnimatedEmojiDrawable;
@@ -1868,7 +1869,7 @@ public class PotokFeedPostCell extends LinearLayout {
         private final RectF bgRect = new RectF();
         private final int TAG;
         private TLRPC.PhotoSize photoSize;
-        private Object parentObject;
+        private TLObject parentObject;
         private int currentAccount;
         private String fileName;
         private Runnable onReady;
@@ -1898,7 +1899,7 @@ public class PotokFeedPostCell extends LinearLayout {
             setOnClickListener(v -> onClick());
         }
 
-        void bind(TLRPC.PhotoSize size, Object parent, int account, Runnable onReadyCallback) {
+        void bind(TLRPC.PhotoSize size, TLObject parent, int account, Runnable onReadyCallback) {
             unbind();
             photoSize = size;
             parentObject = parent;

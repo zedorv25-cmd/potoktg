@@ -797,15 +797,26 @@ public class PotokFeedPostCell extends LinearLayout {
     }
 
     /**
-     * ImageReceiver конкретного медиа-сообщения из карусели поста — нужен
+     * BackupImageView конкретного медиа-сообщения из карусели поста — нужен
      * PotokFeedFragment.getPlaceForPhoto() (см. там) для анимации "разворота"
-     * PhotoViewer из миниатюры в полный экран (и обратно), один в один с тем, как
-     * это делает getPlaceForPhoto в самом ChatActivity для ChatMessageCell.
+     * PhotoViewer из миниатюры в полный экран (и обратно).
+     *
+     * Раньше метод возвращал только ImageReceiver, а фрагмент брал координаты через
+     * getLocationInWindow() у ЭТОЙ ячейки (PotokFeedPostCell) целиком — это в корне
+     * неверно: в ChatActivity ImageReceiver рисуется прямо в onDraw() самой ячейки
+     * (ChatMessageCell), поэтому там его координаты действительно относительны
+     * ячейке. У нас же фото лежит во ВЛОЖЕННОМ BackupImageView внутри вложенного
+     * RecyclerView (карусели) — координаты ImageReceiver относительны именно этому
+     * BackupImageView, а не всей карточке поста. Из-за этого анимация открытия
+     * "разворачивалась" от верха карточки (шапки канала), а не от самого фото.
+     * Теперь отдаём сам BackupImageView — фрагмент возьмёт его собственные
+     * getLocationInWindow(), а не координаты внешней ячейки.
+     *
      * Возвращает null, если это медиа сейчас реально не видно на экране (карусель
      * прокручена дальше, или ViewHolder ещё не создан) — тогда PhotoViewer просто
-     * откроется без анимации разворота, как и раньше, без падений.
+     * откроется без анимации разворота, без падений.
      */
-    public ImageReceiver getPhotoImageForMessage(MessageObject mo) {
+    public BackupImageView getPhotoImageViewForMessage(MessageObject mo) {
         if (mo == null || carouselAdapter == null || carouselView == null || carouselView.getVisibility() != VISIBLE) {
             return null;
         }
@@ -824,7 +835,7 @@ public class PotokFeedPostCell extends LinearLayout {
             if (carouselView.getChildAdapterPosition(child) != index) continue;
             RecyclerView.ViewHolder vh = carouselView.getChildViewHolder(child);
             if (vh instanceof CarouselAdapter.MediaHolder) {
-                return ((CarouselAdapter.MediaHolder) vh).img.getImageReceiver();
+                return ((CarouselAdapter.MediaHolder) vh).img;
             }
         }
         return null;
@@ -1350,7 +1361,8 @@ public class PotokFeedPostCell extends LinearLayout {
                 // НЕ подгружаем даже полноразмерный статичный превью-кадр с сервера сам
                 // по себе (это отдельный сетевой запрос за картинкой) — только маленький
                 // стрип-thumb, который и так приходит вместе с самим сообщением бесплатно.
-                boolean videoAutoload = PotokFeedFragment.isAutoloadVideoEnabled(getContext());
+                boolean videoAutoload = PotokFeedFragment.isAutoloadVideoEnabled(getContext())
+                    && PotokFeedFragment.isSizeOkForVideoAutoload(document.size);
                 if (canDecodeFromVideo) {
                     // Бесшумное инлайн-автовоспроизведение кэшированного видео — как GIF,
                     // точная копия ветки DOCUMENT_ATTACH_TYPE_VIDEO из оригинального
@@ -1437,40 +1449,47 @@ public class PotokFeedPostCell extends LinearLayout {
                 TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
                 if (photoSize == null) photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
                 TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50, false, null, true);
-                // Настройка "Скачивать фото" (по умолчанию включена). Если выключена И
-                // полноразмерное фото ещё не лежит в кэше — грузим только маленький
-                // thumbSize ("50_50", уже скачан вместе с сообщением или качается почти
-                // бесплатно из-за крошечного размера) вместо полноразмерного photoSize.
-                // Тап по фото (openMediaViewer, см. ниже) всё равно скачивает и
-                // показывает полный размер независимо от этой настройки.
                 boolean photoAutoload = PotokFeedFragment.isAutoloadPhotoEnabled(getContext());
                 mo.checkMediaExistance(false);
                 if (photoAutoload || mo.mediaExists) {
+                    // Автозагрузка включена (или файл и так уже реально в кэше) —
+                    // грузим/показываем штатным путём ImageReceiver: сразу выставляем
+                    // mo.strippedThumb пятым параметром (тот самый клиентский блюр-
+                    // плейсхолдер, приезжающий прямо с сообщением, без сети) — пока
+                    // грузится thumbSize/photoSize, видно ЕГО, а не пустоту. Отдельная
+                    // кнопка загрузки тут не нужна и не должна показываться — фото и
+                    // так грузится само, поэтому оверлей принудительно скрываем/
+                    // отвязываем (раньше он показывался ВСЕГДА, даже когда автозагрузка
+                    // уже сама тащит фото — отсюда и жалоба "фото чёткое, а кнопка есть").
                     img.setImage(
                         ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
                         thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50",
-                        (Drawable) null, (String) null, 0, 0, mo
+                        mo.strippedThumb, (String) null, 0, 0, mo
                     );
+                    holder.photoOverlay.setVisibility(GONE);
+                    holder.photoOverlay.unbind();
                 } else {
+                    // Автозагрузка выключена и файла ещё нет — показываем ТОЛЬКО
+                    // strippedThumb (клиентский блюр-плейсхолдер, уже приехавший с
+                    // сообщением, ни одного лишнего сетевого запроса) — тот самый
+                    // приглушённо-размытый вид недокачанного медиа, как в самом
+                    // Telegram. thumbSize ("50_50") здесь больше не участвует — это
+                    // был мелкий, но НЕ блюрnutый снимок с отдельной подкачкой, из-за
+                    // чего фото выглядело "чуть тусклым" вместо реально размытого.
                     img.setImage(
-                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50",
                         (ImageLocation) null, (String) null,
-                        (Drawable) null, (String) null, 0, 0, mo
+                        (ImageLocation) null, (String) null,
+                        mo.strippedThumb, (String) null, 0, 0, mo
                     );
-                }
-                // Притемнение + кнопка загрузки поверх фото — как в оригинале. bind()
-                // сам решит, показываться ли ему: если файл уже реально в кэше — сразу
-                // скрывается; если качается (в т.ч. запущено автозагрузкой чуть выше
-                // через img.setImage) — покажет прогресс с крестиком отмены; если не
-                // качается и не скачано — покажет стрелку загрузки по тапу.
-                final int photoBindPosition = position;
-                holder.photoOverlay.bind(photoSize, mo.photoThumbsObject, mo.currentAccount, () -> {
-                    carouselView.post(() -> {
-                        if (carouselAdapter != null) {
-                            notifyItemChanged(photoBindPosition);
-                        }
+                    final int photoBindPosition = position;
+                    holder.photoOverlay.bind(photoSize, mo.photoThumbsObject, mo.currentAccount, () -> {
+                        carouselView.post(() -> {
+                            if (carouselAdapter != null) {
+                                notifyItemChanged(photoBindPosition);
+                            }
+                        });
                     });
-                });
+                }
             }
 
             final int idx = position;
@@ -1865,8 +1884,6 @@ public class PotokFeedPostCell extends LinearLayout {
      */
     private static class PhotoDownloadOverlay extends View implements DownloadController.FileDownloadProgressListener {
         private final RadialProgress2 radialProgress;
-        private final Paint dimPaint;
-        private final RectF bgRect = new RectF();
         private final int TAG;
         private TLRPC.PhotoSize photoSize;
         private TLObject parentObject;
@@ -1878,22 +1895,17 @@ public class PotokFeedPostCell extends LinearLayout {
         PhotoDownloadOverlay(Context context) {
             super(context);
             radialProgress = new RadialProgress2(this);
-            // В отличие от VideoDownloadPlate — фон у кнопки НЕ отключаем: у видео своя
-            // тёмная "таблетка" вокруг иконки+текста, а тут отдельного фона под кольцом
-            // нет, поэтому нужен штатный тёмный круг RadialProgress2 (как в оригинале
-            // для кнопки скачивания фото), иначе кольцо/иконка потеряются на светлых
-            // фото.
+            // Круг под иконкой рисует сам RadialProgress2 через заданные ColorKeys —
+            // отдельного фона/затемнения поверх всего фото здесь НЕ нужно: в оригинале
+            // "тусклый" вид недокачанного фото — это сам блюр-плейсхолдер
+            // (strippedThumb, см. CarouselAdapter), а не дополнительный полупрозрачный
+            // прямоугольник поверх. Раньше здесь рисовался ещё и dimPaint 40% чёрным
+            // поверх ВСЕГО фото — из-за этого поверх уже автозагруженного чёткого фото
+            // (когда оверлей ошибочно оставался видимым) получался странный "чуть
+            // тусклый" эффект, о котором и был отзыв.
             radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
                     Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
             radialProgress.setCircleRadius(dp(20));
-
-            dimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            // 0x66 ~ 40% непрозрачности — то же самое притемнение, что и в оригинале
-            // (dimPaint alpha * .4f поверх photoImage.setAlpha(.5f)); здесь фото под
-            // оверлеем не занижается по alpha отдельно (сложнее без доступа к
-            // ImageReceiver карусели напрямую из этого View), сам полупрозрачный слой
-            // поверх даёт визуально тот же тусклый эффект.
-            dimPaint.setColor(0x66000000);
 
             TAG = DownloadController.getInstance(UserConfig.selectedAccount).generateObserverTag();
             setOnClickListener(v -> onClick());
@@ -1959,7 +1971,18 @@ public class PotokFeedPostCell extends LinearLayout {
                     ImageLocation.getForObject(photoSize, parentObject), parentObject, null,
                     FileLoader.PRIORITY_NORMAL, 0
                 );
-                updateState(true);
+                // Не полагаемся на isLoadingFile() сразу после loadFile() — FileLoader
+                // может поставить файл в очередь асинхронно, и в момент проверки
+                // формально ещё не считается "грузящимся" (та же гонка, что уже чинили
+                // в VideoDownloadPlate.onClick() ранее) — из-за неё кнопка визуально
+                // не реагировала на тап ("как будто нажимаю на кирпич"), хотя загрузка
+                // реально стартовала. Выставляем buttonState=1 сразу оптимистично —
+                // дальнейшие реальные апдейты придут через onProgressDownload/
+                // onSuccessDownload и просто подтвердят то же самое состояние.
+                buttonState = 1;
+                radialProgress.setProgress(0, false);
+                radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, true);
+                invalidate();
             } else if (buttonState == 1) {
                 FileLoader.getInstance(currentAccount).cancelLoadFile(photoSize);
                 updateState(true);
@@ -1979,8 +2002,6 @@ public class PotokFeedPostCell extends LinearLayout {
             if (buttonState == -1) {
                 return;
             }
-            bgRect.set(0, 0, getWidth(), getHeight());
-            canvas.drawRoundRect(bgRect, dp(8), dp(8), dimPaint);
             radialProgress.draw(canvas);
         }
 

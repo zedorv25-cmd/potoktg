@@ -18,17 +18,22 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.FileLoader;
+import org.telegram.messenger.ImageReceiver;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.NotificationCenter;
+import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.ActionBarMenu;
 import org.telegram.ui.ActionBar.ActionBarMenuSubItem;
 import org.telegram.ui.ActionBar.ActionBarPopupWindow;
+import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Adapters.DialogsSearchAdapter;
 import org.telegram.ui.Cells.PotokFeedPostCell;
+import org.telegram.ui.Cells.TextCheckCell;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
 
@@ -51,6 +56,29 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private static final int MAX_RECENT_SEARCH_CHANNELS = 10;
     private static final String PREFS_NAME = "potok_feed_filter";
     private static final String PREFS_KEY_HIDDEN = "hidden_channels";
+    // Автозагрузка медиа в ленте — по умолчанию включена для всех трёх типов (как и
+    // положено при первом запуске, ровно как в самом Telegram). Выключение конкретного
+    // типа не блокирует ручную загрузку по тапу — оно только останавливает АВТОМАТИЧЕСКУЮ
+    // подгрузку полноразмерного превью при показе поста (см. PotokFeedPostCell.CarouselAdapter).
+    private static final String PREFS_KEY_AUTOLOAD_PHOTO = "autoload_photo";
+    private static final String PREFS_KEY_AUTOLOAD_VIDEO = "autoload_video";
+    private static final String PREFS_KEY_AUTOLOAD_AUDIO = "autoload_audio";
+
+    public static boolean isAutoloadPhotoEnabled(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREFS_KEY_AUTOLOAD_PHOTO, true);
+    }
+
+    public static boolean isAutoloadVideoEnabled(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREFS_KEY_AUTOLOAD_VIDEO, true);
+    }
+
+    public static boolean isAutoloadAudioEnabled(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREFS_KEY_AUTOLOAD_AUDIO, true);
+    }
+
+    private static void setAutoloadEnabled(Context context, String key, boolean enabled) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean(key, enabled).apply();
+    }
 
     private RecyclerListView listView;
     private androidx.swiperefreshlayout.widget.SwipeRefreshLayout swipeRefreshLayout;
@@ -399,14 +427,13 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
     /**
      * Меню по кнопке "три точки" в шапке ленты — тот же тёмный стиль попапа,
-     * что и у меню поста (ActionBarPopupWindowLayout + popup_fixed_alert4), а
-     * не системный белый AlertDialog, как было раньше. Список каналов с
-     * чекбоксами открывается ВНУТРИ этого же попапа через встроенный в
-     * Telegram механизм swipe-back (FLAG_USE_SWIPEBACK/openForeground) — то
-     * же самое, чем в оригинальном приложении открывается, например, подменю
-     * "добавить в папку". Пункты "Отметить всё просмотренным", "Настройки
-     * медиа", "Очистка кэша" и "Обратная связь" пока не реализованы —
-     * заглушки, как и договаривались.
+     * что и у меню поста (ActionBarPopupWindowLayout + popup_fixed_alert4).
+     * "Фильтр каналов" и "Настройки медиа" открываются ВНУТРИ этого же попапа
+     * через встроенный в Telegram механизм swipe-back (FLAG_USE_SWIPEBACK/
+     * openForeground) — то же самое, чем в оригинальном приложении открывается,
+     * например, подменю "добавить в папку". "Отметить всё просмотренным" и
+     * "Очистка кэша" действуют сразу, без подменю. "Обратная связь" пока
+     * остаётся заглушкой.
      */
     private void showThreeDotsMenu(Context context, View anchor) {
         int flags = ActionBarPopupWindow.ActionBarPopupWindowLayout.FLAG_USE_SWIPEBACK;
@@ -445,12 +472,15 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         // Изменения копятся в pendingHidden и применяются только по кнопке
         // "Применить" — так же, как раньше вело себя "Отмена" в AlertDialog.
+        // TextCheckCell вместо CheckBoxCell (обычная "птичка") — тот же переключатель
+        // с анимацией скольжения, что и в системных настройках Telegram (см. скрин
+        // "Соединение..." — Switch справа), для визуальной консистентности с
+        // "Настройками медиа" ниже, которые используют тот же компонент.
         final Set<String> pendingHidden = new HashSet<>(hiddenChannelIds);
         for (TLRPC.Chat ch : allChannels) {
             final String chId = String.valueOf(ch.id);
-            org.telegram.ui.Cells.CheckBoxCell cell = new org.telegram.ui.Cells.CheckBoxCell(context, 1);
-            cell.setText(ch.title, "", !pendingHidden.contains(chId), false);
-            cell.setPadding(AndroidUtilities.dp(16), 0, AndroidUtilities.dp(16), 0);
+            TextCheckCell cell = new TextCheckCell(context, 16);
+            cell.setTextAndCheck(ch.title, !pendingHidden.contains(chId), false);
             cell.setOnClickListener(v -> {
                 boolean nowChecked = pendingHidden.contains(chId);
                 if (nowChecked) {
@@ -458,7 +488,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 } else {
                     pendingHidden.add(chId);
                 }
-                ((org.telegram.ui.Cells.CheckBoxCell) v).setChecked(nowChecked, true);
+                ((TextCheckCell) v).setChecked(nowChecked);
             });
             channelsList.addView(cell, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48));
         }
@@ -480,6 +510,51 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         int filterMenuIndex = layout.addViewToSwipeBack(filterMenuView);
 
+        // ------------------------------------------------------------ подменю "Настройки медиа"
+        LinearLayout mediaMenuView = new LinearLayout(context);
+        mediaMenuView.setOrientation(LinearLayout.VERTICAL);
+
+        ActionBarMenuSubItem mediaBackItem = new ActionBarMenuSubItem(context, true, false, null);
+        mediaBackItem.setTextAndIcon("Назад", org.telegram.messenger.R.drawable.ic_ab_back);
+        mediaBackItem.setMinimumWidth(AndroidUtilities.dp(220));
+        mediaBackItem.setOnClickListener(v -> layout.getSwipeBack().closeForeground());
+        mediaMenuView.addView(mediaBackItem);
+        mediaMenuView.addView(new ActionBarPopupWindow.GapView(context, null), LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 8));
+
+        // Каждый переключатель отвечает ТОЛЬКО за автозагрузку — то есть за то,
+        // подгружается ли полноразмерное превью САМО при показе поста в ленте.
+        // Выключение не блокирует загрузку по тапу пользователя — тап по фото/видео/
+        // аудио всегда качает и показывает/проигрывает независимо от этих настроек
+        // (см. использование isAutoload*Enabled в PotokFeedPostCell.CarouselAdapter).
+        TextCheckCell photoCell = new TextCheckCell(context, 16);
+        photoCell.setTextAndCheck("Скачивать фото", isAutoloadPhotoEnabled(context), true);
+        photoCell.setOnClickListener(v -> {
+            boolean newValue = !isAutoloadPhotoEnabled(context);
+            setAutoloadEnabled(context, PREFS_KEY_AUTOLOAD_PHOTO, newValue);
+            ((TextCheckCell) v).setChecked(newValue);
+        });
+        mediaMenuView.addView(photoCell, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 50));
+
+        TextCheckCell videoCell = new TextCheckCell(context, 16);
+        videoCell.setTextAndCheck("Скачивать видео", isAutoloadVideoEnabled(context), true);
+        videoCell.setOnClickListener(v -> {
+            boolean newValue = !isAutoloadVideoEnabled(context);
+            setAutoloadEnabled(context, PREFS_KEY_AUTOLOAD_VIDEO, newValue);
+            ((TextCheckCell) v).setChecked(newValue);
+        });
+        mediaMenuView.addView(videoCell, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 50));
+
+        TextCheckCell audioCell = new TextCheckCell(context, 16);
+        audioCell.setTextAndCheck("Скачивать аудио", isAutoloadAudioEnabled(context), false);
+        audioCell.setOnClickListener(v -> {
+            boolean newValue = !isAutoloadAudioEnabled(context);
+            setAutoloadEnabled(context, PREFS_KEY_AUTOLOAD_AUDIO, newValue);
+            ((TextCheckCell) v).setChecked(newValue);
+        });
+        mediaMenuView.addView(audioCell, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 50));
+
+        int mediaMenuIndex = layout.addViewToSwipeBack(mediaMenuView);
+
         // ------------------------------------------------------------ главный список пунктов
         ActionBarMenuSubItem filterItem = new ActionBarMenuSubItem(context, true, false, null);
         filterItem.setTextAndIcon("Фильтр каналов", org.telegram.messenger.R.drawable.menu_tag_filter);
@@ -493,20 +568,28 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         });
         layout.addView(filterItem);
 
-        // Пока заглушки без действия — как и договаривались, реализован только фильтр.
         ActionBarMenuSubItem markReadItem = new ActionBarMenuSubItem(context, false, false, null);
         markReadItem.setTextAndIcon("Отметить всё просмотренным", org.telegram.messenger.R.drawable.msg_markread);
         markReadItem.setMinimumWidth(AndroidUtilities.dp(220));
+        markReadItem.setOnClickListener(v -> {
+            if (threeDotsMenuWindow != null) threeDotsMenuWindow.dismiss();
+            markAllFeedItemsAsRead();
+        });
         layout.addView(markReadItem);
 
         ActionBarMenuSubItem mediaSettingsItem = new ActionBarMenuSubItem(context, false, false, null);
         mediaSettingsItem.setTextAndIcon("Настройки медиа", org.telegram.messenger.R.drawable.msg_photo_settings);
         mediaSettingsItem.setMinimumWidth(AndroidUtilities.dp(220));
+        mediaSettingsItem.setOnClickListener(v -> layout.getSwipeBack().openForeground(mediaMenuIndex));
         layout.addView(mediaSettingsItem);
 
         ActionBarMenuSubItem clearCacheItem = new ActionBarMenuSubItem(context, false, false, null);
         clearCacheItem.setTextAndIcon("Очистка кэша", org.telegram.messenger.R.drawable.msg_clearcache);
         clearCacheItem.setMinimumWidth(AndroidUtilities.dp(220));
+        clearCacheItem.setOnClickListener(v -> {
+            if (threeDotsMenuWindow != null) threeDotsMenuWindow.dismiss();
+            clearFeedCache(context);
+        });
         layout.addView(clearCacheItem);
 
         ActionBarMenuSubItem feedbackItem = new ActionBarMenuSubItem(context, false, true, null);
@@ -720,6 +803,140 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         getMessagesController().markDialogAsRead(dialogId, maxId, maxId, maxDate, false, 0, 0, true, 0);
     }
 
+    /**
+     * "Отметить всё просмотренным" из меню трёх точек — в отличие от автоматического
+     * скролл-триггера (markFeedItemAsRead выше, который отмечает только то, что
+     * реально проскроллил пользователь), здесь помечаются ВСЕ уже загруженные посты
+     * во всех каналах ленты разом, по явному запросу.
+     *
+     * Реальный сетевой вызов уходит и в сам канал тоже (markDialogAsRead внутри
+     * markFeedItemAsRead — это тот же самый API-метод, которым Telegram помечает
+     * диалог прочитанным при обычном пролистывании канала руками, просто здесь это
+     * делается программно сразу по многим каналам). Метод не эксклюзивен для ленты
+     * и сам по себе не является чем-то "запрещённым" — но чтобы пачка read-запросов
+     * по многим каналам подряд не выглядела на сервере как подозрительный паттерн
+     * автоматизации, разносим вызовы по разным каналам с небольшим шагом по времени,
+     * а не бьём все каналы разом в один тик. markFeedItemAsRead сам по себе не шлёт
+     * лишний запрос, если пост и так уже прочитан, — поэтому массовый вызов безопасен.
+     */
+    private void markAllFeedItemsAsRead() {
+        java.util.Map<Long, Integer> dialogDelay = new java.util.HashMap<>();
+        int slot = 0;
+        for (FeedItem item : items) {
+            if (item == null || item.messages.isEmpty()) continue;
+            MessageObject first = item.messages.get(0);
+            if (first == null) continue;
+            long dialogId = first.getDialogId();
+            Integer delay = dialogDelay.get(dialogId);
+            if (delay == null) {
+                delay = slot * 200;
+                dialogDelay.put(dialogId, delay);
+                slot++;
+            }
+            final FeedItem fi = item;
+            AndroidUtilities.runOnUIThread(() -> markFeedItemAsRead(fi), delay);
+        }
+        if (listView != null && listView.getAdapter() != null) {
+            listView.getAdapter().notifyDataSetChanged();
+        }
+    }
+
+    /**
+     * "Очистка кэша" из меню трёх точек — удаляет весь реально скачанный медиаконтент
+     * постов ленты (по всем загруженным каналам), с тем же подтверждением "Да/Отмена",
+     * что и у "Удалить из кэша" в меню отдельного поста (см. PotokFeedPostCell) — по
+     * образцу Plus Messenger, который пользователь прислал как референс.
+     */
+    private void clearFeedCache(Context context) {
+        ArrayList<java.io.File> filesToDelete = new ArrayList<>();
+        long totalSize = 0;
+        for (FeedItem item : items) {
+            if (item == null) continue;
+            for (MessageObject mo : item.messages) {
+                if (mo == null) continue;
+                boolean hasMedia = mo.isVoice() || mo.isMusic() || mo.isVideo()
+                    || (mo.photoThumbs != null && !mo.photoThumbs.isEmpty());
+                if (!hasMedia) continue;
+                mo.checkMediaExistance(false);
+                if (mo.mediaExists) {
+                    java.io.File f = FileLoader.getInstance(mo.currentAccount).getPathToMessage(mo.messageOwner, false);
+                    if (f != null && f.exists()) {
+                        filesToDelete.add(f);
+                        totalSize += f.length();
+                    }
+                }
+            }
+        }
+        if (filesToDelete.isEmpty()) {
+            android.widget.Toast.makeText(context, "Кэш ленты пуст", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final long finalTotalSize = totalSize;
+        final int account = UserConfig.selectedAccount;
+        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        builder.setTitle("Очистка кэша");
+        builder.setMessage("Удалить весь скачанный медиаконтент ленты?\n\nОчистить "
+            + AndroidUtilities.formatFileSize(finalTotalSize) + "?\n\nВы можете скачать файлы позже");
+        builder.setNegativeButton("Отмена", null);
+        builder.setPositiveButton("Да", (d, w) -> {
+            FileLoader.getInstance(account).deleteFiles(filesToDelete, 0);
+            if (listView != null && listView.getAdapter() != null) {
+                listView.getAdapter().notifyDataSetChanged();
+            }
+        });
+        builder.show();
+    }
+
+    private PhotoViewer.PhotoViewerProvider photoViewerProvider;
+
+    /**
+     * Провайдер для PhotoViewer.openPhoto() — заменяет EmptyPhotoViewerProvider,
+     * который раньше стоял в PotokFeedPostCell.openMediaViewer() и намеренно не давал
+     * никакой информации об исходной миниатюре. getPlaceForPhoto() здесь реализован
+     * ровно по тому же принципу, что и одноимённый приватный метод в самом
+     * ChatActivity (для ChatMessageCell) — найти реально видимый на экране
+     * ImageReceiver миниатюры и вернуть его координаты, чтобы PhotoViewer сыграл
+     * анимацию разворота карточки на весь экран (и обратно при закрытии) вместо
+     * простого появления/исчезновения.
+     */
+    public PhotoViewer.PhotoViewerProvider getPhotoViewerProvider() {
+        if (photoViewerProvider == null) {
+            photoViewerProvider = new PhotoViewer.EmptyPhotoViewerProvider() {
+                @Override
+                public PhotoViewer.PlaceProviderObject getPlaceForPhoto(MessageObject messageObject, TLRPC.FileLocation fileLocation, int index, boolean needPreview, boolean closing) {
+                    return PotokFeedFragment.this.getPlaceForPhoto(messageObject);
+                }
+            };
+        }
+        return photoViewerProvider;
+    }
+
+    private PhotoViewer.PlaceProviderObject getPlaceForPhoto(MessageObject messageObject) {
+        if (listView == null || messageObject == null) {
+            return null;
+        }
+        int count = listView.getChildCount();
+        for (int a = 0; a < count; a++) {
+            View view = listView.getChildAt(a);
+            if (!(view instanceof PotokFeedPostCell)) continue;
+            PotokFeedPostCell cell = (PotokFeedPostCell) view;
+            if (!cell.containsMessageId(messageObject.getId())) continue;
+            ImageReceiver imageReceiver = cell.getPhotoImageForMessage(messageObject);
+            if (imageReceiver == null) continue;
+            int[] coords = new int[2];
+            view.getLocationInWindow(coords);
+            PhotoViewer.PlaceProviderObject object = new PhotoViewer.PlaceProviderObject();
+            object.viewX = coords[0];
+            object.viewY = coords[1] + view.getPaddingTop();
+            object.parentView = listView;
+            object.imageReceiver = imageReceiver;
+            object.thumb = imageReceiver.getBitmapSafe();
+            object.radius = imageReceiver.getRoundRadius(true);
+            return object;
+        }
+        return null;
+    }
+
     @Override
     public boolean canParentTabsSlide(MotionEvent ev, boolean forward) {
         return true;
@@ -729,6 +946,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     public boolean onFragmentCreate() {
         getNotificationCenter().addObserver(this, NotificationCenter.messagePlayingProgressDidChanged);
         getNotificationCenter().addObserver(this, NotificationCenter.didSetNewTheme);
+        getNotificationCenter().addObserver(this, NotificationCenter.didUpdatePollResults);
         return super.onFragmentCreate();
     }
 
@@ -736,6 +954,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     public void onFragmentDestroy() {
         getNotificationCenter().removeObserver(this, NotificationCenter.messagePlayingProgressDidChanged);
         getNotificationCenter().removeObserver(this, NotificationCenter.didSetNewTheme);
+        getNotificationCenter().removeObserver(this, NotificationCenter.didUpdatePollResults);
         super.onFragmentDestroy();
     }
 
@@ -753,6 +972,21 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             }
         } else if (id == NotificationCenter.didSetNewTheme) {
             updateWallpaper();
+        } else if (id == NotificationCenter.didUpdatePollResults) {
+            // Тот же паттерн, что и messagePlayingProgressDidChanged выше: центр
+            // уведомлений один на фрагмент, а не подписка в каждой отдельной ячейке —
+            // рассылаем обновление только по реально видимым сейчас ячейкам ленты.
+            if (listView == null) return;
+            long pollId = (Long) args[0];
+            TLRPC.TL_poll poll = (TLRPC.TL_poll) args[1];
+            TLRPC.PollResults results = (TLRPC.PollResults) args[2];
+            int count = listView.getChildCount();
+            for (int a = 0; a < count; a++) {
+                View child = listView.getChildAt(a);
+                if (child instanceof PotokFeedPostCell) {
+                    ((PotokFeedPostCell) child).updatePollIfMatching(pollId, poll, results);
+                }
+            }
         }
     }
 

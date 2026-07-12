@@ -350,7 +350,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 MediaController.getInstance().pauseMessage(playing);
             }
         });
-        frameLayout.addView(miniPlayerBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, MINI_PLAYER_HEIGHT_DP, Gravity.TOP, 0, 0, 0, 0));
+        // ВАЖНО: addView(miniPlayerBar, ...) сюда НЕ вставляем — FrameLayout рисует
+        // детей в порядке добавления (последний = поверх), а swipeRefreshLayout с
+        // listView внутри (во весь экран, добавляется ниже по коду) перекрыл бы
+        // мини-плеер целиком, даже когда он VISIBLE. addView вызывается ПОСЛЕ
+        // swipeRefreshLayout — см. дальше по методу, сразу за ним.
 
         listView.setAdapter(new RecyclerView.Adapter<RecyclerListView.Holder>() {
             @Override
@@ -404,6 +408,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         });
         swipeRefreshLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         frameLayout.addView(swipeRefreshLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+        // Мини-плеер добавляется ЗДЕСЬ, после swipeRefreshLayout — иначе список
+        // (во весь экран) рисуется поверх и полностью его перекрывает (см. комментарий
+        // у создания miniPlayerBar выше). Именно это было причиной того, что бар не
+        // появлялся вообще, хотя видимость переключалась корректно.
+        frameLayout.addView(miniPlayerBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, MINI_PLAYER_HEIGHT_DP, Gravity.TOP, 0, 0, 0, 0));
 
         // --- Кнопка "наверх" ---
         scrollToTopButton = new FrameLayout(context);
@@ -917,7 +926,55 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 Collections.sort(item.messages, (a, b) -> Integer.compare(a.getId(), b.getId()));
             }
         }
+
+        // Склейка опроса с соседним медиа-постом в один визуальный "пост" ленты.
+        // Опрос физически не может иметь grouped_id с фото/видео (разные типы
+        // media одного сообщения несовместимы в принципе) — то, что в канале
+        // выглядит как "один пост" (медиа сверху, опрос снизу), на самом деле два
+        // ОТДЕЛЬНЫХ сообщения одного автора, отправленных подряд без ничего между
+        // ними (подтверждено скриншотом канала). Поэтому здесь — не группировка по
+        // общему id, а склейка по чистой ПОСЛЕДОВАТЕЛЬНОЙ смежности в `result`
+        // (`result` уже отражает порядок исходных messageObjects, так что соседние
+        // элементы здесь гарантированно значат "между ними в истории канала не было
+        // никакого другого сообщения"). Порядок отображения — всегда медиа сверху,
+        // опрос снизу, независимо от того, в каком порядке они реально пришли в
+        // history (getHistory обычно отдаёт сообщения от новых к старым).
+        for (int i = 0; i < result.size() - 1; i++) {
+            FeedItem a = result.get(i);
+            FeedItem b = result.get(i + 1);
+            boolean aIsPollOnly = isPollOnlyItem(a);
+            boolean bIsPollOnly = isPollOnlyItem(b);
+            if (aIsPollOnly == bIsPollOnly) continue; // нужен ровно один опрос из пары
+            FeedItem pollItem = aIsPollOnly ? a : b;
+            FeedItem mediaItem = aIsPollOnly ? b : a;
+            if (!isMediaOnlyItem(mediaItem)) continue;
+            FeedItem merged = new FeedItem();
+            merged.channel = channel;
+            merged.messages.addAll(mediaItem.messages);
+            merged.messages.addAll(pollItem.messages);
+            result.set(i, merged);
+            result.remove(i + 1);
+        }
         return result;
+    }
+
+    /** Пост состоит ровно из одного сообщения, и это сообщение — опрос. */
+    private static boolean isPollOnlyItem(FeedItem item) {
+        if (item.messages.size() != 1) return false;
+        MessageObject mo = item.messages.get(0);
+        return mo.messageOwner != null && mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll;
+    }
+
+    /** Пост НЕ содержит опроса и реально содержит хотя бы одно фото/видео (не просто текст). */
+    private static boolean isMediaOnlyItem(FeedItem item) {
+        if (item.messages.isEmpty()) return false;
+        boolean hasMedia = false;
+        for (MessageObject mo : item.messages) {
+            if (mo.messageOwner == null) continue;
+            if (mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll) return false;
+            if (mo.photoThumbs != null && !mo.photoThumbs.isEmpty()) hasMedia = true;
+        }
+        return hasMedia;
     }
 
     /** Дата поста для сортировки общей ленты — берём дату первого сообщения в группе. */

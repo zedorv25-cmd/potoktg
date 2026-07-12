@@ -93,6 +93,7 @@ public class PotokFeedPostCell extends LinearLayout {
     private final AudioSeekBarView audioSeekBarView;
     private final AudioWaveformView audioWaveformView;
     private final TextView audioTimeView;
+    private final TextView audioStaticInfoView;
     private final LinearLayout audioSeekRow;
 
     // --- Опрос ---
@@ -389,6 +390,17 @@ public class PotokFeedPostCell extends LinearLayout {
         audioSeekRow.addView(audioTimeView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL, 8, 0, 0, 0));
         this.audioSeekRow = audioSeekRow;
 
+        // Статичная строка "длительность  размер" (например "0:00 / 3:17  43,3 МБ") —
+        // показывается вместо полосы перемотки, пока трек НЕ играет прямо сейчас
+        // (не запускали вообще, или стоит на паузе) — один в один с тем, как это
+        // выглядит в самом Telegram (полоса-с-точкой появляется только во время
+        // реального воспроизведения, см. updateAudioSeekRowVisibility()).
+        audioStaticInfoView = new TextView(context);
+        audioStaticInfoView.setTextSize(13);
+        audioStaticInfoView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
+        audioColumn.addView(audioStaticInfoView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 54, 4, 8, 0));
+
+
         // --- Опрос ---
         // Раньше посты-опросы показывались в ленте пустыми: TL_messageMediaPoll не
         // подходит ни под одну из веток (не фото/видео, не аудио), а вопрос опроса
@@ -399,6 +411,10 @@ public class PotokFeedPostCell extends LinearLayout {
         // видны), пометка "Анонимный опрос"/"Опрос" и число проголосовавших внизу.
         pollView = new PollView(context, resourcesProvider);
         pollView.setVisibility(GONE);
+        // Строки вариантов ответа кликабельны до голосования и перехватывают touch —
+        // без этого долгое нажатие на пост с опросом не открывало канал (в отличие
+        // от обычных постов с медиа/текстом), см. PollView.setOnLongPressListener.
+        pollView.setOnLongPressListener(this::openPostInChannel);
         addView(pollView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 10, 12, 0));
 
         // --- Футер ---
@@ -595,14 +611,13 @@ public class PotokFeedPostCell extends LinearLayout {
                 audioSeekBarView.setMessageObject(messageObject);
                 audioWaveformView.setMessageObject(null);
             }
-            // Сикбар/волна и время видны ВСЕГДА (как в оригинале), а не только во
-            // время воспроизведения — раньше audioSeekRow появлялся только когда
-            // сообщение реально играло, из-за чего до первого нажатия play пользователь
-            // вообще не видел ни длительности, ни волны/шкалы.
-            audioSeekRow.setVisibility(VISIBLE);
+            // Полоса перемотки видна ТОЛЬКО когда трек реально играет прямо сейчас
+            // (не на паузе, не до старта) — один в один с оригиналом: до первого
+            // тапа play и после паузы показывается статичная строка "длительность
+            // размер", а не бегущая полоса с точкой (см. updateAudioSeekRowVisibility).
             messageObject.checkMediaExistance(false);
             audioPlayButton.bind(messageObject);
-            updateAudioTimeText(messageObject);
+            updateAudioSeekRowVisibility(messageObject);
 
             // Автозагрузка аудио в кэш — настройка из меню трёх точек + потолок
             // размера (1 МБ моб. / 3 МБ Wi-Fi, те же цифры, что у видео, см.
@@ -805,13 +820,40 @@ public class PotokFeedPostCell extends LinearLayout {
         audioSeekBarView.setMessageObject(null);
         audioWaveformView.setMessageObject(null);
         audioPlayButton.unbind();
+        audioSeekRow.setVisibility(GONE);
+        audioStaticInfoView.setVisibility(GONE);
     }
 
     private void updateAudioTimeText(MessageObject mo) {
         int durationSec = (int) mo.getDuration();
-        int playedSec = MediaController.getInstance().isPlayingMessage(mo)
-            ? mo.audioProgressSec : (int) (mo.audioProgress * durationSec);
+        int playedSec = mo.audioProgressSec;
         audioTimeView.setText(AndroidUtilities.formatShortDuration(playedSec, durationSec));
+    }
+
+    /**
+     * Переключает audioSeekRow (бегущая полоса с точкой) и audioStaticInfoView
+     * (статичный текст "длительность  размер") — строго по тому, играет ли ЭТОТ
+     * трек ПРЯМО СЕЙЧАС (не на паузе). Один в один с реальным поведением
+     * Telegram: до первого тапа play и сразу после постановки на паузу видна
+     * статичная строка, полоса появляется только во время активного воспроизведения.
+     */
+    private void updateAudioSeekRowVisibility(MessageObject mo) {
+        boolean activelyPlaying = MediaController.getInstance().isPlayingMessage(mo)
+            && !MediaController.getInstance().isMessagePaused();
+        audioSeekRow.setVisibility(activelyPlaying ? VISIBLE : GONE);
+        audioStaticInfoView.setVisibility(activelyPlaying ? GONE : VISIBLE);
+        if (activelyPlaying) {
+            updateAudioTimeText(mo);
+        } else {
+            int durationSec = (int) mo.getDuration();
+            String durationStr = "0:00 / " + AndroidUtilities.formatShortDuration(durationSec);
+            TLRPC.Document doc = mo.getDocument();
+            if (doc != null && doc.size > 0) {
+                audioStaticInfoView.setText(durationStr + "   " + AndroidUtilities.formatFileSize(doc.size));
+            } else {
+                audioStaticInfoView.setText(durationStr);
+            }
+        }
     }
 
     /**
@@ -828,6 +870,12 @@ public class PotokFeedPostCell extends LinearLayout {
         currentMessage.audioProgress = playing.audioProgress;
         currentMessage.audioProgressSec = playing.audioProgressSec;
         currentMessage.bufferedProgress = playing.bufferedProgress;
+        if (audioSeekRow.getVisibility() != VISIBLE) {
+            // Прогресс потёк — значит трек реально играет; если полоса ещё не
+            // показана (например, статус playing/paused сменился без отдельного
+            // messagePlayingPlayStateChanged), досчитаем видимость прямо здесь.
+            updateAudioSeekRowVisibility(currentMessage);
+        }
         audioSeekBarView.updateProgress();
         audioWaveformView.updateProgress();
         updateAudioTimeText(currentMessage);
@@ -840,11 +888,13 @@ public class PotokFeedPostCell extends LinearLayout {
      * выше), а вообще при любой смене состояния плеера, поэтому вызывается по ВСЕМ
      * видимым ячейкам, а не только по совпадающей — иначе если заиграл другой трек,
      * кнопка play/pause этой ячейки не узнала бы об этом и осталась показывать
-     * устаревшее состояние.
+     * устаревшее состояние. Именно отсюда приходит переключение полоса↔статичный
+     * текст при постановке на паузу/остановке — а не только на старте.
      */
     public void refreshAudioPlaybackState() {
-        if (audioContainer.getVisibility() == VISIBLE) {
+        if (audioContainer.getVisibility() == VISIBLE && currentMessage != null) {
             audioPlayButton.refresh();
+            updateAudioSeekRowVisibility(currentMessage);
         }
     }
 
@@ -1549,16 +1599,18 @@ public class PotokFeedPostCell extends LinearLayout {
                     holder.photoOverlay.setVisibility(GONE);
                     holder.photoOverlay.unbind();
                 } else {
-                    // Автозагрузка выключена и файла ещё нет — показываем ТОЛЬКО
-                    // strippedThumb (клиентский блюр-плейсхолдер, уже приехавший с
-                    // сообщением, ни одного лишнего сетевого запроса) — тот самый
-                    // приглушённо-размытый вид недокачанного медиа, как в самом
-                    // Telegram. thumbSize ("50_50") здесь больше не участвует — это
-                    // был мелкий, но НЕ блюрnutый снимок с отдельной подкачкой, из-за
-                    // чего фото выглядело "чуть тусклым" вместо реально размытого.
+                    // Автозагрузка выключена и файла ещё нет — грузим ТОЛЬКО маленький
+                    // thumbSize ("50_50", копеечный по размеру, качается независимо от
+                    // настройки автозагрузки полного размера — так же, как в самом
+                    // Telegram: превью всегда бесплатное, ограничивается только full-size).
+                    // mo.strippedThumb — мгновенный fallback ДРАВЕБЛ, показывается, пока
+                    // даже этот маленький thumbSize не успел загрузиться. Раньше здесь обе
+                    // ImageLocation были null — ImageReceiver в таком случае, похоже, не
+                    // рисует вообще ничего (даже переданный thumb Drawable), отсюда и была
+                    // пустота вместо блюра.
                     img.setImage(
                         (ImageLocation) null, (String) null,
-                        (ImageLocation) null, (String) null,
+                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50",
                         mo.strippedThumb, (String) null, 0, 0, mo
                     );
                     final int photoBindPosition = position;
@@ -2423,6 +2475,14 @@ public class PotokFeedPostCell extends LinearLayout {
         protected void onSizeChanged(int w, int h, int oldw, int oldh) {
             super.onSizeChanged(w, h, oldw, oldh);
             radialProgress.setProgressRect(0, 0, w, h);
+            // bind() вызывается из setPost() при биндинге ViewHolder'а — в этот
+            // момент у View ещё могли быть нулевые границы, и RadialProgress2 мог
+            // закрепить иконку под них. Пересчитываем состояние ЕЩЁ РАЗ уже после
+            // реального измерения — похоже, именно это было причиной того, что
+            // кнопка play/download визуально не появлялась вообще.
+            if (messageObject != null) {
+                updateState(false);
+            }
         }
 
         @Override
@@ -2525,6 +2585,20 @@ public class PotokFeedPostCell extends LinearLayout {
         private MessageObject messageObject;
         private TLRPC.TL_messageMediaPoll media;
         private boolean sendingVote = false;
+        /**
+         * Долгое нажатие по карточке поста должно открывать канал (как у обычных
+         * постов) — но строки вариантов ответа (PollAnswerRow) кликабельны ДО
+         * голосования (обрабатывают обычный тап на выбор варианта), и Android не
+         * даёт долгому нажатию всплыть до родительской карточки, если дочерний
+         * View сам кликабелен — touch-последовательность перехватывается там, где
+         * начался палец. Поэтому пробрасываем длинное нажатие с каждой строки
+         * (и с кнопки "Проголосовать") наружу вручную через этот callback.
+         */
+        private Runnable onLongPress;
+
+        void setOnLongPressListener(Runnable listener) {
+            onLongPress = listener;
+        }
 
         PollView(Context context, Theme.ResourcesProvider resourcesProvider) {
             super(context);
@@ -2560,6 +2634,13 @@ public class PotokFeedPostCell extends LinearLayout {
                 if (!selectedAnswers.isEmpty()) {
                     submitVote(new ArrayList<>(selectedAnswers));
                 }
+            });
+            voteButton.setOnLongClickListener(v -> {
+                if (onLongPress != null) {
+                    onLongPress.run();
+                    return true;
+                }
+                return false;
             });
             addView(voteButton, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
 
@@ -2633,6 +2714,16 @@ public class PotokFeedPostCell extends LinearLayout {
                         row.setOnClickListener(null);
                         row.setClickable(false);
                     }
+                    // См. комментарий у поля onLongPress выше: строка кликабельна в
+                    // votingMode и перехватывает touch-последовательность, из-за чего
+                    // долгое нажатие не всплывает до карточки поста — форвардим вручную.
+                    row.setOnLongClickListener(v -> {
+                        if (onLongPress != null) {
+                            onLongPress.run();
+                            return true;
+                        }
+                        return false;
+                    });
                     answersContainer.addView(row, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 0, 0, 6));
                     rows.add(row);
                 }

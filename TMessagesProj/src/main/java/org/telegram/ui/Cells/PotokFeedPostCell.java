@@ -3,6 +3,7 @@ package org.telegram.ui.Cells;
 import static org.telegram.messenger.AndroidUtilities.dp;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
@@ -1593,7 +1594,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     // уже сама тащит фото — отсюда и жалоба "фото чёткое, а кнопка есть").
                     img.setImage(
                         ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
-                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50",
+                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50_b",
                         mo.strippedThumb, (String) null, 0, 0, mo
                     );
                     holder.photoOverlay.setVisibility(GONE);
@@ -1610,7 +1611,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     // пустота вместо блюра.
                     img.setImage(
                         (ImageLocation) null, (String) null,
-                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50",
+                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50_b",
                         mo.strippedThumb, (String) null, 0, 0, mo
                     );
                     final int photoBindPosition = position;
@@ -2384,6 +2385,27 @@ public class PotokFeedPostCell extends LinearLayout {
             document = mo.getDocument();
             currentAccount = mo.currentAccount;
             fileName = FileLoader.getAttachFileName(document);
+            // 1:1 с SharedAudioCell.setMessageObject(): обложка трека рисуется самим
+            // RadialProgress2 через setImageOverlay(), а не отдельным ImageReceiver.
+            // Порядок источников строго как в оригинале: thumb документа -> audioCover
+            // (Bitmap, уже извлечённый из ID3-тегов) -> artworkUrl (last.fm/архив) ->
+            // пусто (тогда RadialProgress2 рисует однотонный фон под иконкой).
+            final TLRPC.PhotoSize thumb = document != null ? FileLoader.getClosestPhotoSizeWithSize(document.thumbs, 360) : null;
+            if (thumb instanceof TLRPC.TL_photoSize || thumb instanceof TLRPC.TL_photoSizeProgressive) {
+                radialProgress.setImageOverlay(thumb, document, messageObject);
+            } else {
+                Bitmap cover = messageObject.audioCover;
+                if (cover != null) {
+                    radialProgress.setImageOverlay(cover);
+                } else {
+                    final String artworkUrl = messageObject.getArtworkUrl(true);
+                    if (!TextUtils.isEmpty(artworkUrl)) {
+                        radialProgress.setImageOverlay(artworkUrl);
+                    } else {
+                        radialProgress.setImageOverlay(null, null, null);
+                    }
+                }
+            }
             updateState(false);
         }
 

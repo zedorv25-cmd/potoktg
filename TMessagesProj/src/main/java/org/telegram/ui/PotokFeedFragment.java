@@ -37,6 +37,7 @@ import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Adapters.DialogsSearchAdapter;
 import org.telegram.ui.Cells.PotokFeedPostCell;
 import org.telegram.ui.Cells.TextCheckCell;
+import org.telegram.ui.Components.FragmentContextView;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
 
@@ -111,12 +112,15 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private LinearLayoutManager listViewLayoutManager;
     private org.telegram.ui.Components.RecyclerAnimationScrollHelper scrollHelper;
     private FrameLayout scrollToTopButton;
-    // Мини-плеер сверху ленты (название трека + play/pause) — тот же принцип, что
-    // и постоянная полоска воспроизведения аудио в самом Telegram (появляется под
-    // шапкой, пока что-то играет или стоит на паузе, исчезает при полной остановке).
-    private FrameLayout miniPlayerBar;
-    private TextView miniPlayerTitle;
-    private MiniPlayerButton miniPlayerButton;
+    // Мини-плеер сверху ленты — используем РЕАЛЬНЫЙ компонент Telegram
+    // (org.telegram.ui.Components.FragmentContextView), тот же самый класс, что
+    // рисует полоску воспроизведения в Чатах/ChatActivity/CallLogActivity. Он
+    // полностью самодостаточен: сам подписывается на NotificationCenter
+    // (messagePlayingDidStart/PlayStateChanged/DidReset) в onAttachedToWindow(),
+    // сам показывает/скрывает себя, сам открывает полноэкранный плеер по тапу
+    // (через parentFragment). Раньше здесь был самописный FrameLayout+TextView+
+    // Path-иконка — это и была причина "кривого" плеера и бага с паузой по тапу.
+    private FragmentContextView fragmentContextView;
     private static final int MINI_PLAYER_HEIGHT_DP = 38;
     private int lastAppliedTopInset = -1;
     private int cachedStatusBarHeight = 0;
@@ -181,54 +185,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     }
 
     private static final int MENU_ITEM_FILTER = 1;
-
-    /**
-     * Play/pause-иконка для мини-плеера сверху ленты — рисуется через Path (как
-     * PlayTriangleView в PotokFeedPostCell), а не через drawable-ресурсы, чтобы не
-     * зависеть от конкретных иконок из res/ и не размываться на разном dpi.
-     */
-    private static class MiniPlayerButton extends View {
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path path = new Path();
-        private boolean playing = false;
-
-        MiniPlayerButton(Context context) {
-            super(context);
-            paint.setStyle(Paint.Style.FILL);
-        }
-
-        void setColor(int color) {
-            paint.setColor(color);
-            invalidate();
-        }
-
-        void setPlaying(boolean p) {
-            if (playing == p) return;
-            playing = p;
-            invalidate();
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            int w = getWidth(), h = getHeight();
-            if (playing) {
-                float barW = w * 0.16f, gap = w * 0.18f;
-                float totalW = barW * 2 + gap;
-                float left = (w - totalW) / 2f;
-                canvas.drawRect(left, h * 0.18f, left + barW, h * 0.82f, paint);
-                canvas.drawRect(left + barW + gap, h * 0.18f, left + barW + gap + barW, h * 0.82f, paint);
-            } else {
-                path.reset();
-                float r = Math.min(w, h) / 2f;
-                float cx = w / 2f, cy = h / 2f;
-                path.moveTo(cx - r * 0.55f, cy - r * 0.85f);
-                path.lineTo(cx - r * 0.55f, cy + r * 0.85f);
-                path.lineTo(cx + r * 0.85f, cy);
-                path.close();
-                canvas.drawPath(path, paint);
-            }
-        }
-    }
 
     private void setupActionBar(Context context) {
         if (actionBar == null) {
@@ -320,40 +276,27 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         listView.setClipToPadding(false);
 
         // --- Мини-плеер сверху ленты ---
-        // Тот же принцип, что и постоянная полоска воспроизведения аудио в самом
-        // Telegram: появляется под шапкой, пока что-то играет или стоит на паузе
-        // (см. updateMiniPlayer(), вызывается по NotificationCenter.messagePlayingDidStart/
-        // PlayStateChanged/DidReset — см. didReceivedNotification), исчезает при
-        // полной остановке. Тап по полоске — play/pause того же трека.
-        miniPlayerBar = new FrameLayout(context);
-        miniPlayerBar.setBackgroundColor(Theme.getColor(Theme.key_actionBarDefault));
-        miniPlayerBar.setVisibility(View.GONE);
-        miniPlayerBar.setClickable(true);
-
-        miniPlayerButton = new MiniPlayerButton(context);
-        miniPlayerButton.setColor(Theme.getColor(Theme.key_actionBarDefaultIcon));
-        miniPlayerBar.addView(miniPlayerButton, LayoutHelper.createFrame(22, 22, Gravity.CENTER_VERTICAL | Gravity.LEFT, 14, 0, 0, 0));
-
-        miniPlayerTitle = new TextView(context);
-        miniPlayerTitle.setTextColor(Theme.getColor(Theme.key_actionBarDefaultTitle));
-        miniPlayerTitle.setTextSize(14);
-        miniPlayerTitle.setSingleLine(true);
-        miniPlayerTitle.setEllipsize(TextUtils.TruncateAt.END);
-        miniPlayerBar.addView(miniPlayerTitle, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL | Gravity.LEFT, 48, 0, 48, 0));
-
-        miniPlayerBar.setOnClickListener(v -> {
-            MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
-            if (playing == null) return;
-            if (MediaController.getInstance().isMessagePaused()) {
-                MediaController.getInstance().playMessage(playing);
-            } else {
-                MediaController.getInstance().pauseMessage(playing);
+        // РЕАЛЬНЫЙ компонент Telegram, не свой: тот же org.telegram.ui.Components.
+        // FragmentContextView, что используется в ChatActivity/CallLogActivity/
+        // DialogsActivity (упрощённая, без "island"-обёртки topPanelLayout —
+        // тот же прямой addView-паттерн, что и в SharedMediaLayout). Класс сам
+        // подписывается на NotificationCenter.messagePlayingDidStart/
+        // PlayStateChanged/DidReset в onAttachedToWindow(), сам решает когда
+        // показываться/скрываться, сам открывает полноэкранный плеер по тапу —
+        // ничего из этого руками дублировать не нужно. Переопределяем только
+        // setVisibility(), чтобы пересчитать отступ ленты в момент появления/
+        // скрытия бара — тот же паттерн переопределения, что в CallLogActivity.
+        fragmentContextView = new FragmentContextView(context, this, false) {
+            @Override
+            public void setVisibility(int visibility) {
+                super.setVisibility(visibility);
+                applyTopLayout(lastAppliedTopInset >= 0 ? lastAppliedTopInset : cachedStatusBarHeight);
             }
-        });
-        // ВАЖНО: addView(miniPlayerBar, ...) сюда НЕ вставляем — FrameLayout рисует
-        // детей в порядке добавления (последний = поверх), а swipeRefreshLayout с
-        // listView внутри (во весь экран, добавляется ниже по коду) перекрыл бы
-        // мини-плеер целиком, даже когда он VISIBLE. addView вызывается ПОСЛЕ
+        };
+        // ВАЖНО: addView(fragmentContextView, ...) сюда НЕ вставляем — FrameLayout
+        // рисует детей в порядке добавления (последний = поверх), а
+        // swipeRefreshLayout с listView внутри (во весь экран, добавляется ниже по
+        // коду) перекрыл бы мини-плеер целиком. addView вызывается ПОСЛЕ
         // swipeRefreshLayout — см. дальше по методу, сразу за ним.
 
         listView.setAdapter(new RecyclerView.Adapter<RecyclerListView.Holder>() {
@@ -410,9 +353,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         frameLayout.addView(swipeRefreshLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         // Мини-плеер добавляется ЗДЕСЬ, после swipeRefreshLayout — иначе список
         // (во весь экран) рисуется поверх и полностью его перекрывает (см. комментарий
-        // у создания miniPlayerBar выше). Именно это было причиной того, что бар не
-        // появлялся вообще, хотя видимость переключалась корректно.
-        frameLayout.addView(miniPlayerBar, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, MINI_PLAYER_HEIGHT_DP, Gravity.TOP, 0, 0, 0, 0));
+        // у создания fragmentContextView выше).
+        frameLayout.addView(fragmentContextView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, MINI_PLAYER_HEIGHT_DP, Gravity.TOP, 0, 0, 0, 0));
 
         // --- Кнопка "наверх" ---
         scrollToTopButton = new FrameLayout(context);
@@ -486,53 +428,25 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     /**
      * Пересчитывает верхний паддинг ленты и позицию мини-плеера с учётом реального
      * inset статусбара + высоты ActionBar + (если сейчас показан) высоты самого
-     * мини-плеера. Вызывается и из WindowInsets-колбэка, и из updateMiniPlayer()
-     * при появлении/скрытии бара — иначе появление бара наезжало бы на первый пост,
+     * мини-плеера. Вызывается и из WindowInsets-колбэка, и из переопределённого
+     * fragmentContextView.setVisibility() при появлении/скрытии бара — иначе
+     * появление бара наезжало бы на первый пост,
      * не сдвигая содержимое ленты вниз (как это происходит в самом Telegram, когда
      * появляется полоска воспроизведения).
      */
     private void applyTopLayout(int topInset) {
         int actionBarBottom = topInset + ActionBar.getCurrentActionBarHeight();
-        boolean miniPlayerShown = miniPlayerBar != null && miniPlayerBar.getVisibility() == View.VISIBLE;
+        boolean miniPlayerShown = fragmentContextView != null && fragmentContextView.getVisibility() == View.VISIBLE;
         int miniPlayerHeightPx = miniPlayerShown ? AndroidUtilities.dp(MINI_PLAYER_HEIGHT_DP) : 0;
         if (listView != null) {
             listView.setPadding(0, actionBarBottom + miniPlayerHeightPx, 0, AndroidUtilities.dp(56));
         }
-        if (miniPlayerBar != null) {
-            ViewGroup.LayoutParams lpRaw = miniPlayerBar.getLayoutParams();
+        if (fragmentContextView != null) {
+            ViewGroup.LayoutParams lpRaw = fragmentContextView.getLayoutParams();
             if (lpRaw instanceof FrameLayout.LayoutParams) {
                 ((FrameLayout.LayoutParams) lpRaw).topMargin = actionBarBottom;
-                miniPlayerBar.setLayoutParams(lpRaw);
+                fragmentContextView.setLayoutParams(lpRaw);
             }
-        }
-    }
-
-    /**
-     * Обновляет мини-плеер сверху ленты — вызывается по NotificationCenter.
-     * messagePlayingDidStart/messagePlayingPlayStateChanged/messagePlayingDidReset
-     * (см. didReceivedNotification), а также один раз при возврате на вкладку
-     * (onBecomeFullyVisible), т.к. трек мог начать/закончить играть, пока лента
-     * была не видна (например, пользователь запустил его из чата, а не из ленты).
-     */
-    private void updateMiniPlayer() {
-        if (miniPlayerBar == null) return;
-        MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
-        boolean show = playing != null && (playing.isVoice() || playing.isMusic());
-        boolean wasShown = miniPlayerBar.getVisibility() == View.VISIBLE;
-        if (show) {
-            miniPlayerButton.setPlaying(!MediaController.getInstance().isMessagePaused());
-            String title;
-            if (playing.isVoice()) {
-                title = "Голосовое сообщение";
-            } else {
-                String musicTitle = playing.getMusicTitle();
-                title = !TextUtils.isEmpty(musicTitle) ? musicTitle : "Аудио";
-            }
-            miniPlayerTitle.setText(title);
-        }
-        if (show != wasShown) {
-            miniPlayerBar.setVisibility(show ? View.VISIBLE : View.GONE);
-            applyTopLayout(lastAppliedTopInset >= 0 ? lastAppliedTopInset : cachedStatusBarHeight);
         }
     }
 
@@ -1294,10 +1208,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         } else if (id == NotificationCenter.messagePlayingDidStart || id == NotificationCenter.messagePlayingPlayStateChanged || id == NotificationCenter.messagePlayingDidReset) {
             // В отличие от messagePlayingProgressDidChanged (шлётся только для
             // конкретного messageId) — эти три события общие для ЛЮБОЙ смены трека,
-            // поэтому обновляем мини-плеер и обходим ВСЕ видимые ячейки (не только
-            // совпадающую) — иначе кнопка play/pause внутри поста, который играл
-            // раньше, осталась бы показывать устаревшее состояние.
-            updateMiniPlayer();
+            // поэтому обходим ВСЕ видимые ячейки (не только совпадающую) — иначе
+            // кнопка play/pause внутри поста, который играл раньше, осталась бы
+            // показывать устаревшее состояние. Сам мини-плеер (fragmentContextView)
+            // обновляет себя сам — он подписан на эти же три события напрямую.
             if (listView != null) {
                 int count = listView.getChildCount();
                 for (int a = 0; a < count; a++) {
@@ -1343,7 +1257,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     public void onBecomeFullyVisible() {
         super.onBecomeFullyVisible();
         loadFeed();
-        updateMiniPlayer();
     }
 
     /**

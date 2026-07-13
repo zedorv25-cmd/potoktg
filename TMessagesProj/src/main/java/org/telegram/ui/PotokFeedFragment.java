@@ -38,6 +38,7 @@ import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Adapters.DialogsSearchAdapter;
 import org.telegram.ui.Cells.PotokFeedPostCell;
 import org.telegram.ui.Cells.TextCheckCell;
+import org.telegram.ui.Components.BlurredFrameLayout;
 import org.telegram.ui.Components.FragmentContextView;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
@@ -123,10 +124,16 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     // Path-иконка — это и была причина "кривого" плеера и бага с паузой по тапу.
     private FragmentContextView fragmentContextView;
     private RoundedBarContainer miniPlayerContainer;
+    private BlurredFrameLayout miniPlayerGapBlur;
     // Боковой отступ "острова" мини-плеера — 4dp с каждой стороны, ровно как в
     // DialogsActivityTopPanelLayout (реальный код Telegram для этого же бара).
     private static final int MINI_PLAYER_SIDE_MARGIN_DP = 4;
     private static final int MINI_PLAYER_HEIGHT_DP = 38;
+    // Зазор между шапкой и мини-плеером ("пару миллиметров"), заполненный реальным
+    // блюром обоев (тот же BlurredFrameLayout/SizeNotifierFrameLayout.drawBlurRect,
+    // которым в самом Telegram блюрятся панели поверх чата — не самопальная имитация)
+    // + лёгкое затемнение, точь-в-точь как под action bar/topPanel в оригинале.
+    private static final int MINI_PLAYER_GAP_DP = 6;
     private int lastAppliedTopInset = -1;
     private int cachedStatusBarHeight = 0;
     private MainTabsActivityController mainTabsActivityController;
@@ -338,6 +345,9 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 if (miniPlayerContainer != null) {
                     miniPlayerContainer.setVisibility(visibility);
                 }
+                if (miniPlayerGapBlur != null) {
+                    miniPlayerGapBlur.setVisibility(visibility);
+                }
                 applyTopLayout(lastAppliedTopInset >= 0 ? lastAppliedTopInset : cachedStatusBarHeight);
             }
         };
@@ -345,11 +355,24 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         miniPlayerContainer = new RoundedBarContainer(context);
         miniPlayerContainer.setVisibility(View.GONE);
         miniPlayerContainer.addView(fragmentContextView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-        // ВАЖНО: addView(miniPlayerContainer, ...) сюда НЕ вставляем — FrameLayout
-        // рисует детей в порядке добавления (последний = поверх), а
-        // swipeRefreshLayout с listView внутри (во весь экран, добавляется ниже по
-        // коду) перекрыл бы мини-плеер целиком. addView вызывается ПОСЛЕ
-        // swipeRefreshLayout — см. дальше по методу, сразу за ним.
+
+        // Полоса-зазор между шапкой и мини-плеером: "пару миллиметров" воздуха, а не
+        // плеер впритык к заголовку. Заполнена РЕАЛЬНЫМ блюром обоев чата — тем же
+        // механизмом (SizeNotifierFrameLayout.drawBlurRect через BlurredFrameLayout),
+        // которым в оригинальном Telegram блюрятся панели поверх контента (topPanel,
+        // FragmentContextView сам по себе при isInsideBubble=false и т.д.) — не
+        // самопальная имитация полупрозрачным прямоугольником без блюра. Поверх блюра —
+        // лёгкое затемнение тем же способом, что и заливка мини-плеера в самом
+        // Telegram (полупрозрачный чёрный поверх блюра, см. backgroundColor ниже).
+        miniPlayerGapBlur = new BlurredFrameLayout(context, frameLayout);
+        miniPlayerGapBlur.backgroundColor = 0x40000000;
+        miniPlayerGapBlur.isTopView = true;
+        miniPlayerGapBlur.setVisibility(View.GONE);
+        // ВАЖНО: addView(...) сюда НЕ вставляем — FrameLayout рисует детей в порядке
+        // добавления (последний = поверх), а swipeRefreshLayout с listView внутри (во
+        // весь экран, добавляется ниже по коду) перекрыл бы и зазор, и мини-плеер
+        // целиком. addView вызывается ПОСЛЕ swipeRefreshLayout — см. дальше по методу,
+        // сразу за ним.
 
         listView.setAdapter(new RecyclerView.Adapter<RecyclerListView.Holder>() {
             @Override
@@ -403,10 +426,14 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         });
         swipeRefreshLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         frameLayout.addView(swipeRefreshLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-        // Мини-плеер добавляется ЗДЕСЬ, после swipeRefreshLayout — иначе список
-        // (во весь экран) рисуется поверх и полностью его перекрывает (см. комментарий
-        // у создания fragmentContextView/miniPlayerContainer выше). Боковые отступы —
-        // 4dp с каждой стороны, как в оригинале (DialogsActivityTopPanelLayout).
+        // Мини-плеер и зазор-блюр добавляются ЗДЕСЬ, после swipeRefreshLayout — иначе
+        // список (во весь экран) рисуется поверх и полностью их перекрывает (см.
+        // комментарий у создания fragmentContextView/miniPlayerContainer выше).
+        // Зазор — на всю ширину без боковых отступов (сплошная блюр-полоса под
+        // заголовком, как под action bar в оригинале), мини-плеер — с боковыми
+        // отступами 4dp, как в оригинале (DialogsActivityTopPanelLayout). Точная Y-
+        // позиция обоих считается в applyTopLayout() ниже.
+        frameLayout.addView(miniPlayerGapBlur, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, MINI_PLAYER_GAP_DP, Gravity.TOP));
         frameLayout.addView(miniPlayerContainer, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, MINI_PLAYER_HEIGHT_DP, Gravity.TOP,
                 MINI_PLAYER_SIDE_MARGIN_DP, 0, MINI_PLAYER_SIDE_MARGIN_DP, 0));
 
@@ -491,14 +518,22 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private void applyTopLayout(int topInset) {
         int actionBarBottom = topInset + ActionBar.getCurrentActionBarHeight();
         boolean miniPlayerShown = miniPlayerContainer != null && miniPlayerContainer.getVisibility() == View.VISIBLE;
+        int gapPx = miniPlayerShown ? AndroidUtilities.dp(MINI_PLAYER_GAP_DP) : 0;
         int miniPlayerHeightPx = miniPlayerShown ? AndroidUtilities.dp(MINI_PLAYER_HEIGHT_DP) : 0;
         if (listView != null) {
-            listView.setPadding(0, actionBarBottom + miniPlayerHeightPx, 0, AndroidUtilities.dp(56));
+            listView.setPadding(0, actionBarBottom + gapPx + miniPlayerHeightPx, 0, AndroidUtilities.dp(56));
+        }
+        if (miniPlayerGapBlur != null) {
+            ViewGroup.LayoutParams gapLpRaw = miniPlayerGapBlur.getLayoutParams();
+            if (gapLpRaw instanceof FrameLayout.LayoutParams) {
+                ((FrameLayout.LayoutParams) gapLpRaw).topMargin = actionBarBottom;
+                miniPlayerGapBlur.setLayoutParams(gapLpRaw);
+            }
         }
         if (miniPlayerContainer != null) {
             ViewGroup.LayoutParams lpRaw = miniPlayerContainer.getLayoutParams();
             if (lpRaw instanceof FrameLayout.LayoutParams) {
-                ((FrameLayout.LayoutParams) lpRaw).topMargin = actionBarBottom;
+                ((FrameLayout.LayoutParams) lpRaw).topMargin = actionBarBottom + gapPx;
                 miniPlayerContainer.setLayoutParams(lpRaw);
             }
         }

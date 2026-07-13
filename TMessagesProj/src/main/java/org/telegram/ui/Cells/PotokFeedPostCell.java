@@ -843,6 +843,15 @@ public class PotokFeedPostCell extends LinearLayout {
             && !MediaController.getInstance().isMessagePaused();
         audioSeekRow.setVisibility(activelyPlaying ? VISIBLE : GONE);
         audioStaticInfoView.setVisibility(activelyPlaying ? GONE : VISIBLE);
+        // 1:1 с ChatMessageCell: seekBar и performerLayout рисуются В ОДНОЙ И ТОЙ ЖЕ
+        // строке (см. seekBarY = dp(13)/dp(29) — те же смещения, что и у строки
+        // исполнителя), это ВЗАИМОЗАМЕНЯЕМАЯ вторая строка, а не третья отдельная.
+        // Раньше audioPerformerView оставался видимым во время игры, и полоса
+        // перемотки просто добавлялась ПОД ним третьей строкой — отсюда и жалоба
+        // "полоса встаёт не на то место".
+        if (!mo.isVoice() && !TextUtils.isEmpty(mo.getMusicAuthor())) {
+            audioPerformerView.setVisibility(activelyPlaying ? GONE : VISIBLE);
+        }
         if (activelyPlaying) {
             updateAudioTimeText(mo);
         } else {
@@ -1109,7 +1118,7 @@ public class PotokFeedPostCell extends LinearLayout {
         // канала тоже, это ожидаемое поведение, а не побочный эффект.
         final ArrayList<java.io.File> cachedFilesToDelete = new ArrayList<>();
         for (MessageObject mo : groupMessages) {
-            boolean hasMedia = mo.isVoice() || mo.isMusic() || mo.isVideo()
+            boolean hasMedia = mo.isVoice() || mo.isMusic() || mo.isVideo() || mo.isGif()
                 || (mo.photoThumbs != null && !mo.photoThumbs.isEmpty());
             if (!hasMedia) continue;
             mo.checkMediaExistance(false);
@@ -1164,7 +1173,7 @@ public class PotokFeedPostCell extends LinearLayout {
         // Скачать медиа (фото/видео/аудио поста)
         ArrayList<MessageObject> mediaToSave = new ArrayList<>();
         for (MessageObject mo : groupMessages) {
-            boolean hasMedia = mo.isVoice() || mo.isMusic() || mo.isVideo()
+            boolean hasMedia = mo.isVoice() || mo.isMusic() || mo.isVideo() || mo.isGif()
                 || (mo.photoThumbs != null && !mo.photoThumbs.isEmpty());
             if (hasMedia) mediaToSave.add(mo);
         }
@@ -1433,7 +1442,13 @@ public class PotokFeedPostCell extends LinearLayout {
             BackupImageView img = holder.img;
 
             TLRPC.MessageMedia media = mo.messageOwner != null ? mo.messageOwner.media : null;
-            boolean isVideo = mo.isVideo();
+            // GIF в Telegram технически хранится как тот же немой зацикленный
+            // video/mp4-документ (TL_documentAttributeAnimated) — тот же контейнер,
+            // что и обычное видео, поэтому дальше по пайплайну (инлайн-превью,
+            // докачка, автовоспроизведение из кэша) обрабатывается идентично.
+            // Раньше mo.isGif() нигде не проверялся, и такие посты не считались
+            // медиа вообще (см. hasMedia-проверки выше) — GIF просто не отображался.
+            boolean isVideo = mo.isVideo() || mo.isGif();
 
             if (isVideo && media instanceof TLRPC.TL_messageMediaDocument
                     && media.document != null) {
@@ -2350,11 +2365,21 @@ public class PotokFeedPostCell extends LinearLayout {
      * Состояния: 2 — не скачано (стрелка загрузки); 1 — качается (кольцо+крестик);
      * 0 — скачано, не играет (play); 3 — скачано, играет (pause).
      */
+    /**
+     * Круглая play/pause-кнопка аудио-сообщения с ОТДЕЛЬНЫМ маленьким бейджем
+     * загрузки поверх неё — 1:1 с ChatMessageCell для DOCUMENT_ATTACH_TYPE_MUSIC
+     * (см. getMiniIconForCurrentState()/hasMiniProgress): большая кнопка ВСЕГДА
+     * показывает play/pause (никогда не показывает "стрелку загрузки" сама по
+     * себе), а отдельный маленький кружок-бейдж (RadialProgress2.setMiniIcon —
+     * это штатная, встроенная в сам RadialProgress2 функция, не самопальная)
+     * показывает: стрелку загрузки (не скачано), кольцо-крестик с прогрессом
+     * (качается), или пропадает целиком (скачано). Тап по кнопке ВСЕГДА и играет,
+     * и запускает докачку в кэш одновременно — ровно как в реальном Telegram для
+     * музыкальных файлов (потоковое воспроизведение параллельно с докачкой).
+     */
     private static class AudioPlayButton extends View implements DownloadController.FileDownloadProgressListener {
-        private static final int STATE_DOWNLOADING = 1;
         private static final int STATE_PLAY = 0;
-        private static final int STATE_DOWNLOAD = 2;
-        private static final int STATE_PAUSE = 3;
+        private static final int STATE_PAUSE = 1;
 
         private final RadialProgress2 radialProgress;
         private final int TAG;
@@ -2363,6 +2388,8 @@ public class PotokFeedPostCell extends LinearLayout {
         private String fileName;
         private int currentAccount;
         private int buttonState = -1;
+        /** -1 — скачано (бейдж скрыт), 0 — не скачано (стрелка), 1 — качается (крестик+кольцо). */
+        private int miniButtonState = -1;
         /** Возвращает true, если воспроизведение реально стартовало (см. конструктор ячейки). */
         private Utilities.CallbackReturn<MessageObject, Boolean> onPlayRequested;
 
@@ -2417,6 +2444,7 @@ public class PotokFeedPostCell extends LinearLayout {
             document = null;
             fileName = null;
             buttonState = -1;
+            miniButtonState = -1;
         }
 
         /**
@@ -2432,46 +2460,49 @@ public class PotokFeedPostCell extends LinearLayout {
 
         private void updateState(boolean animated) {
             if (document == null || fileName == null) return;
+            // Главная кнопка: ВСЕГДА play/pause, независимо от того, скачан файл или
+            // нет — 1:1 с веткой hasMiniProgress в ChatMessageCell (для музыки тап
+            // по play одновременно стартует и воспроизведение, и докачку в кэш).
+            boolean playing = MediaController.getInstance().isPlayingMessage(messageObject)
+                    && !MediaController.getInstance().isMessagePaused();
+            buttonState = playing ? STATE_PAUSE : STATE_PLAY;
+            radialProgress.setIcon(playing ? MediaActionDrawable.ICON_PAUSE : MediaActionDrawable.ICON_PLAY, false, animated);
+
+            // Маленький бейдж поверх — отдельно отражает состояние ДОКАЧКИ файла в
+            // кэш, никак не завязан на play/pause главной иконки.
             boolean fileExists = messageObject.mediaExists;
-            boolean isLoading = FileLoader.getInstance(currentAccount).isLoadingFile(fileName);
-            if (!fileExists) {
+            if (fileExists) {
+                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
+                miniButtonState = -1;
+                radialProgress.setMiniIcon(MediaActionDrawable.ICON_NONE, false, animated);
+            } else {
                 DownloadController.getInstance(currentAccount).addLoadingFileObserver(fileName, this);
+                boolean isLoading = FileLoader.getInstance(currentAccount).isLoadingFile(fileName);
                 if (isLoading) {
-                    buttonState = STATE_DOWNLOADING;
+                    miniButtonState = 1;
                     Float progress = org.telegram.messenger.ImageLoader.getInstance().getFileProgress(fileName);
                     radialProgress.setProgress(progress != null ? progress : 0, animated);
-                    radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, animated);
+                    radialProgress.setMiniIcon(MediaActionDrawable.ICON_CANCEL, false, animated);
                 } else {
-                    buttonState = STATE_DOWNLOAD;
-                    radialProgress.setIcon(MediaActionDrawable.ICON_DOWNLOAD, false, animated);
+                    miniButtonState = 0;
+                    radialProgress.setMiniIcon(MediaActionDrawable.ICON_DOWNLOAD, false, animated);
                 }
-            } else {
-                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
-                boolean playing = MediaController.getInstance().isPlayingMessage(messageObject);
-                buttonState = playing ? STATE_PAUSE : STATE_PLAY;
-                radialProgress.setIcon(playing ? MediaActionDrawable.ICON_PAUSE : MediaActionDrawable.ICON_PLAY, false, animated);
             }
             invalidate();
         }
 
         private void onClick() {
             if (document == null) return;
-            if (buttonState == STATE_DOWNLOAD) {
-                // Ручная загрузка по тапу — работает ВСЕГДА, независимо от настройки
-                // автозагрузки аудио (та влияет только на автоматический старт, см.
-                // setPost()). Оптимистично выставляем "качается" сразу же — та же
-                // гонка с isLoadingFile(), что уже чинили в VideoDownloadPlate/
-                // PhotoDownloadOverlay, иначе кнопка кажется не реагирующей на тап.
-                messageObject.putInDownloadsStore = true;
-                FileLoader.getInstance(currentAccount).loadFile(document, messageObject, FileLoader.PRIORITY_NORMAL, 0);
-                buttonState = STATE_DOWNLOADING;
-                radialProgress.setProgress(0, false);
-                radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, true);
-                invalidate();
-            } else if (buttonState == STATE_DOWNLOADING) {
-                FileLoader.getInstance(currentAccount).cancelLoadFile(document);
-                updateState(true);
-            } else if (buttonState == STATE_PLAY) {
+            // Тап по кнопке = play/pause, КАК ОБЫЧНО. Если файла ещё нет в кэше —
+            // докачку запускаем ПАРАЛЛЕЛЬНО тем же тапом (не отдельным состоянием
+            // кнопки, как было раньше) — тот же эффект, что в реальном Telegram у
+            // потокового воспроизведения музыки: играть начинает сразу, бейдж
+            // загрузки просто показывает прогресс докачки на фоне.
+            if (buttonState == STATE_PLAY) {
+                if (!messageObject.mediaExists) {
+                    messageObject.putInDownloadsStore = true;
+                    FileLoader.getInstance(currentAccount).loadFile(document, messageObject, FileLoader.PRIORITY_NORMAL, 0);
+                }
                 boolean started = onPlayRequested != null && onPlayRequested.run(messageObject);
                 if (started) {
                     buttonState = STATE_PAUSE;
@@ -2528,7 +2559,7 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         public void onProgressDownload(String name, long downloadedSize, long totalSize) {
             radialProgress.setProgress(Math.min(1f, downloadedSize / (float) totalSize), true);
-            if (buttonState != STATE_DOWNLOADING) {
+            if (miniButtonState != 1) {
                 updateState(true);
             }
         }

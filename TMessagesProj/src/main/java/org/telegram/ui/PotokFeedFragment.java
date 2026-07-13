@@ -6,6 +6,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.RectF;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -121,6 +122,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     // (через parentFragment). Раньше здесь был самописный FrameLayout+TextView+
     // Path-иконка — это и была причина "кривого" плеера и бага с паузой по тапу.
     private FragmentContextView fragmentContextView;
+    private RoundedBarContainer miniPlayerContainer;
+    // Боковой отступ "острова" мини-плеера — 4dp с каждой стороны, ровно как в
+    // DialogsActivityTopPanelLayout (реальный код Telegram для этого же бара).
+    private static final int MINI_PLAYER_SIDE_MARGIN_DP = 4;
     private static final int MINI_PLAYER_HEIGHT_DP = 38;
     private int lastAppliedTopInset = -1;
     private int cachedStatusBarHeight = 0;
@@ -185,6 +190,45 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     }
 
     private static final int MENU_ITEM_FILTER = 1;
+
+    /**
+     * Обёртка-"остров" вокруг настоящего FragmentContextView: скругление и боковые
+     * отступы, посчитанные ТОЧНО как в реальном коде Telegram
+     * (org.telegram.ui.Components.DialogsActivityTopPanelLayout): радиус =
+     * min(24dp, высота/2), боковой отступ = 4dp с каждой стороны. Сам
+     * FragmentContextView переводится в режим isInsideBubble = true (см. его
+     * onDraw — рисует прозрачный фон вместо прямоугольной заливки на весь экран),
+     * а закраску + скругление берёт на себя эта обёртка через clipPath.
+     */
+    private static class RoundedBarContainer extends FrameLayout {
+        private final Path clipPath = new Path();
+        private final RectF rectF = new RectF();
+        private final Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        RoundedBarContainer(Context context) {
+            super(context);
+            setWillNotDraw(false);
+            bgPaint.setColor(Theme.getColor(Theme.key_inappPlayerBackground));
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            rectF.set(0, 0, w, h);
+            float radius = Math.min(AndroidUtilities.dp(24), h / 2f);
+            clipPath.reset();
+            clipPath.addRoundRect(rectF, radius, radius, Path.Direction.CW);
+        }
+
+        @Override
+        protected void dispatchDraw(Canvas canvas) {
+            canvas.drawPath(clipPath, bgPaint);
+            int save = canvas.save();
+            canvas.clipPath(clipPath);
+            super.dispatchDraw(canvas);
+            canvas.restoreToCount(save);
+        }
+    }
 
     private void setupActionBar(Context context) {
         if (actionBar == null) {
@@ -278,22 +322,30 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // --- Мини-плеер сверху ленты ---
         // РЕАЛЬНЫЙ компонент Telegram, не свой: тот же org.telegram.ui.Components.
         // FragmentContextView, что используется в ChatActivity/CallLogActivity/
-        // DialogsActivity (упрощённая, без "island"-обёртки topPanelLayout —
-        // тот же прямой addView-паттерн, что и в SharedMediaLayout). Класс сам
-        // подписывается на NotificationCenter.messagePlayingDidStart/
-        // PlayStateChanged/DidReset в onAttachedToWindow(), сам решает когда
-        // показываться/скрываться, сам открывает полноэкранный плеер по тапу —
-        // ничего из этого руками дублировать не нужно. Переопределяем только
-        // setVisibility(), чтобы пересчитать отступ ленты в момент появления/
-        // скрытия бара — тот же паттерн переопределения, что в CallLogActivity.
+        // DialogsActivity. Класс сам подписывается на NotificationCenter.
+        // messagePlayingDidStart/PlayStateChanged/DidReset в onAttachedToWindow(),
+        // сам решает когда показываться/скрываться, сам открывает полноэкранный
+        // плеер по тапу — ничего из этого руками дублировать не нужно.
+        // isInsideBubble = true — тот же флаг, что выставляют DialogsActivity/
+        // ChatActivity, когда хостят этот бар внутри скруглённого "острова":
+        // отключает его собственную прямоугольную заливку на весь экран (см.
+        // FragmentContextView — frameLayout.setBackgroundColor(isInsideBubble ? 0
+        // : ...)), заливку и скругление берёт на себя RoundedBarContainer ниже.
         fragmentContextView = new FragmentContextView(context, this, false) {
             @Override
             public void setVisibility(int visibility) {
                 super.setVisibility(visibility);
+                if (miniPlayerContainer != null) {
+                    miniPlayerContainer.setVisibility(visibility);
+                }
                 applyTopLayout(lastAppliedTopInset >= 0 ? lastAppliedTopInset : cachedStatusBarHeight);
             }
         };
-        // ВАЖНО: addView(fragmentContextView, ...) сюда НЕ вставляем — FrameLayout
+        fragmentContextView.isInsideBubble = true;
+        miniPlayerContainer = new RoundedBarContainer(context);
+        miniPlayerContainer.setVisibility(View.GONE);
+        miniPlayerContainer.addView(fragmentContextView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+        // ВАЖНО: addView(miniPlayerContainer, ...) сюда НЕ вставляем — FrameLayout
         // рисует детей в порядке добавления (последний = поверх), а
         // swipeRefreshLayout с listView внутри (во весь экран, добавляется ниже по
         // коду) перекрыл бы мини-плеер целиком. addView вызывается ПОСЛЕ
@@ -353,8 +405,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         frameLayout.addView(swipeRefreshLayout, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         // Мини-плеер добавляется ЗДЕСЬ, после swipeRefreshLayout — иначе список
         // (во весь экран) рисуется поверх и полностью его перекрывает (см. комментарий
-        // у создания fragmentContextView выше).
-        frameLayout.addView(fragmentContextView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, MINI_PLAYER_HEIGHT_DP, Gravity.TOP, 0, 0, 0, 0));
+        // у создания fragmentContextView/miniPlayerContainer выше). Боковые отступы —
+        // 4dp с каждой стороны, как в оригинале (DialogsActivityTopPanelLayout).
+        frameLayout.addView(miniPlayerContainer, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, MINI_PLAYER_HEIGHT_DP, Gravity.TOP,
+                MINI_PLAYER_SIDE_MARGIN_DP, 0, MINI_PLAYER_SIDE_MARGIN_DP, 0));
 
         // --- Кнопка "наверх" ---
         scrollToTopButton = new FrameLayout(context);
@@ -436,16 +490,16 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
      */
     private void applyTopLayout(int topInset) {
         int actionBarBottom = topInset + ActionBar.getCurrentActionBarHeight();
-        boolean miniPlayerShown = fragmentContextView != null && fragmentContextView.getVisibility() == View.VISIBLE;
+        boolean miniPlayerShown = miniPlayerContainer != null && miniPlayerContainer.getVisibility() == View.VISIBLE;
         int miniPlayerHeightPx = miniPlayerShown ? AndroidUtilities.dp(MINI_PLAYER_HEIGHT_DP) : 0;
         if (listView != null) {
             listView.setPadding(0, actionBarBottom + miniPlayerHeightPx, 0, AndroidUtilities.dp(56));
         }
-        if (fragmentContextView != null) {
-            ViewGroup.LayoutParams lpRaw = fragmentContextView.getLayoutParams();
+        if (miniPlayerContainer != null) {
+            ViewGroup.LayoutParams lpRaw = miniPlayerContainer.getLayoutParams();
             if (lpRaw instanceof FrameLayout.LayoutParams) {
                 ((FrameLayout.LayoutParams) lpRaw).topMargin = actionBarBottom;
-                fragmentContextView.setLayoutParams(lpRaw);
+                miniPlayerContainer.setLayoutParams(lpRaw);
             }
         }
     }

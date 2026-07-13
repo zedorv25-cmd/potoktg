@@ -93,8 +93,15 @@ public class PotokFeedPostCell extends LinearLayout {
     private final FrameLayout audioContainer;
     private final AudioSeekBarView audioSeekBarView;
     private final AudioWaveformView audioWaveformView;
+    // Строка 3 (константа): "0:00 / 3:45" — видна ВСЕГДА, не зависит от того, играет
+    // трек или нет. 1:1 с ChatMessageCell.durationLayout (см. y=dp(57) в оригинале —
+    // отдельная строка ПОД строкой 2, не приклеена сбоку к полосе перемотки).
     private final TextView audioTimeView;
-    private final TextView audioStaticInfoView;
+    // Строка 2 (переключаемая): performer ИЛИ seekBar/waveform — оба ребёнка занимают
+    // одно и то же место и кроссфейдятся между собой (см. updateAudioSeekRowVisibility),
+    // 1:1 с ChatMessageCell.toSeekBarProgress-анимацией (performerLayout/seekBar рисуются
+    // на одной Y-координате, alpha-переход между ними).
+    private final FrameLayout audioSecondRow;
     private final LinearLayout audioSeekRow;
 
     // --- Опрос ---
@@ -327,15 +334,33 @@ public class PotokFeedPostCell extends LinearLayout {
         // SeekBar), просто собранных в обычные Android View вместо ручной отрисовки
         // в одном гигантском canvas-методе.
         audioContainer = new FrameLayout(context);
+        // Не обрезать детей — см. подробный комментарий у audioTopRow.setClipChildren
+        // ниже: мини-бейдж загрузки на аудио-кнопке рисуется с небольшим выходом за
+        // пределы своего 44x44dp View, и клип на ЛЮБОМ уровне между кнопкой и экраном
+        // обрежет его точно так же. Отключаем на обоих уровнях-предках.
+        audioContainer.setClipChildren(false);
         addView(audioContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 8, 10, 8, 0));
 
         LinearLayout audioColumn = new LinearLayout(context);
         audioColumn.setOrientation(VERTICAL);
+        audioColumn.setClipChildren(false);
         audioContainer.addView(audioColumn, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
         LinearLayout audioTopRow = new LinearLayout(context);
         audioTopRow.setOrientation(HORIZONTAL);
         audioTopRow.setGravity(Gravity.CENTER_VERTICAL);
+        // Фикс "бейдж загрузки — белый неполноценный круг": RadialProgress2 рисует
+        // мини-бейдж СО СДВИГОМ +16dp от центра главной иконки (см. RadialProgress2.draw,
+        // ветка drawMiniIcon — cx/cy = progressRect.center + dp(16), радиус ~11dp).
+        // AudioPlayButton ниже жёстко занимает ровно 44x44dp (onMeasure), поэтому правый
+        // нижний край бейджа (~49dp от левого верхнего угла) на несколько dp вылезал за
+        // границы САМОЙ КНОПКИ — а ViewGroup по умолчанию (clipChildren=true) обрезает
+        // отрисовку ребёнка ровно по его layout-границам, отсюда и "срезанный" круг.
+        // В оригинале (SharedAudioCell) это не проявляется, потому что там иконка
+        // рисуется прямо на канвасе всей ячейки (без отдельного дочернего View со своими
+        // границами) — там обрезать нечем. Здесь конструкция другая (реальные Android
+        // View, не Canvas), поэтому разрешаем родителю не обрезать детей.
+        audioTopRow.setClipChildren(false);
         audioColumn.addView(audioTopRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
         audioPlayButton = new AudioPlayButton(context, resourcesProvider);
@@ -355,6 +380,11 @@ public class PotokFeedPostCell extends LinearLayout {
         audioTitleColumn.setOrientation(VERTICAL);
         audioTopRow.addView(audioTitleColumn, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, 10, 0, 0, 0));
 
+        // Строка 1: только название — исполнитель больше НЕ живёт в этой колонке
+        // (раньше был здесь, вторым TextView'ом под названием, отсюда и жалоба
+        // "во время игры остаётся только название и сразу полоса" — исполнитель просто
+        // схлопывался в GONE без анимации и без своего места). Теперь исполнитель —
+        // часть строки 2 (audioSecondRow) ниже, наравне с полосой перемотки.
         audioTitleView = new TextView(context);
         audioTitleView.setTextSize(15);
         audioTitleView.setTypeface(AndroidUtilities.bold());
@@ -363,43 +393,52 @@ public class PotokFeedPostCell extends LinearLayout {
         audioTitleView.setEllipsize(TextUtils.TruncateAt.END);
         audioTitleColumn.addView(audioTitleView);
 
+        // Строка 2 (переключаемая, с анимацией): исполнитель ИЛИ полоса перемотки —
+        // 1:1 с ChatMessageCell, где performerLayout и seekBar рисуются на ОДНОЙ и той
+        // же Y-координате и кроссфейдятся (alpha + лёгкий scale) друг в друга, вместо
+        // того чтобы одно резко исчезало, а другое резко появлялось ниже отдельной
+        // строкой. Оба ребёнка лежат в одном FrameLayout один поверх другого;
+        // видимость/прозрачность переключается в updateAudioSeekRowVisibility().
         audioPerformerView = new TextView(context);
         audioPerformerView.setTextSize(13);
         audioPerformerView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
         audioPerformerView.setMaxLines(1);
         audioPerformerView.setEllipsize(TextUtils.TruncateAt.END);
-        audioTitleColumn.addView(audioPerformerView);
 
         // Ползунок/волна прогресса воспроизведения — по тому же паттерну, что и
         // ChatMessageCell (SeekBar/SeekBarWaveform + NotificationCenter
         // messagePlayingProgressDidChanged для обновления, см. updateAudioProgressIfPlaying).
         // Видны ОБА варианта заранее, переключается только visibility в setPost() в
         // зависимости от isVoice()/isMusic() — как и в оригинале, где это тоже два
-        // разных пути отрисовки внутри одной и той же ячейки.
+        // разных пути отрисовки внутри одной и той же ячейки. Время сюда больше НЕ
+        // добавляется сбоку — оно теперь отдельная константная строка 3 (см. ниже).
         audioSeekBarView = new AudioSeekBarView(context, resourcesProvider);
         audioWaveformView = new AudioWaveformView(context, resourcesProvider);
-        audioTimeView = new TextView(context);
-        audioTimeView.setTextSize(12);
-        audioTimeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
 
         LinearLayout audioSeekRow = new LinearLayout(context);
         audioSeekRow.setOrientation(HORIZONTAL);
         audioSeekRow.setGravity(Gravity.CENTER_VERTICAL);
-        audioColumn.addView(audioSeekRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 54, 4, 8, 0));
         audioSeekRow.addView(audioSeekBarView, LayoutHelper.createLinear(0, 24, 1f));
         audioSeekRow.addView(audioWaveformView, LayoutHelper.createLinear(0, 24, 1f));
-        audioSeekRow.addView(audioTimeView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, Gravity.CENTER_VERTICAL, 8, 0, 0, 0));
         this.audioSeekRow = audioSeekRow;
 
-        // Статичная строка "длительность  размер" (например "0:00 / 3:17  43,3 МБ") —
-        // показывается вместо полосы перемотки, пока трек НЕ играет прямо сейчас
-        // (не запускали вообще, или стоит на паузе) — один в один с тем, как это
-        // выглядит в самом Telegram (полоса-с-точкой появляется только во время
-        // реального воспроизведения, см. updateAudioSeekRowVisibility()).
-        audioStaticInfoView = new TextView(context);
-        audioStaticInfoView.setTextSize(13);
-        audioStaticInfoView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
-        audioColumn.addView(audioStaticInfoView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 54, 4, 8, 0));
+        audioSecondRow = new FrameLayout(context);
+        audioColumn.addView(audioSecondRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 24, 54, 4, 8, 0));
+        audioSecondRow.addView(audioPerformerView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL));
+        audioSecondRow.addView(audioSeekRow, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        // Строка 3 (константа): "0:00 / 3:45" — 1:1 с ChatMessageCell.durationLayout,
+        // которая рисуется на СВОЕЙ отдельной Y-координате (dp(57) в оригинале, ниже
+        // строки 2) и видна ВСЕГДА — и до первого тапа play, и во время игры, и на
+        // паузе, независимо от activelyPlaying. В оригинале для типа "музыка" (не
+        // войс-АУДИО-документ, а именно DOCUMENT_ATTACH_TYPE_MUSIC) в этой строке нет
+        // размера файла — только время, поэтому размер файла сюда сознательно не
+        // добавлен (раньше в audioStaticInfoView был "0:00 / 2:56  5,9 MB" — это не
+        // совпадало с оригиналом, который для музыки размер вообще не показывает).
+        audioTimeView = new TextView(context);
+        audioTimeView.setTextSize(13);
+        audioTimeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
+        audioColumn.addView(audioTimeView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 54, 2, 8, 0));
 
 
         // --- Опрос ---
@@ -596,29 +635,28 @@ public class PotokFeedPostCell extends LinearLayout {
             audioSeekBarView.setVisibility(voice ? GONE : VISIBLE);
             if (voice) {
                 audioTitleView.setText("Голосовое сообщение");
-                audioPerformerView.setVisibility(GONE);
                 audioWaveformView.setMessageObject(messageObject);
                 audioSeekBarView.setMessageObject(null);
             } else {
                 String title = messageObject.getMusicTitle();
                 String performer = messageObject.getMusicAuthor();
                 audioTitleView.setText(!TextUtils.isEmpty(title) ? title : "Аудио");
-                if (!TextUtils.isEmpty(performer)) {
-                    audioPerformerView.setVisibility(VISIBLE);
-                    audioPerformerView.setText(performer);
-                } else {
-                    audioPerformerView.setVisibility(GONE);
-                }
+                // Текст выставляем всегда (даже если сейчас будет скрыт) — итоговую
+                // видимость/кроссфейд строки 2 авторитетно решает
+                // updateAudioSeekRowVisibility() ниже.
+                audioPerformerView.setText(performer);
                 audioSeekBarView.setMessageObject(messageObject);
                 audioWaveformView.setMessageObject(null);
             }
-            // Полоса перемотки видна ТОЛЬКО когда трек реально играет прямо сейчас
-            // (не на паузе, не до старта) — один в один с оригиналом: до первого
-            // тапа play и после паузы показывается статичная строка "длительность
-            // размер", а не бегущая полоса с точкой (см. updateAudioSeekRowVisibility).
+            // Строка 2 (исполнитель <-> полоса перемотки) переключается строго по
+            // тому, играет ли трек ПРЯМО СЕЙЧАС — 1:1 с оригиналом: до первого тапа
+            // play и после паузы видна строка исполнителя, полоса появляется только
+            // во время активного воспроизведения (см. updateAudioSeekRowVisibility).
+            // animated=false — это свежий bind ячейки, а не живой переход на глазах
+            // у пользователя.
             messageObject.checkMediaExistance(false);
             audioPlayButton.bind(messageObject);
-            updateAudioSeekRowVisibility(messageObject);
+            updateAudioSeekRowVisibility(messageObject, false);
 
             // Автозагрузка аудио в кэш — настройка из меню трёх точек + потолок
             // размера (1 МБ моб. / 3 МБ Wi-Fi, те же цифры, что у видео, см.
@@ -821,49 +859,83 @@ public class PotokFeedPostCell extends LinearLayout {
         audioSeekBarView.setMessageObject(null);
         audioWaveformView.setMessageObject(null);
         audioPlayButton.unbind();
+        // Отменяем любую недоигравшую анимацию кроссфейда и сбрасываем оба ребёнка
+        // строки 2 в чистое состояние — иначе при переиспользовании этого ViewHolder'а
+        // под другой пост (RecyclerView recycling) можно унаследовать "застрявшую"
+        // альфу от прошлой анимации.
+        audioSeekRow.animate().cancel();
+        audioPerformerView.animate().cancel();
+        audioSeekRow.setAlpha(1f);
         audioSeekRow.setVisibility(GONE);
-        audioStaticInfoView.setVisibility(GONE);
-    }
-
-    private void updateAudioTimeText(MessageObject mo) {
-        int durationSec = (int) mo.getDuration();
-        int playedSec = mo.audioProgressSec;
-        audioTimeView.setText(AndroidUtilities.formatShortDuration(playedSec, durationSec));
+        audioPerformerView.setAlpha(1f);
+        audioPerformerView.setVisibility(GONE);
     }
 
     /**
-     * Переключает audioSeekRow (бегущая полоса с точкой) и audioStaticInfoView
-     * (статичный текст "длительность  размер") — строго по тому, играет ли ЭТОТ
-     * трек ПРЯМО СЕЙЧАС (не на паузе). Один в один с реальным поведением
-     * Telegram: до первого тапа play и сразу после постановки на паузу видна
-     * статичная строка, полоса появляется только во время активного воспроизведения.
+     * Строка 3 (константа): "0:00 / 3:45". 1:1 с ChatMessageCell — текущая позиция
+     * показывается ТОЛЬКО пока трек реально играет (не на паузе), иначе всегда "0:00",
+     * даже если mo.audioProgressSec ещё хранит позицию последней паузы.
      */
-    private void updateAudioSeekRowVisibility(MessageObject mo) {
+    private void updateAudioTimeText(MessageObject mo) {
         boolean activelyPlaying = MediaController.getInstance().isPlayingMessage(mo)
             && !MediaController.getInstance().isMessagePaused();
-        audioSeekRow.setVisibility(activelyPlaying ? VISIBLE : GONE);
-        audioStaticInfoView.setVisibility(activelyPlaying ? GONE : VISIBLE);
-        // 1:1 с ChatMessageCell: seekBar и performerLayout рисуются В ОДНОЙ И ТОЙ ЖЕ
-        // строке (см. seekBarY = dp(13)/dp(29) — те же смещения, что и у строки
-        // исполнителя), это ВЗАИМОЗАМЕНЯЕМАЯ вторая строка, а не третья отдельная.
-        // Раньше audioPerformerView оставался видимым во время игры, и полоса
-        // перемотки просто добавлялась ПОД ним третьей строкой — отсюда и жалоба
-        // "полоса встаёт не на то место".
-        if (!mo.isVoice() && !TextUtils.isEmpty(mo.getMusicAuthor())) {
-            audioPerformerView.setVisibility(activelyPlaying ? GONE : VISIBLE);
+        int durationSec = (int) mo.getDuration();
+        int playedSec = activelyPlaying ? mo.audioProgressSec : 0;
+        audioTimeView.setText(AndroidUtilities.formatShortDuration(playedSec, durationSec));
+    }
+
+    /** Плавный кроссфейд между двумя детьми audioSecondRow (аналог alpha-перехода
+     * ChatMessageCell.toSeekBarProgress между performerLayout и seekBar). animated=false
+     * используется на свежем bind() ViewHolder'а — переключение должно быть мгновенным,
+     * а не анимированным, когда пользователь ещё не видел предыдущего состояния. */
+    private void crossfadeSecondRow(View show, View hide, boolean animated) {
+        show.animate().cancel();
+        hide.animate().cancel();
+        if (!animated) {
+            show.setAlpha(1f);
+            show.setVisibility(VISIBLE);
+            hide.setAlpha(0f);
+            hide.setVisibility(GONE);
+            return;
         }
-        if (activelyPlaying) {
-            updateAudioTimeText(mo);
-        } else {
-            int durationSec = (int) mo.getDuration();
-            String durationStr = "0:00 / " + AndroidUtilities.formatShortDuration(durationSec);
-            TLRPC.Document doc = mo.getDocument();
-            if (doc != null && doc.size > 0) {
-                audioStaticInfoView.setText(durationStr + "   " + AndroidUtilities.formatFileSize(doc.size));
+        if (show.getVisibility() != VISIBLE || show.getAlpha() < 1f) {
+            show.setVisibility(VISIBLE);
+            show.animate().alpha(1f).setDuration(220).start();
+        }
+        if (hide.getVisibility() == VISIBLE) {
+            hide.animate().alpha(0f).setDuration(220).withEndAction(() -> {
+                if (hide.getAlpha() <= 0f) hide.setVisibility(GONE);
+            }).start();
+        }
+    }
+
+    /**
+     * Переключает строку 2 (audioSecondRow: исполнитель <-> полоса перемотки) — строго
+     * по тому, играет ли ЭТОТ трек ПРЯМО СЕЙЧАС (не на паузе), с анимированным
+     * кроссфейдом вместо резкого GONE/VISIBLE. Строка 3 (audioTimeView) больше не
+     * зависит от activelyPlaying — она обновляется всегда, отдельно от переключения.
+     */
+    private void updateAudioSeekRowVisibility(MessageObject mo, boolean animated) {
+        boolean activelyPlaying = MediaController.getInstance().isPlayingMessage(mo)
+            && !MediaController.getInstance().isMessagePaused();
+        boolean hasPerformerRow = !mo.isVoice() && !TextUtils.isEmpty(mo.getMusicAuthor());
+        if (hasPerformerRow) {
+            if (activelyPlaying) {
+                crossfadeSecondRow(audioSeekRow, audioPerformerView, animated);
             } else {
-                audioStaticInfoView.setText(durationStr);
+                crossfadeSecondRow(audioPerformerView, audioSeekRow, animated);
             }
+        } else {
+            // Войс или музыка без указанного исполнителя — исполнителю нечего
+            // показывать, полоса/волна просто показывается или прячется без пары.
+            audioPerformerView.animate().cancel();
+            audioPerformerView.setAlpha(1f);
+            audioPerformerView.setVisibility(GONE);
+            audioSeekRow.animate().cancel();
+            audioSeekRow.setAlpha(1f);
+            audioSeekRow.setVisibility(activelyPlaying ? VISIBLE : GONE);
         }
+        updateAudioTimeText(mo);
     }
 
     /**
@@ -884,7 +956,9 @@ public class PotokFeedPostCell extends LinearLayout {
             // Прогресс потёк — значит трек реально играет; если полоса ещё не
             // показана (например, статус playing/paused сменился без отдельного
             // messagePlayingPlayStateChanged), досчитаем видимость прямо здесь.
-            updateAudioSeekRowVisibility(currentMessage);
+            // Без анимации — это "досчитывание" пропущенного состояния, а не живой
+            // пользовательский переход.
+            updateAudioSeekRowVisibility(currentMessage, false);
         }
         audioSeekBarView.updateProgress();
         audioWaveformView.updateProgress();
@@ -898,13 +972,13 @@ public class PotokFeedPostCell extends LinearLayout {
      * выше), а вообще при любой смене состояния плеера, поэтому вызывается по ВСЕМ
      * видимым ячейкам, а не только по совпадающей — иначе если заиграл другой трек,
      * кнопка play/pause этой ячейки не узнала бы об этом и осталась показывать
-     * устаревшее состояние. Именно отсюда приходит переключение полоса↔статичный
-     * текст при постановке на паузу/остановке — а не только на старте.
+     * устаревшее состояние. Именно отсюда приходит анимированное переключение
+     * исполнитель↔полоса при постановке на паузу/остановке — а не только на старте.
      */
     public void refreshAudioPlaybackState() {
         if (audioContainer.getVisibility() == VISIBLE && currentMessage != null) {
             audioPlayButton.refresh();
-            updateAudioSeekRowVisibility(currentMessage);
+            updateAudioSeekRowVisibility(currentMessage, true);
         }
     }
 
@@ -1481,8 +1555,14 @@ public class PotokFeedPostCell extends LinearLayout {
                 int pw = currentPhotoObject != null ? currentPhotoObject.w : AndroidUtilities.displaySize.x;
                 int ph = currentPhotoObject != null ? currentPhotoObject.h : AndroidUtilities.displaySize.x;
                 String currentPhotoFilter = pw + "_" + ph;
+                // Фикс "разный блюр на разных постах": здесь раньше был суффикс "_b"
+                // (слабый блюр, 1 проход) — тот же баг, что уже чинили для фото (см.
+                // "50_50_b2" в фото-ветке ниже). У видео/GIF (эта ветка) суффикс остался
+                // "_b" по недосмотру — отсюда и "некоторые посты правильно заблюрены,
+                // некоторые слегка": фото уже показывали сильный блюр "_b2", а видео/GIF-
+                // превью — слабый "_b". Приведено к тому же сильному "_b2", что и у фото.
                 String currentPhotoFilterThumb = currentPhotoObjectThumb != null
-                    ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h + "_b" : "b1";
+                    ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h + "_b2" : "b2";
 
                 // ГЛАВНОЕ ИЗМЕНЕНИЕ: видео больше НЕ подгружается/не стримится само по
                 // себе при показе поста. canDecodeFromVideo (декодирование реального
@@ -1658,1517 +1738,4 @@ public class PotokFeedPostCell extends LinearLayout {
 
         class MediaHolder extends RecyclerView.ViewHolder {
             final BackupImageView img;
-            final PlayIndicatorView playIndicator;
-            final VideoDownloadPlate downloadPlate;
-            final PhotoDownloadOverlay photoOverlay;
-            MediaHolder(View wrapper, BackupImageView img, PlayIndicatorView playIndicator, VideoDownloadPlate downloadPlate, PhotoDownloadOverlay photoOverlay) {
-                super(wrapper);
-                this.img = img;
-                this.playIndicator = playIndicator;
-                this.downloadPlate = downloadPlate;
-                this.photoOverlay = photoOverlay;
-            }
-        }
-    }
-
-    // ------------------------------------------------------------------ VideoDownloadPlate
-    /**
-     * Единая плашка загрузки видео — как в оригинальном Telegram (референс, который
-     * прислал пользователь): тёмная скруглённая подложка, внутри слева иконка
-     * загрузки (RadialProgress2, без своего фонового круга — фон рисует сама
-     * плашка), справа от неё в две строки длительность видео и размер файла.
-     *
-     * Состояния:
-     * - Файла нет в кэше: плашка целиком видна, иконка — стрелка "скачать".
-     * - Идёт загрузка: иконка меняется на кольцо прогресса + крестик отмены,
-     *   текст (длительность/размер) остаётся на месте.
-     * - Файл скачан: плашка целиком пропадает (setVisibility(GONE)) — не по
-     *   частям, как раньше, а вся сразу, остаётся только play-кнопка по центру.
-     *
-     * Если файл потом удалили из кэша (вручную или системной очисткой), это
-     * само по себе не отслеживается никаким колбэком — TDLib/DownloadController
-     * не уведомляют о удалении файлов извне. Вместо постоянного опроса диска
-     * (лишняя нагрузка на каждый кадр) состояние честно пересчитывается заново
-     * при каждом bind() — то есть при любом пересоздании/переприкреплении ячейки:
-     * возврат на вкладку ленты (PotokFeedFragment.onResume -> loadFeed ->
-     * notifyDataSetChanged), обновление свайпом вниз, скролл с переиспользованием
-     * ViewHolder'а. Поэтому если пользователь удалил видео из кэша, уйдя из ленты
-     * и вернувшись — плашка появится снова, кнопка загрузки корректно вернётся.
-     */
-    private static class VideoDownloadPlate extends View implements DownloadController.FileDownloadProgressListener {
-        private static final int ICON_AREA = dp(24);
-        private static final int PAD_H = dp(8);
-        private static final int PAD_V = dp(5);
-        private static final int GAP = dp(6);
-
-        private final RadialProgress2 radialProgress;
-        private final android.text.TextPaint textPaint;
-        private final int TAG;
-        private TLRPC.Document document;
-        private int currentAccount;
-        private String fileName;
-        private Runnable onReady;
-        private int buttonState; // -1 = скачан/ничего не показываем, 1 = грузится, 2 = скачать
-        private String durationText = "";
-        // sizeText — статичный размер файла целиком ("5 MB"), показывается пока
-        // загрузка не идёт. progressText — "2,5 MB / 5 MB", показывается вместо
-        // sizeText только во время реальной закачки (buttonState == 1). Оба текста
-        // выводятся во второй строке — они никогда не показываются одновременно.
-        private String sizeText = "";
-        private String progressText = "";
-
-        // measuredContentWidth — фактическая ширина, которую плашка заявляет системе
-        // компоновки (то, что вернёт onMeasure). Растёт МГНОВЕННО, как только новому
-        // тексту не хватает места (это безопасно — канвас становится шире, обрезать
-        // нечего), а уменьшается только ПОСЛЕ того, как анимация до нового (меньшего)
-        // значения полностью доиграет в onDraw — иначе границы View схлопнулись бы
-        // раньше, чем анимация закончится, и обрезали бы недорисованный текст.
-        // -1 — ещё ни разу не считалось (до первого bind()).
-        private int measuredContentWidth = -1;
-        private final RectF bgRect = new RectF();
-        private final Paint bgPaint;
-        // animatedWidth анимирует ТОЛЬКО визуально нарисованную ширину подложки в
-        // onDraw (см. там) — реальные границы View (measuredContentWidth) меняются
-        // отдельно по правилам выше, а не одномоментно с текстом, как было раньше.
-        private final AnimatedFloat animatedWidth;
-
-        VideoDownloadPlate(Context context) {
-            super(context);
-            radialProgress = new RadialProgress2(this);
-            radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
-                    Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
-            // Фон-круг под иконкой не нужен — вся плашка уже тёмная (см. bg ниже),
-            // поэтому у самой иконки фона нет, как и раньше у стрелки.
-            radialProgress.setDrawBackground(false);
-            // ВАЖНО: радиус кольца НЕ равен половине области иконки (ICON_AREA/2 = dp(12)).
-            // В оригинале (ChatMessageCell.videoRadialProgress) для точно такой же плашки
-            // используется videoRadialProgress.setCircleRadius(dp(15)) при области иконки
-            // ровно dp(24) — то есть кольцо специально крупнее своей области и "вылезает"
-            // за неё, из-за чего между кольцом и иконкой отмены (крестиком) внутри остаётся
-            // нормальный зазор. С радиусом ровно dp(12) (ICON_AREA/2) кольцо плотно
-            // заполняло всю область встык — отсюда и слипшийся с крестиком вид, который
-            // был замечен. Область тапа/раскладки (ICON_AREA=24) не меняется, меняется
-            // только визуальный радиус самого кольца — один в один как в оригинале.
-            radialProgress.setCircleRadius(dp(15));
-
-            textPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
-            textPaint.setColor(0xFFFFFFFF);
-            textPaint.setTextSize(dp(11));
-            textPaint.setTypeface(AndroidUtilities.bold());
-
-            // Фон рисуем вручную в onDraw (см. там), а не через setBackground —
-            // setBackground всегда закрашивает ровно текущие границы View целиком, а
-            // подложке нужно уметь анимированно менять ширину независимо от реальных
-            // границ (см. measuredContentWidth/animatedWidth выше).
-            bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-            bgPaint.setColor(0x99000000);
-            animatedWidth = new AnimatedFloat(this, 220, CubicBezierInterpolator.EASE_OUT);
-
-            TAG = DownloadController.getInstance(UserConfig.selectedAccount).generateObserverTag();
-            setOnClickListener(v -> onClick());
-        }
-
-        void bind(TLRPC.Document doc, int account, Runnable onReadyCallback) {
-            unbind();
-            document = doc;
-            currentAccount = account;
-            onReady = onReadyCallback;
-            fileName = FileLoader.getAttachFileName(doc);
-
-            long durationSec = 0;
-            for (TLRPC.DocumentAttribute attr : doc.attributes) {
-                if (attr instanceof TLRPC.TL_documentAttributeVideo) {
-                    durationSec = (long) attr.duration;
-                    break;
-                }
-            }
-            durationText = durationSec > 0 ? AndroidUtilities.formatShortDuration((int) durationSec) : "";
-            sizeText = AndroidUtilities.formatFileSize(doc.size);
-            progressText = sizeText;
-
-            // Ячейка переиспользуется RecyclerView'ом под другой пост — ширина здесь
-            // не "переход состояния внутри одного поста", а смена контента целиком,
-            // поэтому выставляем её МГНОВЕННО (force), без анимации между чужими
-            // друг другу значениями.
-            measuredContentWidth = computeDesiredWidth();
-            animatedWidth.force(measuredContentWidth);
-
-            updateState(false);
-        }
-
-        // Общая формула ширины подложки под текущий текст (длительность + вторая
-        // строка — прогресс или статичный размер). Вызывается и из onMeasure (что
-        // фактически заявлено системе компоновки), и из syncWidth() (что реально
-        // нужно ПРЯМО СЕЙЧАС по актуальному тексту).
-        private int computeDesiredWidth() {
-            float w1 = textPaint.measureText(durationText);
-            String secondLine = buttonState == 1 ? progressText : sizeText;
-            float w2 = textPaint.measureText(secondLine);
-            int textWidth = (int) Math.ceil(Math.max(w1, w2));
-            // Симметрия: правый паддинг (текст -> край) точно равен левому (край -> иконка),
-            // оба PAD_H. Слева иконка тоже центрирована в своей области (см. onSizeChanged).
-            return PAD_H + ICON_AREA + GAP + textWidth + PAD_H;
-        }
-
-        void unbind() {
-            if (fileName != null) {
-                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
-            }
-            document = null;
-            fileName = null;
-            onReady = null;
-        }
-
-        private void updateState(boolean animated) {
-            if (document == null || fileName == null) {
-                return;
-            }
-            // forceCache=false — см. подробное объяснение у аналогичной проверки в
-            // onBindViewHolder выше. С forceCache=true плашка всегда "видела" файл как
-            // отсутствующий (смотрела не в ту папку), поэтому не пропадала после
-            // скачивания вообще никогда, даже после полного рестарта приложения.
-            java.io.File cacheFile = FileLoader.getInstance(currentAccount).getPathToAttach(document, false);
-            boolean fileExists = cacheFile != null && cacheFile.exists();
-            boolean isLoading = FileLoader.getInstance(currentAccount).isLoadingFile(fileName);
-            if (fileExists) {
-                // Файл на месте — плашка (стрелка/прогресс + длительность + размер)
-                // пропадает ВСЯ целиком, ничего от неё не остаётся видимым.
-                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
-                buttonState = -1;
-                setVisibility(GONE);
-                if (onReady != null) {
-                    onReady.run();
-                }
-            } else {
-                // Файла нет (либо ещё не качали, либо его удалили из кэша уже после
-                // того, как раньше он был скачан) — плашка снова видна целиком,
-                // кнопка загрузки доступна для повторного скачивания.
-                setVisibility(VISIBLE);
-                DownloadController.getInstance(currentAccount).addLoadingFileObserver(fileName, this);
-                if (isLoading) {
-                    buttonState = 1;
-                    Float progress = org.telegram.messenger.ImageLoader.getInstance().getFileProgress(fileName);
-                    radialProgress.setProgress(progress != null ? progress : 0, animated);
-                    radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, animated);
-                } else {
-                    buttonState = 2;
-                    // Загрузка не идёт (ещё не начата, отменена или упала с ошибкой) —
-                    // вторая строка возвращается к статичному полному размеру файла.
-                    progressText = sizeText;
-                    radialProgress.setIcon(MediaActionDrawable.ICON_DOWNLOAD, false, animated);
-                }
-            }
-            // Подложка должна быть адаптивной по ширине под текущий текст (как в
-            // оригинале), а не зарезервированной заранее под "худший случай". Раньше
-            // requestLayout() звался здесь только на переходах состояния, а тики
-            // прогресса (onProgressDownload) обновляли текст напрямую, минуя пересчёт
-            // ширины — из-за этого при докачке текст ("2,5 MB / 5 MB") становился
-            // длиннее подложки, замеренной ещё под короткое "0 B / 5 MB", и обрезался.
-            // syncWidth() теперь пересчитывает ширину на КАЖДОМ изменении текста —
-            // и здесь, и на каждом тике прогресса (см. onProgressDownload).
-            syncWidth();
-        }
-
-        private void onClick() {
-            if (document == null) return;
-            if (buttonState == 2) {
-                // Тап по стрелке — запускаем реальную загрузку в кэш, ровно как жмут
-                // кнопку загрузки в самом Telegram/Plus Messenger. Выставляем "0 MB / X"
-                // сразу, не дожидаясь первого колбэка onProgressDownload — иначе на
-                // долю секунды видна старая надпись со статичным полным размером.
-                progressText = AndroidUtilities.formatFileSize(0) + " / " + sizeText;
-                FileLoader.getInstance(currentAccount).loadFile(document, null, FileLoader.PRIORITY_NORMAL, 0);
-                updateState(true);
-            } else if (buttonState == 1) {
-                // Тап по крестику во время загрузки — отмена.
-                FileLoader.getInstance(currentAccount).cancelLoadFile(document);
-                updateState(true);
-            }
-        }
-
-        // Вызывается при любом реальном изменении текста второй строки: и из
-        // updateState() (переход состояния), и из onProgressDownload() (каждый тик
-        // закачки). Раньше тик прогресса не пересчитывал ширину вообще — отсюда и
-        // была обрезка текста.
-        private void syncWidth() {
-            int desired = computeDesiredWidth();
-            if (measuredContentWidth < 0 || desired > measuredContentWidth) {
-                // Расширяем МГНОВЕННО — канвас становится шире, обрезать нечего, а
-                // визуальный рост подложки всё равно доиграет через animatedWidth в
-                // onDraw (см. там).
-                measuredContentWidth = desired;
-                requestLayout();
-            }
-            // Если desired МЕНЬШЕ текущего — реальные границы View пока не трогаем:
-            // тронуть их сейчас значило бы обрезать canvas раньше, чем анимация
-            // сужения доиграет. Это доделает сам onDraw(), когда animatedWidth дойдёт
-            // до цели (см. проверку в конце onDraw).
-            invalidate();
-        }
-
-        @Override
-        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            if (measuredContentWidth < 0) {
-                measuredContentWidth = computeDesiredWidth();
-            }
-            int height = PAD_V + ICON_AREA + PAD_V;
-            setMeasuredDimension(measuredContentWidth, height);
-        }
-
-        @Override
-        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-            super.onSizeChanged(w, h, oldw, oldh);
-            int top = (h - ICON_AREA) / 2;
-            radialProgress.setProgressRect(PAD_H, top, PAD_H + ICON_AREA, top + ICON_AREA);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            // Целевая ширина берётся из АКТУАЛЬНОГО текста прямо сейчас (а не из
-            // measuredContentWidth, который может быть шире — см. syncWidth) — именно
-            // к этому значению едет анимация подложки.
-            int targetWidth = computeDesiredWidth();
-            float drawWidth = animatedWidth.set(targetWidth);
-            bgRect.set(0, 0, drawWidth, getHeight());
-            canvas.drawRoundRect(bgRect, dp(14), dp(14), bgPaint);
-
-            radialProgress.draw(canvas);
-            // Во время закачки вторая строка — живой прогресс, иначе — статичный
-            // полный размер файла (см. updateState()/onProgressDownload()).
-            String secondLine = buttonState == 1 ? progressText : sizeText;
-            if (!TextUtils.isEmpty(durationText) || !TextUtils.isEmpty(secondLine)) {
-                float textX = PAD_H + ICON_AREA + GAP;
-                float centerY = getHeight() / 2f;
-                // Симметрия по вертикали: раньше строки позиционировались через грубое
-                // приближение (centerY ± фиксированный dp), из-за чего блок текста
-                // визуально "провисал" ниже центра плашки и сидел ближе к нижнему краю,
-                // чем к верхнему — это и была замеченная асимметрия. Теперь блок из
-                // одной/двух строк целиком центрируется вокруг centerY через реальные
-                // метрики шрифта (ascent/descent), точно как центрируется иконка слева
-                // (top = (h - ICON_AREA) / 2, см. onSizeChanged) — оба элемента получают
-                // одинаковые отступы сверху/снизу от центра плашки.
-                Paint.FontMetrics fm = textPaint.getFontMetrics();
-                float lineH = fm.descent - fm.ascent;
-                float lineGap = dp(2);
-                if (!TextUtils.isEmpty(durationText) && !TextUtils.isEmpty(secondLine)) {
-                    float blockTop = centerY - (2 * lineH + lineGap) / 2f;
-                    float baseline1 = blockTop - fm.ascent;
-                    float baseline2 = baseline1 + lineH + lineGap;
-                    canvas.drawText(durationText, textX, baseline1, textPaint);
-                    canvas.drawText(secondLine, textX, baseline2, textPaint);
-                } else {
-                    String single = !TextUtils.isEmpty(durationText) ? durationText : secondLine;
-                    float baseline = centerY - (fm.ascent + fm.descent) / 2f;
-                    canvas.drawText(single, textX, baseline, textPaint);
-                }
-            }
-
-            if (!animatedWidth.isInProgress() && measuredContentWidth != targetWidth) {
-                // Анимация сужения подложки доиграла — теперь можно безопасно уменьшить
-                // реальные границы View до фактической цели. Делать это раньше (сразу
-                // на смене текста) было бы неверно: границы схлопнулись бы ДО того, как
-                // анимация закончится, и обрезали бы недорисованный кадр.
-                measuredContentWidth = targetWidth;
-                post(() -> requestLayout());
-            }
-        }
-
-        @Override
-        public void onFailedDownload(String name, boolean canceled) {
-            updateState(true);
-        }
-
-        @Override
-        public void onSuccessDownload(String name) {
-            radialProgress.setProgress(1, true);
-            updateState(true);
-        }
-
-        @Override
-        public void onProgressDownload(String name, long downloadedSize, long totalSize) {
-            radialProgress.setProgress(Math.min(1f, downloadedSize / (float) totalSize), true);
-            // Пункт 1 из ТЗ: пока файл качается, вторая строка показывает живой
-            // прогресс "2,5 MB / 5 MB" вместо статичного "5 MB". Плашка адаптивна по
-            // ширине (см. onMeasure()/updateState()), но пересчитывается только на
-            // переходах состояния, а не на каждый тик — как и в оригинале, ширина не
-            // "гуляет" на каждое обновление процента, достаточно invalidate().
-            progressText = AndroidUtilities.formatFileSize(downloadedSize) + " / " + AndroidUtilities.formatFileSize(totalSize);
-            if (buttonState != 1) {
-                updateState(true);
-            } else {
-                // Раньше здесь звался только invalidate() — текст обновлялся, а
-                // ширина подложки нет, отсюда и была обрезка на каждом тике закачки.
-                // syncWidth() пересчитывает ширину на каждом тике; сама перерисовка
-                // при этом не "спамит" requestLayout 20 раз в секунду — расширение
-                // происходит мгновенно только когда реально нужно больше места, а
-                // визуальная анимация — забота animatedWidth в onDraw.
-                syncWidth();
-            }
-        }
-
-        @Override
-        public void onProgressUpload(String name, long uploadedSize, long totalSize, boolean isEncrypted) {
-        }
-
-        @Override
-        public int getObserverTag() {
-            return TAG;
-        }
-    }
-
-    // ------------------------------------------------------------------ PhotoDownloadOverlay
-    /**
-     * Аналог VideoDownloadPlate, но для фото — один в один по поведению с
-     * оригинальным Telegram: пока полноразмерное фото не в кэше, вся область
-     * притемняется (как photoImage.setAlpha(.5f) + полупрозрачная тёмная
-     * подложка поверх в ChatMessageCell.drawPhotoBlurRect), а по центру — круглая
-     * кнопка загрузки (RadialProgress2 с фоном, как в оригинале — не как у
-     * видео-плашки, где фон отключён, потому что там своя тёмная "таблетка").
-     * Тап — скачивает полноразмерное фото; во время загрузки иконка меняется на
-     * крестик отмены с кольцом прогресса. Как только файл на диске — оверлей
-     * пропадает целиком, показывается уже чёткое фото. Состояние, как и у
-     * VideoDownloadPlate, пересчитывается заново на каждый bind() — если фото
-     * удалили из кэша, при следующем показе ячейки оверлей вернётся сам.
-     */
-    private static class PhotoDownloadOverlay extends View implements DownloadController.FileDownloadProgressListener {
-        private final RadialProgress2 radialProgress;
-        private final int TAG;
-        private TLRPC.PhotoSize photoSize;
-        private TLObject parentObject;
-        private int currentAccount;
-        private String fileName;
-        private Runnable onReady;
-        private int buttonState; // -1 = скачано/скрыто, 1 = грузится, 2 = скачать
-
-        PhotoDownloadOverlay(Context context) {
-            super(context);
-            radialProgress = new RadialProgress2(this);
-            // Круг под иконкой рисует сам RadialProgress2 через заданные ColorKeys —
-            // отдельного фона/затемнения поверх всего фото здесь НЕ нужно: в оригинале
-            // "тусклый" вид недокачанного фото — это сам блюр-плейсхолдер
-            // (strippedThumb, см. CarouselAdapter), а не дополнительный полупрозрачный
-            // прямоугольник поверх. Раньше здесь рисовался ещё и dimPaint 40% чёрным
-            // поверх ВСЕГО фото — из-за этого поверх уже автозагруженного чёткого фото
-            // (когда оверлей ошибочно оставался видимым) получался странный "чуть
-            // тусклый" эффект, о котором и был отзыв.
-            radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
-                    Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
-            radialProgress.setCircleRadius(dp(20));
-
-            TAG = DownloadController.getInstance(UserConfig.selectedAccount).generateObserverTag();
-            setOnClickListener(v -> onClick());
-        }
-
-        void bind(TLRPC.PhotoSize size, TLObject parent, int account, Runnable onReadyCallback) {
-            unbind();
-            photoSize = size;
-            parentObject = parent;
-            currentAccount = account;
-            onReady = onReadyCallback;
-            fileName = FileLoader.getAttachFileName(size);
-            updateState(false);
-        }
-
-        void unbind() {
-            if (fileName != null) {
-                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
-            }
-            photoSize = null;
-            parentObject = null;
-            fileName = null;
-            onReady = null;
-        }
-
-        private void updateState(boolean animated) {
-            if (photoSize == null || fileName == null) {
-                return;
-            }
-            // forceCache=false — та же причина, что и у VideoDownloadPlate.updateState():
-            // с forceCache=true проверка всегда смотрит не в ту папку и никогда не видит
-            // уже скачанный файл.
-            java.io.File cacheFile = FileLoader.getInstance(currentAccount).getPathToAttach(photoSize, false);
-            boolean fileExists = cacheFile != null && cacheFile.exists();
-            boolean isLoading = FileLoader.getInstance(currentAccount).isLoadingFile(fileName);
-            if (fileExists) {
-                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
-                buttonState = -1;
-                setVisibility(GONE);
-                if (onReady != null) {
-                    onReady.run();
-                }
-            } else {
-                setVisibility(VISIBLE);
-                DownloadController.getInstance(currentAccount).addLoadingFileObserver(fileName, this);
-                if (isLoading) {
-                    buttonState = 1;
-                    Float progress = org.telegram.messenger.ImageLoader.getInstance().getFileProgress(fileName);
-                    radialProgress.setProgress(progress != null ? progress : 0, animated);
-                    radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, animated);
-                } else {
-                    buttonState = 2;
-                    radialProgress.setIcon(MediaActionDrawable.ICON_DOWNLOAD, false, animated);
-                }
-            }
-            invalidate();
-        }
-
-        private void onClick() {
-            if (photoSize == null) return;
-            if (buttonState == 2) {
-                FileLoader.getInstance(currentAccount).loadFile(
-                    ImageLocation.getForObject(photoSize, parentObject), parentObject, null,
-                    FileLoader.PRIORITY_NORMAL, 0
-                );
-                // Не полагаемся на isLoadingFile() сразу после loadFile() — FileLoader
-                // может поставить файл в очередь асинхронно, и в момент проверки
-                // формально ещё не считается "грузящимся" (та же гонка, что уже чинили
-                // в VideoDownloadPlate.onClick() ранее) — из-за неё кнопка визуально
-                // не реагировала на тап ("как будто нажимаю на кирпич"), хотя загрузка
-                // реально стартовала. Выставляем buttonState=1 сразу оптимистично —
-                // дальнейшие реальные апдейты придут через onProgressDownload/
-                // onSuccessDownload и просто подтвердят то же самое состояние.
-                buttonState = 1;
-                radialProgress.setProgress(0, false);
-                radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, true);
-                invalidate();
-            } else if (buttonState == 1) {
-                FileLoader.getInstance(currentAccount).cancelLoadFile(photoSize);
-                updateState(true);
-            }
-        }
-
-        @Override
-        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-            super.onSizeChanged(w, h, oldw, oldh);
-            int r = dp(24);
-            int cx = w / 2, cy = h / 2;
-            radialProgress.setProgressRect(cx - r, cy - r, cx + r, cy + r);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            if (buttonState == -1) {
-                return;
-            }
-            radialProgress.draw(canvas);
-        }
-
-        @Override
-        public void onFailedDownload(String name, boolean canceled) {
-            updateState(true);
-        }
-
-        @Override
-        public void onSuccessDownload(String name) {
-            radialProgress.setProgress(1, true);
-            updateState(true);
-        }
-
-        @Override
-        public void onProgressDownload(String name, long downloadedSize, long totalSize) {
-            radialProgress.setProgress(Math.min(1f, downloadedSize / (float) totalSize), true);
-            if (buttonState != 1) {
-                updateState(true);
-            } else {
-                invalidate();
-            }
-        }
-
-        @Override
-        public void onProgressUpload(String name, long uploadedSize, long totalSize, boolean isEncrypted) {
-        }
-
-        @Override
-        public int getObserverTag() {
-            return TAG;
-        }
-    }
-
-    // ------------------------------------------------------------------ PlayIndicatorView
-    /**
-     * Большая play-кнопка по центру видео — с фоновым кругом, как в оригинальном
-     * Telegram/Plus Messenger. В отличие от VideoDownloadOverlay, она НЕ занимается
-     * загрузкой и не меняет иконку в зависимости от состояния кэша — всегда
-     * показывает треугольник play, потому что тап по ней (как и тап по самому
-     * кадру) просто открывает видео в полноэкранном просмотрщике, независимо от
-     * того, скачано оно в кэш или нет.
-     */
-    private static class PlayIndicatorView extends View {
-        private final RadialProgress2 radialProgress;
-
-        PlayIndicatorView(Context context) {
-            super(context);
-            radialProgress = new RadialProgress2(this);
-            radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
-                    Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
-            radialProgress.setIcon(MediaActionDrawable.ICON_PLAY, false, false);
-        }
-
-        @Override
-        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-            super.onSizeChanged(w, h, oldw, oldh);
-            radialProgress.setProgressRect(0, 0, w, h);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            radialProgress.draw(canvas);
-        }
-    }
-
-    // ------------------------------------------------------------------ AudioSeekBarView
-
-    /**
-     * Обёртка-View вокруг компонента SeekBar (org.telegram.ui.Components.SeekBar).
-     * SeekBar сам по себе не является View — он рисует себя и обрабатывает touch
-     * через переданный родительский View, ровно как это сделано в ChatMessageCell.
-     */
-    private static class AudioSeekBarView extends View implements SeekBar.SeekBarDelegate {
-        private final SeekBar seekBar;
-        private MessageObject messageObject;
-
-        AudioSeekBarView(Context context, Theme.ResourcesProvider rp) {
-            super(context);
-            seekBar = new SeekBar(this);
-            seekBar.setDelegate(this);
-            seekBar.setColors(
-                Theme.getColor(Theme.key_chat_inAudioSeekbar, rp),
-                Theme.getColor(Theme.key_chat_inAudioCacheSeekbar, rp),
-                Theme.getColor(Theme.key_chat_inAudioSeekbarFill, rp),
-                Theme.getColor(Theme.key_chat_inAudioSeekbarFill, rp),
-                Theme.getColor(Theme.key_chat_inAudioSeekbarSelected, rp)
-            );
-        }
-
-        void setMessageObject(MessageObject mo) {
-            messageObject = mo;
-            seekBar.setProgress(mo != null ? mo.audioProgress : 0f);
-            invalidate();
-        }
-
-        void updateProgress() {
-            if (messageObject == null || seekBar.isDragging()) return;
-            seekBar.setProgress(messageObject.audioProgress);
-            seekBar.setBufferedProgress(messageObject.bufferedProgress);
-            invalidate();
-        }
-
-        @Override
-        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-            super.onSizeChanged(w, h, oldw, oldh);
-            seekBar.setSize(w, h);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            seekBar.draw(canvas);
-        }
-
-        @Override
-        public boolean onTouchEvent(MotionEvent event) {
-            boolean result = seekBar.onTouch(event.getAction(), event.getX(), event.getY());
-            if (result) invalidate();
-            return result || super.onTouchEvent(event);
-        }
-
-        @Override
-        public void onSeekBarDrag(float progress) {
-            if (messageObject == null) return;
-            messageObject.audioProgress = progress;
-            MediaController.getInstance().seekToProgress(messageObject, progress);
-            invalidate();
-        }
-
-        @Override
-        public void onSeekBarContinuousDrag(float progress) {
-            if (messageObject == null) return;
-            messageObject.audioProgress = progress;
-            messageObject.audioProgressSec = (int) (messageObject.getDuration() * progress);
-            invalidate();
-        }
-    }
-
-    // ------------------------------------------------------------------ AudioWaveformView
-
-    /**
-     * То же самое, что AudioSeekBarView выше, но для ГОЛОСОВЫХ сообщений — в
-     * оригинале у войсов рисуется волна (SeekBarWaveform, тот самый реальный класс,
-     * которым это рисует ChatMessageCell), а не гладкая линия прогресса как у
-     * музыки/аудио. Раньше в ленте у войсов использовался тот же гладкий SeekBar,
-     * что и у музыки — визуально это неверно и было частью жалобы "не один в один".
-     */
-    private static class AudioWaveformView extends View implements SeekBar.SeekBarDelegate {
-        private final SeekBarWaveform seekBarWaveform;
-        private MessageObject messageObject;
-
-        AudioWaveformView(Context context, Theme.ResourcesProvider rp) {
-            super(context);
-            seekBarWaveform = new SeekBarWaveform(context);
-            seekBarWaveform.setDelegate(this);
-            seekBarWaveform.setColors(
-                Theme.getColor(Theme.key_chat_inVoiceSeekbar, rp),
-                Theme.getColor(Theme.key_chat_inVoiceSeekbarFill, rp),
-                Theme.getColor(Theme.key_chat_inVoiceSeekbarSelected, rp)
-            );
-        }
-
-        void setMessageObject(MessageObject mo) {
-            messageObject = mo;
-            if (mo != null) {
-                seekBarWaveform.setMessageObject(mo);
-                seekBarWaveform.setWaveform(mo.getWaveform());
-                seekBarWaveform.setProgress(mo.audioProgress);
-            }
-            invalidate();
-        }
-
-        void updateProgress() {
-            if (messageObject == null) return;
-            seekBarWaveform.setProgress(messageObject.audioProgress);
-            invalidate();
-        }
-
-        @Override
-        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-            super.onSizeChanged(w, h, oldw, oldh);
-            seekBarWaveform.setSize(w, h);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            seekBarWaveform.draw(canvas, this);
-        }
-
-        @Override
-        public boolean onTouchEvent(MotionEvent event) {
-            boolean result = seekBarWaveform.onTouch(event.getAction(), event.getX(), event.getY());
-            if (result) invalidate();
-            return result || super.onTouchEvent(event);
-        }
-
-        @Override
-        public void onSeekBarDrag(float progress) {
-            if (messageObject == null) return;
-            messageObject.audioProgress = progress;
-            MediaController.getInstance().seekToProgress(messageObject, progress);
-            invalidate();
-        }
-    }
-
-    // ------------------------------------------------------------------ AudioPlayButton
-
-    /**
-     * Круглая play/pause/download-кнопка аудио-сообщения — тот же паттерн, что
-     * VideoDownloadPlate/PhotoDownloadOverlay (RadialProgress2 + DownloadController.
-     * FileDownloadProgressListener), плюс два дополнительных состояния play/pause
-     * (у фото/видео их не было — там кнопка только скачивает, а не проигрывает).
-     * Состояния: 2 — не скачано (стрелка загрузки); 1 — качается (кольцо+крестик);
-     * 0 — скачано, не играет (play); 3 — скачано, играет (pause).
-     */
-    /**
-     * Круглая play/pause-кнопка аудио-сообщения с ОТДЕЛЬНЫМ маленьким бейджем
-     * загрузки поверх неё — 1:1 с ChatMessageCell для DOCUMENT_ATTACH_TYPE_MUSIC
-     * (см. getMiniIconForCurrentState()/hasMiniProgress): большая кнопка ВСЕГДА
-     * показывает play/pause (никогда не показывает "стрелку загрузки" сама по
-     * себе), а отдельный маленький кружок-бейдж (RadialProgress2.setMiniIcon —
-     * это штатная, встроенная в сам RadialProgress2 функция, не самопальная)
-     * показывает: стрелку загрузки (не скачано), кольцо-крестик с прогрессом
-     * (качается), или пропадает целиком (скачано). Тап по кнопке ВСЕГДА и играет,
-     * и запускает докачку в кэш одновременно — ровно как в реальном Telegram для
-     * музыкальных файлов (потоковое воспроизведение параллельно с докачкой).
-     */
-    private static class AudioPlayButton extends View implements DownloadController.FileDownloadProgressListener {
-        private static final int STATE_PLAY = 0;
-        private static final int STATE_PAUSE = 1;
-
-        private final RadialProgress2 radialProgress;
-        private final int TAG;
-        private MessageObject messageObject;
-        private TLRPC.Document document;
-        private String fileName;
-        private int currentAccount;
-        private int buttonState = -1;
-        /** -1 — скачано (бейдж скрыт), 0 — не скачано (стрелка), 1 — качается (крестик+кольцо). */
-        private int miniButtonState = -1;
-        /** Возвращает true, если воспроизведение реально стартовало (см. конструктор ячейки). */
-        private Utilities.CallbackReturn<MessageObject, Boolean> onPlayRequested;
-
-        AudioPlayButton(Context context, Theme.ResourcesProvider rp) {
-            super(context);
-            radialProgress = new RadialProgress2(this);
-            radialProgress.setColorKeys(Theme.key_chat_inAudioProgress, Theme.key_chat_inAudioSelectedProgress,
-                    Theme.key_chat_inMediaIcon, Theme.key_chat_inMediaIconSelected);
-            radialProgress.setCircleRadius(dp(22));
-            TAG = DownloadController.getInstance(UserConfig.selectedAccount).generateObserverTag();
-            setOnClickListener(v -> onClick());
-        }
-
-        void setOnPlayRequested(Utilities.CallbackReturn<MessageObject, Boolean> listener) {
-            onPlayRequested = listener;
-        }
-
-        void bind(MessageObject mo) {
-            messageObject = mo;
-            document = mo.getDocument();
-            currentAccount = mo.currentAccount;
-            fileName = FileLoader.getAttachFileName(document);
-            // 1:1 с SharedAudioCell.setMessageObject(): обложка трека рисуется самим
-            // RadialProgress2 через setImageOverlay(), а не отдельным ImageReceiver.
-            // Порядок источников строго как в оригинале: thumb документа -> audioCover
-            // (Bitmap, уже извлечённый из ID3-тегов) -> artworkUrl (last.fm/архив) ->
-            // пусто (тогда RadialProgress2 рисует однотонный фон под иконкой).
-            final TLRPC.PhotoSize thumb = document != null ? FileLoader.getClosestPhotoSizeWithSize(document.thumbs, 360) : null;
-            if (thumb instanceof TLRPC.TL_photoSize || thumb instanceof TLRPC.TL_photoSizeProgressive) {
-                radialProgress.setImageOverlay(thumb, document, messageObject);
-            } else {
-                Bitmap cover = messageObject.audioCover;
-                if (cover != null) {
-                    radialProgress.setImageOverlay(cover);
-                } else {
-                    final String artworkUrl = messageObject.getArtworkUrl(true);
-                    if (!TextUtils.isEmpty(artworkUrl)) {
-                        radialProgress.setImageOverlay(artworkUrl);
-                    } else {
-                        radialProgress.setImageOverlay(null, null, null);
-                    }
-                }
-            }
-            updateState(false);
-        }
-
-        void unbind() {
-            if (fileName != null) {
-                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
-            }
-            messageObject = null;
-            document = null;
-            fileName = null;
-            buttonState = -1;
-            miniButtonState = -1;
-        }
-
-        /**
-         * Обновить иконку play/pause извне — вызывается при NotificationCenter.
-         * messagePlayingDidStart/messagePlayingPlayStateChanged/messagePlayingDidReset
-         * (см. PotokFeedFragment), а не только на тик прогресса — иначе если
-         * заиграл ДРУГОЙ трек, кнопка этой ячейки осталась бы показывать "пауза",
-         * хотя реально сейчас играет не она.
-         */
-        void refresh() {
-            if (messageObject != null) updateState(true);
-        }
-
-        private void updateState(boolean animated) {
-            if (document == null || fileName == null) return;
-            // Главная кнопка: ВСЕГДА play/pause, независимо от того, скачан файл или
-            // нет — 1:1 с веткой hasMiniProgress в ChatMessageCell (для музыки тап
-            // по play одновременно стартует и воспроизведение, и докачку в кэш).
-            boolean playing = MediaController.getInstance().isPlayingMessage(messageObject)
-                    && !MediaController.getInstance().isMessagePaused();
-            buttonState = playing ? STATE_PAUSE : STATE_PLAY;
-            radialProgress.setIcon(playing ? MediaActionDrawable.ICON_PAUSE : MediaActionDrawable.ICON_PLAY, false, animated);
-
-            // Маленький бейдж поверх — отдельно отражает состояние ДОКАЧКИ файла в
-            // кэш, никак не завязан на play/pause главной иконки.
-            boolean fileExists = messageObject.mediaExists;
-            if (fileExists) {
-                DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
-                miniButtonState = -1;
-                radialProgress.setMiniIcon(MediaActionDrawable.ICON_NONE, false, animated);
-            } else {
-                DownloadController.getInstance(currentAccount).addLoadingFileObserver(fileName, this);
-                boolean isLoading = FileLoader.getInstance(currentAccount).isLoadingFile(fileName);
-                if (isLoading) {
-                    miniButtonState = 1;
-                    Float progress = org.telegram.messenger.ImageLoader.getInstance().getFileProgress(fileName);
-                    radialProgress.setProgress(progress != null ? progress : 0, animated);
-                    radialProgress.setMiniIcon(MediaActionDrawable.ICON_CANCEL, false, animated);
-                } else {
-                    miniButtonState = 0;
-                    radialProgress.setMiniIcon(MediaActionDrawable.ICON_DOWNLOAD, false, animated);
-                }
-            }
-            invalidate();
-        }
-
-        private void onClick() {
-            if (document == null) return;
-            // Тап по кнопке = play/pause, КАК ОБЫЧНО. Если файла ещё нет в кэше —
-            // докачку запускаем ПАРАЛЛЕЛЬНО тем же тапом (не отдельным состоянием
-            // кнопки, как было раньше) — тот же эффект, что в реальном Telegram у
-            // потокового воспроизведения музыки: играть начинает сразу, бейдж
-            // загрузки просто показывает прогресс докачки на фоне.
-            if (buttonState == STATE_PLAY) {
-                if (!messageObject.mediaExists) {
-                    messageObject.putInDownloadsStore = true;
-                    FileLoader.getInstance(currentAccount).loadFile(document, messageObject, FileLoader.PRIORITY_NORMAL, 0);
-                }
-                boolean started = onPlayRequested != null && onPlayRequested.run(messageObject);
-                if (started) {
-                    buttonState = STATE_PAUSE;
-                    radialProgress.setIcon(MediaActionDrawable.ICON_PAUSE, false, true);
-                    invalidate();
-                }
-            } else if (buttonState == STATE_PAUSE) {
-                boolean result = MediaController.getInstance().pauseMessage(messageObject);
-                if (result) {
-                    buttonState = STATE_PLAY;
-                    radialProgress.setIcon(MediaActionDrawable.ICON_PLAY, false, true);
-                    invalidate();
-                }
-            }
-        }
-
-        @Override
-        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            setMeasuredDimension(dp(44), dp(44));
-        }
-
-        @Override
-        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-            super.onSizeChanged(w, h, oldw, oldh);
-            radialProgress.setProgressRect(0, 0, w, h);
-            // bind() вызывается из setPost() при биндинге ViewHolder'а — в этот
-            // момент у View ещё могли быть нулевые границы, и RadialProgress2 мог
-            // закрепить иконку под них. Пересчитываем состояние ЕЩЁ РАЗ уже после
-            // реального измерения — похоже, именно это было причиной того, что
-            // кнопка play/download визуально не появлялась вообще.
-            if (messageObject != null) {
-                updateState(false);
-            }
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            if (buttonState == -1) return;
-            radialProgress.draw(canvas);
-        }
-
-        @Override
-        public void onFailedDownload(String name, boolean canceled) {
-            updateState(true);
-        }
-
-        @Override
-        public void onSuccessDownload(String name) {
-            if (messageObject != null) messageObject.mediaExists = true;
-            radialProgress.setProgress(1, true);
-            updateState(true);
-        }
-
-        @Override
-        public void onProgressDownload(String name, long downloadedSize, long totalSize) {
-            radialProgress.setProgress(Math.min(1f, downloadedSize / (float) totalSize), true);
-            if (miniButtonState != 1) {
-                updateState(true);
-            }
-        }
-
-        @Override
-        public void onProgressUpload(String name, long uploadedSize, long totalSize, boolean isEncrypted) {
-        }
-
-        @Override
-        public int getObserverTag() {
-            return TAG;
-        }
-    }
-
-    // ------------------------------------------------------------------ PlayTriangleView
-
-    /**
-     * Чистый треугольник play, нарисованный через Path — чёткий на любом dpi.
-     * Растровый play_mini_video всего 24x30px даже в xxhdpi, поэтому при
-     * увеличении (как было раньше, scale 1.8) выглядит размытым.
-     */
-    private static class PlayTriangleView extends View {
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path path = new Path();
-
-        PlayTriangleView(Context context) {
-            super(context);
-            paint.setStyle(Paint.Style.FILL);
-        }
-
-        void setColor(int color) {
-            paint.setColor(color);
-            invalidate();
-        }
-
-        @Override
-        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-            super.onSizeChanged(w, h, oldw, oldh);
-            path.reset();
-            // Равносторонний треугольник вершиной вправо, по центру view
-            float r = Math.min(w, h) / 2f;
-            float cx = w / 2f, cy = h / 2f;
-            path.moveTo(cx - r * 0.55f, cy - r * 0.85f);
-            path.lineTo(cx - r * 0.55f, cy + r * 0.85f);
-            path.lineTo(cx + r * 0.85f, cy);
-            path.close();
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            canvas.drawPath(path, paint);
-        }
-    }
-
-    // ------------------------------------------------------------------ PollView
-
-    /**
-     * Карточка опроса внутри поста ленты. Оригинальный Telegram рисует опрос
-     * сложной canvas-отрисовкой прямо в ChatMessageCell (PollButton и десятки
-     * полей вроде vibrateOnProgressUp, pollAnimatedVoteCounter и т.п.) — заводить
-     * такую же машинерию под один тип контента ленты избыточно, поэтому здесь —
-     * эквивалент из обычных Android-view (тот же подход, что раньше был выбран
-     * для durationBadge), но по всем содержательным элементам максимально близко
-     * к оригиналу: тип опроса, вопрос, варианты со шкалой процентов и подсветкой
-     * выбранного/правильного варианта, число проголосовавших.
-     */
-    private static class PollView extends LinearLayout {
-        private final Theme.ResourcesProvider resourcesProvider;
-        private final TextView typeLabel;
-        private final TextView questionView;
-        private final LinearLayout answersContainer;
-        private final TextView votersView;
-        private final TextView voteButton;
-        private final ArrayList<PollAnswerRow> rows = new ArrayList<>();
-        private final ArrayList<TLRPC.PollAnswer> selectedAnswers = new ArrayList<>();
-        private MessageObject messageObject;
-        private TLRPC.TL_messageMediaPoll media;
-        private boolean sendingVote = false;
-        /**
-         * Долгое нажатие по карточке поста должно открывать канал (как у обычных
-         * постов) — но строки вариантов ответа (PollAnswerRow) кликабельны ДО
-         * голосования (обрабатывают обычный тап на выбор варианта), и Android не
-         * даёт долгому нажатию всплыть до родительской карточки, если дочерний
-         * View сам кликабелен — touch-последовательность перехватывается там, где
-         * начался палец. Поэтому пробрасываем длинное нажатие с каждой строки
-         * (и с кнопки "Проголосовать") наружу вручную через этот callback.
-         */
-        private Runnable onLongPress;
-
-        void setOnLongPressListener(Runnable listener) {
-            onLongPress = listener;
-        }
-
-        PollView(Context context, Theme.ResourcesProvider resourcesProvider) {
-            super(context);
-            this.resourcesProvider = resourcesProvider;
-            setOrientation(VERTICAL);
-
-            typeLabel = new TextView(context);
-            typeLabel.setTextSize(13);
-            typeLabel.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
-            addView(typeLabel, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT));
-
-            questionView = new TextView(context);
-            questionView.setTextSize(16);
-            questionView.setTypeface(AndroidUtilities.bold());
-            questionView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider));
-            addView(questionView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
-
-            answersContainer = new LinearLayout(context);
-            answersContainer.setOrientation(VERTICAL);
-            addView(answersContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 10, 0, 0));
-
-            // Кнопка "Проголосовать" — видна только для многовариантных опросов ДО
-            // голосования (одиночный выбор голосует сразу по тапу на вариант, как в
-            // оригинальном Telegram — отдельная кнопка ему не нужна).
-            voteButton = new TextView(context);
-            voteButton.setTextSize(14);
-            voteButton.setTypeface(AndroidUtilities.bold());
-            voteButton.setGravity(Gravity.CENTER);
-            voteButton.setText("Проголосовать");
-            voteButton.setPadding(0, dp(10), 0, dp(10));
-            voteButton.setVisibility(GONE);
-            voteButton.setOnClickListener(v -> {
-                if (!selectedAnswers.isEmpty()) {
-                    submitVote(new ArrayList<>(selectedAnswers));
-                }
-            });
-            voteButton.setOnLongClickListener(v -> {
-                if (onLongPress != null) {
-                    onLongPress.run();
-                    return true;
-                }
-                return false;
-            });
-            addView(voteButton, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
-
-            votersView = new TextView(context);
-            votersView.setTextSize(13);
-            votersView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
-            addView(votersView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 8, 0, 0));
-        }
-
-        void bind(TLRPC.TL_messageMediaPoll media, MessageObject messageObject) {
-            if (media == null || media.poll == null || messageObject == null) {
-                setVisibility(GONE);
-                return;
-            }
-            this.media = media;
-            this.messageObject = messageObject;
-            selectedAnswers.clear();
-            TLRPC.Poll poll = media.poll;
-            TLRPC.PollResults results = media.results;
-
-            // Тип опроса — та же формулировка, что использует оригинальный клиент.
-            String type;
-            if (poll.quiz) {
-                type = "Викторина";
-            } else if (poll.public_voters) {
-                type = "Опрос";
-            } else {
-                type = "Анонимный опрос";
-            }
-            if (poll.closed) {
-                type += " • завершён";
-            } else if (poll.multiple_choice) {
-                type += " • можно выбрать несколько";
-            }
-            typeLabel.setText(type);
-            questionView.setText(poll.question != null ? poll.question.text : "");
-
-            // Режим голосования (чекбоксы, без процентов) — пока пользователь не
-            // проголосовал и опрос не завершён, один в один как в самом канале
-            // (см. скрины пользователя: до голоса — пустые строки с чекбоксами и
-            // кнопкой "Проголосовать", после — шкалы с процентами).
-            boolean votingMode = !messageObject.isVoted() && !poll.closed;
-
-            int totalVoters = results != null ? results.total_voters : 0;
-            java.util.Map<String, TLRPC.PollAnswerVoters> votersByOption = new java.util.HashMap<>();
-            boolean hasResults = results != null && results.results != null;
-            if (hasResults) {
-                for (TLRPC.PollAnswerVoters v : results.results) {
-                    if (v != null && v.option != null) {
-                        votersByOption.put(bytesToKey(v.option), v);
-                    }
-                }
-            }
-
-            answersContainer.removeAllViews();
-            rows.clear();
-            if (poll.answers != null) {
-                for (TLRPC.PollAnswer answer : poll.answers) {
-                    if (answer == null) continue;
-                    PollAnswerRow row = new PollAnswerRow(getContext(), resourcesProvider);
-                    TLRPC.PollAnswerVoters voters = answer.option != null ? votersByOption.get(bytesToKey(answer.option)) : null;
-                    int optionVotes = voters != null ? voters.voters : 0;
-                    int percent = (!votingMode && hasResults && totalVoters > 0) ? Math.round(100f * optionVotes / totalVoters) : -1;
-                    boolean chosen = voters != null && voters.chosen;
-                    boolean correct = voters != null && voters.correct;
-                    boolean wrong = poll.quiz && chosen && !correct;
-                    row.bind(answer.text != null ? answer.text.text : "", percent, chosen, correct && poll.quiz, wrong, votingMode, poll.multiple_choice);
-                    if (votingMode) {
-                        row.setOnClickListener(v -> onRowTapped(answer, poll, row));
-                    } else {
-                        row.setOnClickListener(null);
-                        row.setClickable(false);
-                    }
-                    // См. комментарий у поля onLongPress выше: строка кликабельна в
-                    // votingMode и перехватывает touch-последовательность, из-за чего
-                    // долгое нажатие не всплывает до карточки поста — форвардим вручную.
-                    row.setOnLongClickListener(v -> {
-                        if (onLongPress != null) {
-                            onLongPress.run();
-                            return true;
-                        }
-                        return false;
-                    });
-                    answersContainer.addView(row, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 0, 0, 6));
-                    rows.add(row);
-                }
-            }
-
-            voteButton.setVisibility(votingMode && poll.multiple_choice ? VISIBLE : GONE);
-            updateVoteButtonState();
-
-            if (totalVoters > 0) {
-                votersView.setVisibility(VISIBLE);
-                votersView.setText(LocaleController.formatPluralString("Vote", totalVoters));
-            } else {
-                votersView.setVisibility(GONE);
-            }
-
-            setVisibility(VISIBLE);
-        }
-
-        /**
-         * Одиночный выбор — голос уходит сразу по тапу (как в оригинале, отдельной
-         * кнопки не требуется). Множественный выбор — тап только переключает
-         * чекбокс, реальная отправка — по кнопке "Проголосовать".
-         */
-        private void onRowTapped(TLRPC.PollAnswer answer, TLRPC.Poll poll, PollAnswerRow row) {
-            if (sendingVote || messageObject == null) return;
-            if (poll.multiple_choice) {
-                boolean nowSelected = !selectedAnswers.contains(answer);
-                if (nowSelected) {
-                    selectedAnswers.add(answer);
-                } else {
-                    selectedAnswers.remove(answer);
-                }
-                row.setSelectedForVote(nowSelected);
-                updateVoteButtonState();
-            } else {
-                // Одиночный выбор — голос уходит мгновенно по тапу, поэтому здесь же
-                // (а не в кнопке "Проголосовать", которой для одиночного выбора нет)
-                // включаем анимацию ожидания на КОНКРЕТНОЙ нажатой строке — сразу
-                // видимый отклик на тап вместо ощущения "нажал в пустоту".
-                row.setVoteInProgress(true);
-                ArrayList<TLRPC.PollAnswer> answers = new ArrayList<>();
-                answers.add(answer);
-                submitVote(answers);
-            }
-        }
-
-        private void updateVoteButtonState() {
-            boolean enabled = !selectedAnswers.isEmpty() && !sendingVote;
-            voteButton.setAlpha(enabled ? 1f : 0.5f);
-            voteButton.setEnabled(enabled);
-            voteButton.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider));
-        }
-
-        private void submitVote(ArrayList<TLRPC.PollAnswer> answers) {
-            if (messageObject == null) return;
-            sendingVote = true;
-            updateVoteButtonState();
-            // Реальный API-вызов — TL_messages_sendVote, тот же самый метод, которым
-            // голосует сам оригинальный Telegram-клиент. Ответ сервера приходит через
-            // MessagesController.processUpdates() -> NotificationCenter.didUpdatePollResults,
-            // на который подписан PotokFeedFragment (см. PotokFeedPostCell.updatePollIfMatching) —
-            // именно оттуда прилетит перерисовка с уже посчитанными процентами, а не
-            // отсюда напрямую, чтобы результат совпадал с тем, что реально подтвердил сервер.
-            org.telegram.messenger.SendMessagesHelper.getInstance(messageObject.currentAccount)
-                .sendVote(messageObject, answers, () -> {
-                    sendingVote = false;
-                    updateVoteButtonState();
-                });
-        }
-
-        /** byte[] нельзя использовать как ключ HashMap напрямую (сравнение по ссылке) — переводим в строку. */
-        private static String bytesToKey(byte[] bytes) {
-            StringBuilder sb = new StringBuilder(bytes.length * 2);
-            for (byte b : bytes) sb.append(Integer.toHexString(b & 0xFF));
-            return sb.toString();
-        }
-    }
-
-    /**
-     * Один вариант ответа: скруглённая строка с рамкой, внутри — заливка-шкала
-     * пропорционально проценту голосов (когда результаты видны) и текст варианта
-     * слева / процент справа. Выбранный пользователем и (для квиза) правильный
-     * вариант — акцентным цветом, как в оригинале.
-     */
-    private static class PollAnswerRow extends View {
-        // Все константы ниже — из реального PollButton в ChatMessageCell.java
-        // (метод отрисовки вариантов ответа), адаптированные под наш формат строки:
-        // никакой рамки-"таблетки" вокруг всей строки в оригинале НЕТ — только текст
-        // (многострочный), чекбокс слева от него, а результат — ТОНКАЯ линия под
-        // текстом (5dp там, у нас 4dp — чуть компактнее из-за в целом меньшего шрифта
-        // в ленте), а не заливка на всю высоту строки, как было в прошлой версии.
-        private static final float CHECKBOX_CX = dp(9);
-        private static final float CHECKBOX_R_CIRCLE = dp(8.5f);
-        private static final float CHECKBOX_R_SQUARE = dp(8f);
-        private static final float CHECKBOX_SQUARE_CORNER = dp(4f);
-        private static final float TEXT_START_X = dp(26);
-        private static final float LINE_TOP_GAP = dp(8);
-        private static final float LINE_HEIGHT = dp(4);
-        private static final float CHOSEN_ICON_R = dp(7);
-        private static final float ROW_BOTTOM_PADDING = dp(6);
-
-        private final Paint checkboxOutlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint checkboxFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint checkMarkPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint lineTrackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint lineFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint chosenIconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint voteArcPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final android.text.TextPaint textPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
-        private final android.text.TextPaint percentPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
-        private final int normalTextColor;
-        private final int accentColor;
-        private final int wrongColor;
-        private final int neutralBorderColor;
-        private String optionText = "";
-        private int percent = -1; // -1 = результаты ещё не видны — только текст+чекбокс, без линии
-        private boolean chosen = false;
-        private boolean correctQuizAnswer = false;
-        private boolean wrongQuizAnswer = false;
-        private boolean votingMode = false;
-        private boolean multipleChoice = false;
-        private boolean selectedForVote = false;
-        private boolean voteInProgress = false;
-        private float voteArcAngle = 0f;
-        private android.text.StaticLayout textLayout;
-        private int textLayoutWidth = -1;
-        private final RectF rect = new RectF();
-        private final Runnable voteArcTick = new Runnable() {
-            @Override
-            public void run() {
-                if (!voteInProgress) return;
-                voteArcAngle = (voteArcAngle + 12f) % 360f;
-                invalidate();
-                postDelayed(this, 16);
-            }
-        };
-
-        PollAnswerRow(Context context, Theme.ResourcesProvider resourcesProvider) {
-            super(context);
-            normalTextColor = Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider);
-            accentColor = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider);
-            wrongColor = Theme.getColor(Theme.key_text_RedRegular, resourcesProvider);
-            neutralBorderColor = Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider);
-
-            checkboxOutlinePaint.setStyle(Paint.Style.STROKE);
-            checkboxOutlinePaint.setStrokeWidth(dp(1.5f));
-            checkboxOutlinePaint.setColor(neutralBorderColor);
-
-            checkboxFillPaint.setStyle(Paint.Style.FILL);
-
-            checkMarkPaint.setStyle(Paint.Style.STROKE);
-            checkMarkPaint.setStrokeWidth(dp(1.833f));
-            checkMarkPaint.setStrokeCap(Paint.Cap.ROUND);
-            checkMarkPaint.setStrokeJoin(Paint.Join.ROUND);
-            checkMarkPaint.setColor(0xFFFFFFFF);
-
-            lineTrackPaint.setStyle(Paint.Style.FILL);
-            lineFillPaint.setStyle(Paint.Style.FILL);
-            chosenIconPaint.setStyle(Paint.Style.FILL);
-
-            voteArcPaint.setStyle(Paint.Style.STROKE);
-            voteArcPaint.setStrokeWidth(dp(1.5f));
-            voteArcPaint.setStrokeCap(Paint.Cap.ROUND);
-            voteArcPaint.setColor(accentColor);
-
-            textPaint.setTextSize(dp(14));
-            textPaint.setColor(normalTextColor);
-            percentPaint.setTextSize(dp(13));
-            percentPaint.setTypeface(AndroidUtilities.bold());
-        }
-
-        void bind(String text, int percentValue, boolean chosen, boolean correctQuizAnswer, boolean wrongQuizAnswer, boolean votingMode, boolean multipleChoice) {
-            optionText = text != null ? text : "";
-            percent = percentValue;
-            this.chosen = chosen;
-            this.correctQuizAnswer = correctQuizAnswer;
-            this.wrongQuizAnswer = wrongQuizAnswer;
-            this.votingMode = votingMode;
-            this.multipleChoice = multipleChoice;
-            this.selectedForVote = false;
-            setVoteInProgress(false);
-            textLayoutWidth = -1; // форсируем пересборку StaticLayout под текущий текст
-            setClickable(votingMode);
-            requestLayout();
-            invalidate();
-        }
-
-        /** Вызывается из PollView при тапе на чекбокс в режиме множественного выбора. */
-        void setSelectedForVote(boolean selected) {
-            selectedForVote = selected;
-            invalidate();
-        }
-
-        /**
-         * Анимация ожидания ответа сервера конкретно на ЭТОТ вариант — аналог
-         * pollVoteInProgress/voteCurrentCircleLength в оригинале (растущая дуга на
-         * месте чекбокса тапнутого варианта). Даёт мгновенный визуальный отклик на
-         * тап вместо "нажал и как будто ничего не произошло".
-         */
-        void setVoteInProgress(boolean inProgress) {
-            if (voteInProgress == inProgress) return;
-            voteInProgress = inProgress;
-            removeCallbacks(voteArcTick);
-            if (inProgress) {
-                voteArcAngle = 0f;
-                post(voteArcTick);
-            }
-            invalidate();
-        }
-
-        private void buildTextLayoutIfNeeded(int rowWidth) {
-            if (textLayoutWidth == rowWidth && textLayout != null) return;
-            textLayoutWidth = rowWidth;
-            float rightReserve = (!votingMode && percent >= 0) ? dp(36) : dp(4);
-            int availableWidth = Math.max(dp(10), (int) (rowWidth - TEXT_START_X - rightReserve));
-            textLayout = new android.text.StaticLayout(
-                optionText, textPaint, availableWidth,
-                android.text.Layout.Alignment.ALIGN_NORMAL, 1f, 0f, false
-            );
-        }
-
-        @Override
-        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            int width = MeasureSpec.getSize(widthMeasureSpec);
-            buildTextLayoutIfNeeded(width);
-            int textHeight = textLayout != null ? textLayout.getHeight() : dp(18);
-            int height = (int) (textHeight + (percent >= 0 && !votingMode ? LINE_TOP_GAP + LINE_HEIGHT + dp(6) : dp(4)) + ROW_BOTTOM_PADDING);
-            setMeasuredDimension(width, height);
-        }
-
-        @Override
-        protected void onDetachedFromWindow() {
-            super.onDetachedFromWindow();
-            removeCallbacks(voteArcTick);
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            buildTextLayoutIfNeeded(getWidth());
-            if (textLayout == null) return;
-
-            // --- текст варианта (многострочный, как StaticLayout title в оригинале) ---
-            canvas.save();
-            canvas.translate(TEXT_START_X, 0);
-            textPaint.setColor((correctQuizAnswer || (!votingMode && chosen)) ? accentColor : wrongQuizAnswer ? wrongColor : normalTextColor);
-            textLayout.draw(canvas);
-            canvas.restore();
-
-            float firstLineCenterY = (textLayout.getLineTop(0) + textLayout.getLineBottom(0)) / 2f;
-
-            // --- чекбокс/индикатор варианта слева от текста ---
-            if (votingMode) {
-                if (voteInProgress) {
-                    // Растущая дуга ожидания ответа сервера — вместо статичного чекбокса,
-                    // пока голос за этот конкретный вариант не подтверждён.
-                    rect.set(CHECKBOX_CX - CHECKBOX_R_CIRCLE, firstLineCenterY - CHECKBOX_R_CIRCLE,
-                        CHECKBOX_CX + CHECKBOX_R_CIRCLE, firstLineCenterY + CHECKBOX_R_CIRCLE);
-                    canvas.drawArc(rect, voteArcAngle, 100, false, voteArcPaint);
-                } else if (multipleChoice) {
-                    float r = CHECKBOX_R_SQUARE;
-                    rect.set(CHECKBOX_CX - r, firstLineCenterY - r, CHECKBOX_CX + r, firstLineCenterY + r);
-                    if (selectedForVote) {
-                        checkboxFillPaint.setColor(accentColor);
-                        canvas.drawRoundRect(rect, CHECKBOX_SQUARE_CORNER, CHECKBOX_SQUARE_CORNER, checkboxFillPaint);
-                        drawCheckMark(canvas, CHECKBOX_CX, firstLineCenterY, dp(5));
-                    } else {
-                        canvas.drawRoundRect(rect, CHECKBOX_SQUARE_CORNER, CHECKBOX_SQUARE_CORNER, checkboxOutlinePaint);
-                    }
-                } else {
-                    // Одиночный выбор — голос уходит сразу по тапу, поэтому это просто
-                    // пустой индикатор варианта (кружок), не переключаемый чекбокс.
-                    canvas.drawCircle(CHECKBOX_CX, firstLineCenterY, CHECKBOX_R_CIRCLE, checkboxOutlinePaint);
-                }
-            } else if (percent >= 0) {
-                // --- результаты: тонкая линия-шкала под текстом + процент + галочка ---
-                float lineTop = textLayout.getHeight() + LINE_TOP_GAP;
-                float lineWidth = getWidth() - TEXT_START_X - dp(4);
-                rect.set(TEXT_START_X, lineTop, TEXT_START_X + lineWidth, lineTop + LINE_HEIGHT);
-                int lineColor = (correctQuizAnswer || chosen) ? accentColor : (wrongQuizAnswer ? wrongColor : normalTextColor);
-                lineTrackPaint.setColor((lineColor & 0x00FFFFFF) | 0x22000000);
-                canvas.drawRoundRect(rect, LINE_HEIGHT / 2f, LINE_HEIGHT / 2f, lineTrackPaint);
-                float filled = lineWidth * (percent / 100f);
-                if (filled > 0) {
-                    rect.set(TEXT_START_X, lineTop, TEXT_START_X + filled, lineTop + LINE_HEIGHT);
-                    lineFillPaint.setColor(lineColor);
-                    canvas.drawRoundRect(rect, LINE_HEIGHT / 2f, LINE_HEIGHT / 2f, lineFillPaint);
-                }
-                String percentStr = percent + "%";
-                percentPaint.setColor(lineColor);
-                float percentW = percentPaint.measureText(percentStr);
-                canvas.drawText(percentStr, getWidth() - dp(4) - percentW, lineTop - dp(3), percentPaint);
-
-                if (chosen || correctQuizAnswer || wrongQuizAnswer) {
-                    float cx = TEXT_START_X - CHOSEN_ICON_R - dp(4);
-                    float cy = lineTop + LINE_HEIGHT / 2f;
-                    chosenIconPaint.setColor(wrongQuizAnswer ? wrongColor : accentColor);
-                    canvas.drawCircle(cx, cy, CHOSEN_ICON_R, chosenIconPaint);
-                    if (wrongQuizAnswer) {
-                        float m = CHOSEN_ICON_R * 0.5f;
-                        canvas.drawLine(cx - m, cy - m, cx + m, cy + m, checkMarkPaint);
-                        canvas.drawLine(cx + m, cy - m, cx - m, cy + m, checkMarkPaint);
-                    } else {
-                        drawCheckMark(canvas, cx, cy, CHOSEN_ICON_R * 0.6f);
-                    }
-                }
-            }
-        }
-
-        /** Галочка "V" в квадратике/кружке — одна и та же геометрия для обоих случаев. */
-        private void drawCheckMark(Canvas canvas, float cx, float cy, float r) {
-            canvas.drawLine(cx - r, cy, cx - r * 0.2f, cy + r * 0.7f, checkMarkPaint);
-            canvas.drawLine(cx - r * 0.2f, cy + r * 0.7f, cx + r, cy - r * 0.6f, checkMarkPaint);
-        }
-    }
-
-    // ------------------------------------------------------------------ DotsIndicator
-
-    private static class DotsIndicator extends View {
-        private static final int DOT_SIZE_DP   = 6;
-        private static final int DOT_GAP_DP    = 5;
-        private final Paint activePaint   = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint inactivePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private int pageCount   = 0;
-        private int currentPage = 0;
-
-        DotsIndicator(Context context, Theme.ResourcesProvider rp) {
-            super(context);
-            activePaint.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, rp));
-            inactivePaint.setColor(0x55808080);
-        }
-
-        void setPageCount(int count)   { pageCount = count;   invalidate(); }
-        void setCurrentPage(int page)  { currentPage = page;  invalidate(); }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            if (pageCount <= 1) return;
-            float dotR  = dp(DOT_SIZE_DP) / 2f;
-            float gap   = dp(DOT_GAP_DP);
-            float totalW = pageCount * dp(DOT_SIZE_DP) + (pageCount - 1) * gap;
-            float startX = (getWidth() - totalW) / 2f + dotR;
-            float cy = getHeight() / 2f;
-            for (int i = 0; i < pageCount; i++) {
-                float cx = startX + i * (dp(DOT_SIZE_DP) + gap);
-                canvas.drawCircle(cx, cy, dotR, i == currentPage ? activePaint : inactivePaint);
-            }
-        }
-    }
-
-    // Фикс "реакция без смайлика": обычный TextView умеет показать только юникод-эмодзи
-    // (TL_reactionEmoji). Если у канала кастомная эмодзи-реакция (TL_reactionCustomEmoji —
-    // это стикер, а не текстовый символ), нужен полноценный AnimatedEmojiDrawable.
-    // Эта вьюха — минимальный хост для него: сама ничего не знает про реакции,
-    // просто рисует переданный document_id.
-    private static class ReactionEmojiView extends View {
-        private AnimatedEmojiDrawable drawable;
-
-        ReactionEmojiView(Context context) {
-            super(context);
-        }
-
-        void setDocumentId(long documentId) {
-            if (drawable != null) {
-                drawable.removeView(this);
-                drawable = null;
-            }
-            if (documentId != 0) {
-                drawable = AnimatedEmojiDrawable.make(UserConfig.selectedAccount, AnimatedEmojiDrawable.CACHE_TYPE_MESSAGES, documentId);
-                drawable.addView(this);
-            }
-            invalidate();
-        }
-
-        void recycle() {
-            if (drawable != null) {
-                drawable.removeView(this);
-                drawable = null;
-            }
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            if (drawable != null) {
-                drawable.setBounds(0, 0, getWidth(), getHeight());
-                drawable.draw(canvas);
-            }
-        }
-
-        @Override
-        protected void onDetachedFromWindow() {
-            super.onDetachedFromWindow();
-            recycle();
-        }
-    }
-}
+        

@@ -1594,7 +1594,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     // уже сама тащит фото — отсюда и жалоба "фото чёткое, а кнопка есть").
                     img.setImage(
                         ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
-                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50_b",
+                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50_b2",
                         mo.strippedThumb, (String) null, 0, 0, mo
                     );
                     holder.photoOverlay.setVisibility(GONE);
@@ -1611,7 +1611,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     // пустота вместо блюра.
                     img.setImage(
                         (ImageLocation) null, (String) null,
-                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50_b",
+                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50_b2",
                         mo.strippedThumb, (String) null, 0, 0, mo
                     );
                     final int photoBindPosition = position;

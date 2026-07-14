@@ -14,6 +14,10 @@ import static org.telegram.messenger.LocaleController.getString;
 
 import android.Manifest;
 import android.annotation.TargetApi;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.widget.ScrollView;
+import android.widget.TextView;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.Context;
@@ -280,6 +284,34 @@ public class ContactsActivity extends BaseFragment implements FactorAnimator.Tar
         }
     }
 
+    // ВРЕМЕННЫЙ debug-инструмент, см. комментарий у setOnLongClickListener в createView()
+    // выше. Показывает диалог с последними записанными строками PotokDebugLog,
+    // с кнопкой копирования в буфер (чтобы прислать текст обратно) и кнопкой очистки
+    // (чтобы перед повторным воспроизведением бага начать с чистого буфера).
+    private void showPotokDebugLogDialog(Context context) {
+        ScrollView scrollView = new ScrollView(context);
+        TextView textView = new TextView(context);
+        textView.setTextIsSelectable(true);
+        textView.setTextSize(12);
+        textView.setPadding(dp(16), dp(8), dp(16), dp(8));
+        textView.setTextColor(getThemedColor(Theme.key_dialogTextBlack));
+        textView.setText(org.telegram.messenger.PotokDebugLog.getAll());
+        scrollView.addView(textView, LayoutHelper.createScroll(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(context, getResourceProvider());
+        builder.setTitle("Логи Поток (блюр / двоение кадров)");
+        builder.setView(scrollView);
+        builder.setPositiveButton("Копировать", (dialog, which) -> {
+            ClipboardManager cm = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) {
+                cm.setPrimaryClip(ClipData.newPlainText("Поток debug log", org.telegram.messenger.PotokDebugLog.getAll()));
+            }
+        });
+        builder.setNeutralButton("Очистить", (dialog, which) -> org.telegram.messenger.PotokDebugLog.clear());
+        builder.setNegativeButton("Закрыть", null);
+        builder.show();
+    }
+
     @Override
     public View createView(Context context) {
         searching = false;
@@ -294,6 +326,17 @@ public class ContactsActivity extends BaseFragment implements FactorAnimator.Tar
             }
         } else {
             actionBar.setTitle(getString(R.string.Contacts));
+        }
+        // ВРЕМЕННЫЙ debug-инструмент для диагностики багов "непостоянный блюр" и
+        // "двоение кадров видео/GIF после fullscreen" — долгое нажатие на заголовок
+        // "Контакты" открывает диалог с последними записанными логами (см.
+        // org.telegram.messenger.PotokDebugLog). Убрать вместе с самим PotokDebugLog
+        // и всеми вызовами PotokDebugLog.d(...), как только причины багов найдены.
+        if (actionBar.getTitleTextView() != null) {
+            actionBar.getTitleTextView().setOnLongClickListener(v -> {
+                showPotokDebugLogDialog(context);
+                return true;
+            });
         }
 
         backDrawable = new BackDrawable(false);

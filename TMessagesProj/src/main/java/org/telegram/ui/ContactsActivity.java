@@ -295,7 +295,7 @@ public class ContactsActivity extends BaseFragment implements FactorAnimator.Tar
         textView.setTextSize(12);
         textView.setPadding(dp(16), dp(8), dp(16), dp(8));
         textView.setTextColor(getThemedColor(Theme.key_dialogTextBlack));
-        textView.setText(org.telegram.messenger.PotokDebugLog.getAll());
+        textView.setText(PotokDebugLog.getAll());
         scrollView.addView(textView, LayoutHelper.createScroll(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
 
         AlertDialog.Builder builder = new AlertDialog.Builder(context, getResourceProvider());
@@ -304,10 +304,10 @@ public class ContactsActivity extends BaseFragment implements FactorAnimator.Tar
         builder.setPositiveButton("Копировать", (dialog, which) -> {
             ClipboardManager cm = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
             if (cm != null) {
-                cm.setPrimaryClip(ClipData.newPlainText("Поток debug log", org.telegram.messenger.PotokDebugLog.getAll()));
+                cm.setPrimaryClip(ClipData.newPlainText("Поток debug log", PotokDebugLog.getAll()));
             }
         });
-        builder.setNeutralButton("Очистить", (dialog, which) -> org.telegram.messenger.PotokDebugLog.clear());
+        builder.setNeutralButton("Очистить", (dialog, which) -> PotokDebugLog.clear());
         builder.setNegativeButton("Закрыть", null);
         builder.show();
     }
@@ -330,7 +330,7 @@ public class ContactsActivity extends BaseFragment implements FactorAnimator.Tar
         // ВРЕМЕННЫЙ debug-инструмент для диагностики багов "непостоянный блюр" и
         // "двоение кадров видео/GIF после fullscreen" — долгое нажатие на заголовок
         // "Контакты" открывает диалог с последними записанными логами (см.
-        // org.telegram.messenger.PotokDebugLog). Убрать вместе с самим PotokDebugLog
+        // PotokDebugLog). Убрать вместе с самим PotokDebugLog
         // и всеми вызовами PotokDebugLog.d(...), как только причины багов найдены.
         if (actionBar.getTitleTextView() != null) {
             actionBar.getTitleTextView().setOnLongClickListener(v -> {

@@ -378,7 +378,17 @@ public class PotokFeedPostCell extends LinearLayout {
 
         LinearLayout audioTitleColumn = new LinearLayout(context);
         audioTitleColumn.setOrientation(VERTICAL);
-        audioTopRow.addView(audioTitleColumn, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, 10, 0, 0, 0));
+        // Фикс "большой пустой отступ между строкой 1 и строкой 2": audioTopRow
+        // вынужденно 44dp высотой (задаётся иконкой play/pause), а этот столбец
+        // раньше наследовал CENTER_VERTICAL от родителя — заголовок вставал строго
+        // по центру 44dp строки, и ПОД текстом оставалось ~12dp пустого места ДО
+        // конца строки, а сверху ЕЩЁ добавлялся topMargin=4dp у audioSecondRow —
+        // итоговый видимый зазор получался около 16dp. Реальный Telegram растягивает
+        // это иначе (независимые Y-координаты текста и иконки в одном канвасе), но у
+        // нас иконка и заголовок — соседи в LinearLayout, поэтому самый точный по
+        // смыслу фикс — прижать заголовок к НИЖНЕМУ краю строки (Gravity.BOTTOM),
+        // вплотную к месту, где начинается audioSecondRow.
+        audioTopRow.addView(audioTitleColumn, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, Gravity.BOTTOM, 10, 0, 0, 0));
 
         // Строка 1: только название — исполнитель больше НЕ живёт в этой колонке
         // (раньше был здесь, вторым TextView'ом под названием, отсюда и жалоба
@@ -423,7 +433,7 @@ public class PotokFeedPostCell extends LinearLayout {
         this.audioSeekRow = audioSeekRow;
 
         audioSecondRow = new FrameLayout(context);
-        audioColumn.addView(audioSecondRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 24, 54, 4, 8, 0));
+        audioColumn.addView(audioSecondRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 24, 54, 2, 8, 0));
         audioSecondRow.addView(audioPerformerView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL));
         audioSecondRow.addView(audioSeekRow, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
@@ -1532,8 +1542,28 @@ public class PotokFeedPostCell extends LinearLayout {
                 TLRPC.PhotoSize currentPhotoObjectThumb = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, 40);
                 if (currentPhotoObject == currentPhotoObjectThumb) currentPhotoObjectThumb = null;
 
+                // Фикс "разный блюр на разных постах" (часть 3, главная причина): раньше
+                // здесь стояло "if (strippedThumb != null) currentPhotoObjectThumb =
+                // null" — то есть strippedThumb и currentPhotoObjectThumb считались
+                // ВЗАИМОИСКЛЮЧАЮЩИМИ. В оригинале (ChatMessageCell, см. например строку
+                // с photoImage.setImage(..., ImageLocation.getForDocument(currentPhotoObjectThumb,
+                // documentAttach), currentPhotoFilterThumb, currentPhotoObjectThumbStripped, ...))
+                // они передаются ОДНОВРЕМЕННО как РАЗНЫЕ уровни одного и того же
+                // setImage-вызова: currentPhotoObjectThumbStripped (=strippedThumb) —
+                // мгновенный сырой Drawable, показывается, пока даже маленький сетевой
+                // currentPhotoObjectThumb ещё не скачался; currentPhotoObjectThumb с
+                // currentPhotoFilterThumb — отдельный сетевой уровень С БЛЮРОМ (в нашем
+                // случае — сильным "_b2", см. GroupMedia.java для постов/альбомов).
+                // Дополнительно: сам strippedThumb печётся в MessageObject.createStrippedThumb()
+                // со СЛАБЫМ фильтром "b" (blurType=1, а не "b2"/blurType=3) — он и
+                // задумывался как быстрый слабо-заблюренный мгновенный заполнитель,
+                // а не финальная картинка. Раз у нас strippedThumb есть почти всегда
+                // (это обычные встроенные байты сообщения), взаимоисключение означало,
+                // что почти ВСЕ посты проваливались в этот слабый мгновенный вариант,
+                // а правильный сильно-заблюренный сетевой уровень просто никогда не
+                // подключался — отсюда и "то сильно, то слабо" в зависимости от
+                // случайного наличия/отсутствия strippedThumb у конкретного поста.
                 BitmapDrawable strippedThumb = mo.strippedThumb;
-                if (strippedThumb != null) currentPhotoObjectThumb = null;
 
                 if (currentPhotoObject != null && (currentPhotoObject.w == 0 || currentPhotoObject.h == 0
                         || currentPhotoObject instanceof TLRPC.TL_photoStrippedSize)) {
@@ -1561,8 +1591,23 @@ public class PotokFeedPostCell extends LinearLayout {
                 // "_b" по недосмотру — отсюда и "некоторые посты правильно заблюрены,
                 // некоторые слегка": фото уже показывали сильный блюр "_b2", а видео/GIF-
                 // превью — слабый "_b". Приведено к тому же сильному "_b2", что и у фото.
+                // Фикс "разный блюр на разных постах" (часть 2): когда у поста НЕТ
+                // встроенного PhotoSize-превью (currentPhotoObjectThumb == null, есть
+                // только strippedThumb) — раньше сюда попадал ГОЛЫЙ фильтр "b2" без
+                // размеров. ImageLoader.java (см. createImage(): "if (args.length >= 2)
+                // {w_filter=...; h_filter=...}") распознаёт размер ТОЛЬКО если в
+                // фильтре есть "ширина_высота" ПЕРЕД суффиксом блюра — без них весь
+                // блок даунскейла перед блюром (opts.inSampleSize по photoW/photoH)
+                // просто пропускается, картинка декодируется почти в полном
+                // разрешении, и тот же фиксированный радиус блюра (3 прохода, ~7px)
+                // на большой картинке визуально выглядит куда слабее, чем на
+                // уменьшенной до 50x50 — отсюда разница "один канал блюрится сильно,
+                // другой еле-еле" в зависимости от того, есть ли у поста встроенный
+                // PhotoSize. Добавлены те же фиксированные размеры "50_50", что и в
+                // видео/GIF-ветке ниже — теперь любой путь даунскейлится перед блюром
+                // одинаково, независимо от исходного разрешения.
                 String currentPhotoFilterThumb = currentPhotoObjectThumb != null
-                    ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h + "_b2" : "b2";
+                    ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h + "_b2" : "50_50_b2";
 
                 // ГЛАВНОЕ ИЗМЕНЕНИЕ: видео больше НЕ подгружается/не стримится само по
                 // себе при показе поста. canDecodeFromVideo (декодирование реального
@@ -2507,11 +2552,30 @@ public class PotokFeedPostCell extends LinearLayout {
         AudioPlayButton(Context context, Theme.ResourcesProvider rp) {
             super(context);
             radialProgress = new RadialProgress2(this);
-            radialProgress.setColorKeys(Theme.key_chat_inAudioProgress, Theme.key_chat_inAudioSelectedProgress,
+            // Фикс "бейдж загрузки — белый": раньше здесь стояла пара
+            // key_chat_inAudioProgress/key_chat_inAudioSelectedProgress. В реальной
+            // теме (см. night.attheme/darkblue.attheme) chat_inAudioProgress=-1 —
+            // буквально непрозрачный белый (0xFFFFFFFF), и оригинальный ChatMessageCell
+            // НИКОГДА не использует этот ключ для заливки круга play/pause-кнопки —
+            // только key_chat_inLoader/key_chat_inLoaderSelected (см.
+            // radialProgress.setColorKeys(Theme.key_chat_inLoader, ...) в оригинале
+            // для входящих медиа/документов/аудио). key_chat_inAudioProgress
+            // зарезервирован под другое — линию прогресса самого сикбара, а не под
+            // круглую кнопку. Из-за неверного ключа круг главной кнопки был не виден
+            // (замаскирован обложкой трека), а вот НЕЗАВИСИМЫЙ от обложки мини-бейдж
+            // честно рисовал этот белый цвет — отсюда "белая кнопка".
+            radialProgress.setColorKeys(Theme.key_chat_inLoader, Theme.key_chat_inLoaderSelected,
                     Theme.key_chat_inMediaIcon, Theme.key_chat_inMediaIconSelected);
             radialProgress.setCircleRadius(dp(22));
             TAG = DownloadController.getInstance(UserConfig.selectedAccount).generateObserverTag();
-            setOnClickListener(v -> onClick());
+            // Фикс "тап по маленькой кнопке загрузки запускает play/pause": раньше
+            // весь View целиком висел на одном setOnClickListener(onClick), который
+            // ВСЕГДА играл/ставил на паузу — независимо от того, куда именно на
+            // кнопке попал палец. В оригинале (ChatMessageCell.checkAudioMotionEvent)
+            // область мини-бейджа хит-тестится ОТДЕЛЬНО от основной кнопки и вызывает
+            // СВОЙ обработчик didPressMiniButton() — только старт/отмена докачки,
+            // без единого обращения к play/pause. Реализовано ниже в onTouchEvent().
+            setClickable(true);
         }
 
         void setOnPlayRequested(Utilities.CallbackReturn<MessageObject, Boolean> listener) {
@@ -2627,6 +2691,81 @@ public class PotokFeedPostCell extends LinearLayout {
                     radialProgress.setIcon(MediaActionDrawable.ICON_PLAY, false, true);
                     invalidate();
                 }
+            }
+        }
+
+        /**
+         * Тап именно по маленькому бейджу загрузки — ТОЛЬКО старт/отмена докачки,
+         * play/pause не трогает вообще. 1:1 с ChatMessageCell.didPressMiniButton()
+         * (ветка для AUDIO/MUSIC, без записи звонка/видео).
+         */
+        private void didPressMiniButton() {
+            if (document == null || messageObject == null) return;
+            if (miniButtonState == 0) {
+                miniButtonState = 1;
+                radialProgress.setProgress(0, false);
+                messageObject.putInDownloadsStore = true;
+                FileLoader.getInstance(currentAccount).loadFile(document, messageObject, FileLoader.PRIORITY_NORMAL_UP, 0);
+                messageObject.loadingCancelled = false;
+                radialProgress.setMiniIcon(MediaActionDrawable.ICON_CANCEL, false, true);
+                invalidate();
+            } else if (miniButtonState == 1) {
+                miniButtonState = 0;
+                messageObject.loadingCancelled = true;
+                FileLoader.getInstance(currentAccount).cancelLoadFile(document);
+                radialProgress.setMiniIcon(MediaActionDrawable.ICON_DOWNLOAD, false, true);
+                invalidate();
+            }
+        }
+
+        /** true, если координата (x,y) попадает в область мини-бейджа загрузки —
+         * формула центра cx/cy 1:1 с RadialProgress2.draw() для ветки
+         * "progressRect.width()==dp(44)" (у нас всегда так, см. onMeasure ниже):
+         * cx/cy = центр + dp(16), визуальный радиус ~dp(11). Хит-зона берётся с
+         * запасом (dp(15) половина стороны — как dp(36)/dp(28) side/offset в
+         * оригинале ChatMessageCell, тоже заметно больше видимого кружка ради
+         * удобства пальца). */
+        private boolean isInMiniButtonArea(float x, float y) {
+            if (miniButtonState < 0) return false;
+            RectF pr = radialProgress.getProgressRect();
+            float cx = pr.centerX() + dp(16);
+            float cy = pr.centerY() + dp(16);
+            float half = dp(15);
+            return x >= cx - half && x <= cx + half && y >= cy - half && y <= cy + half;
+        }
+
+        private boolean miniPressed;
+        private boolean mainPressed;
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (document == null) return super.onTouchEvent(event);
+            boolean inMini = isInMiniButtonArea(event.getX(), event.getY());
+            switch (event.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    if (inMini) {
+                        miniPressed = true;
+                    } else {
+                        mainPressed = true;
+                    }
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (miniPressed && inMini) {
+                        didPressMiniButton();
+                    } else if (mainPressed && !inMini) {
+                        onClick();
+                    }
+                    miniPressed = false;
+                    mainPressed = false;
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    miniPressed = false;
+                    mainPressed = false;
+                    return true;
+                default:
+                    return super.onTouchEvent(event);
             }
         }
 

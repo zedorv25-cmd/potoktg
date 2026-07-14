@@ -52,6 +52,7 @@ import org.telegram.ui.Components.SeekBar;
 import org.telegram.ui.Components.SeekBarWaveform;
 import org.telegram.ui.PhotoViewer;
 import org.telegram.ui.PotokFeedFragment;
+import org.telegram.ui.PotokDebugLog;
 import org.telegram.ui.ChatActivity;
 import org.telegram.ui.DialogsActivity;
 import org.telegram.ui.ActionBar.ActionBarPopupWindow;

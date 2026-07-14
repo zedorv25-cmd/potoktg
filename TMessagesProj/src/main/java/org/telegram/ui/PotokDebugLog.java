@@ -1,4 +1,17 @@
-package org.telegram.messenger;
+package org.telegram.ui;
+
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.view.Gravity;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import org.telegram.messenger.FileLog;
+import org.telegram.messenger.AndroidUtilities;
+import org.telegram.ui.ActionBar.AlertDialog;
+import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Components.LayoutHelper;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
@@ -13,17 +26,20 @@ import java.util.Locale;
  * Не пишет в файл (чтобы не плодить лишние permissions/IO на телефоне пользователя) —
  * держит последние 400 строк в памяти (кольцевой буфер) + дублирует в logcat через
  * FileLog.d(), и отдаётся текстом через getAll() для показа в UI (см. вкладку
- * "Контакты" — ContactsActivity, длинное нажатие на заголовок).
+ * "Контакты" — ContactsActivity, длинное нажатие на заголовок; либо вкладка
+ * "Контакты" в нижних табах — MainTabsActivity, длинное нажатие на саму вкладку).
  *
  * КАК УБРАТЬ ПОСЛЕ ДИАГНОСТИКИ: это временный код, не часть финального продукта.
  * Как только причины блюра/двоения кадров найдены и исправлены, все вызовы
- * PotokDebugLog.d(...) и сам этот класс можно смело удалить.
+ * PotokDebugLog.*(...) и сам этот класс можно смело удалить.
  */
 public class PotokDebugLog {
 
     private static final int MAX_LINES = 400;
     private static final ArrayDeque<String> lines = new ArrayDeque<>();
     private static final SimpleDateFormat fmt = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US);
+
+    private static boolean crashHandlerInstalled = false;
 
     public static synchronized void d(String tag, String message) {
         String line = fmt.format(new Date()) + " [" + tag + "] " + message;
@@ -32,6 +48,14 @@ public class PotokDebugLog {
             lines.removeFirst();
         }
         FileLog.d("PotokDebug: " + line);
+    }
+
+    /**
+     * Алиас d() — часть вызовов в проекте исторически писалась через log(),
+     * часть через d(); оставлены оба имени, чтобы не переписывать call-сайты.
+     */
+    public static void log(String tag, String message) {
+        d(tag, message);
     }
 
     public static synchronized String getAll() {
@@ -46,7 +70,96 @@ public class PotokDebugLog {
         return sb.toString();
     }
 
+    /**
+     * Те же строки, что getAll(), но оставлены только те, что содержат filter
+     * (без учёта регистра) — либо в теге, либо в тексте сообщения.
+     * Если filter пустой/null — ведёт себя как getAll().
+     */
+    public static synchronized String getFiltered(String filter) {
+        if (filter == null || filter.isEmpty()) {
+            return getAll();
+        }
+        String needle = filter.toLowerCase(Locale.US);
+        StringBuilder sb = new StringBuilder();
+        for (String line : lines) {
+            if (line.toLowerCase(Locale.US).contains(needle)) {
+                sb.append(line).append('\n');
+            }
+        }
+        if (sb.length() == 0) {
+            sb.append("(нет строк, содержащих \"").append(filter).append("\" — всего в буфере ")
+                .append(lines.size()).append(" строк(и); открой без фильтра, если нужно всё)");
+        }
+        return sb.toString();
+    }
+
     public static synchronized void clear() {
         lines.clear();
+    }
+
+    /**
+     * Показывает диалог с логом, отфильтрованным по filter (см. getFiltered()).
+     * Копия диалога из ContactsActivity.showPotokDebugLogDialog(), но переиспользуемая
+     * из любого места (сейчас — long-press по вкладке "Контакты" в MainTabsActivity).
+     */
+    public static void showFiltered(Context context, String filter) {
+        if (context == null) {
+            return;
+        }
+        ScrollView scrollView = new ScrollView(context);
+        TextView textView = new TextView(context);
+        textView.setTextIsSelectable(true);
+        textView.setTextSize(12);
+        textView.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(8), AndroidUtilities.dp(16), AndroidUtilities.dp(8));
+        textView.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
+        textView.setText(getFiltered(filter));
+        scrollView.addView(textView, LayoutHelper.createScroll(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.TOP));
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        builder.setTitle("Логи Поток" + (filter != null && !filter.isEmpty() ? " (фильтр: " + filter + ")" : ""));
+        builder.setView(scrollView);
+        builder.setPositiveButton("Копировать", (dialog, which) -> {
+            ClipboardManager cm = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) {
+                cm.setPrimaryClip(ClipData.newPlainText("Поток debug log", getFiltered(filter)));
+            }
+        });
+        builder.setNeutralButton("Очистить", (dialog, which) -> clear());
+        builder.setNegativeButton("Закрыть", null);
+        builder.show();
+    }
+
+    /**
+     * Ставит собственный UncaughtExceptionHandler ПЕРЕД уже существующим (не заменяет
+     * его, а оборачивает): при краше сначала пишет стектрейс в этот кольцевой буфер
+     * (через FileLog, т.е. он попадёт и в logcat), затем вызывает оригинальный
+     * обработчик — чтобы поведение самого Telegram/системы на краше не менялось.
+     * Безопасно вызывать несколько раз — повторные вызовы игнорируются.
+     */
+    public static synchronized void installCrashHandler(Context context) {
+        if (crashHandlerInstalled) {
+            return;
+        }
+        crashHandlerInstalled = true;
+        final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            try {
+                d("CRASH", "Uncaught in thread " + thread.getName() + ": " + Log_getStackTraceString(throwable));
+            } catch (Throwable ignore) {
+                // никогда не даём диагностике сломать доставку краша дальше
+            }
+            if (previous != null) {
+                previous.uncaughtException(thread, throwable);
+            }
+        });
+    }
+
+    private static String Log_getStackTraceString(Throwable t) {
+        if (t == null) {
+            return "(null throwable)";
+        }
+        java.io.StringWriter sw = new java.io.StringWriter();
+        t.printStackTrace(new java.io.PrintWriter(sw));
+        return sw.toString();
     }
 }

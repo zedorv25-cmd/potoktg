@@ -378,23 +378,19 @@ public class PotokFeedPostCell extends LinearLayout {
 
         LinearLayout audioTitleColumn = new LinearLayout(context);
         audioTitleColumn.setOrientation(VERTICAL);
-        // Фикс "большой пустой отступ между строкой 1 и строкой 2": audioTopRow
-        // вынужденно 44dp высотой (задаётся иконкой play/pause), а этот столбец
-        // раньше наследовал CENTER_VERTICAL от родителя — заголовок вставал строго
-        // по центру 44dp строки, и ПОД текстом оставалось ~12dp пустого места ДО
-        // конца строки, а сверху ЕЩЁ добавлялся topMargin=4dp у audioSecondRow —
-        // итоговый видимый зазор получался около 16dp. Реальный Telegram растягивает
-        // это иначе (независимые Y-координаты текста и иконки в одном канвасе), но у
-        // нас иконка и заголовок — соседи в LinearLayout, поэтому самый точный по
-        // смыслу фикс — прижать заголовок к НИЖНЕМУ краю строки (Gravity.BOTTOM),
-        // вплотную к месту, где начинается audioSecondRow.
-        audioTopRow.addView(audioTitleColumn, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, Gravity.BOTTOM, 10, 0, 0, 0));
+        // Фикс "иконка play и название/автор на разных высотах": раньше колонка
+        // [название] и блок [автор/полоса] (audioSecondRow) были РАЗНЫМИ строками —
+        // название жило внутри audioTopRow (рядом с иконкой), а автор/полоса —
+        // отдельным сиблингом НИЖЕ всего audioTopRow целиком, из-за чего иконка
+        // визуально "плавала" одна, а название с автором ехали ниже неё. Теперь
+        // audioSecondRow — часть ЭТОЙ ЖЕ колонки, вместе с названием, и вся колонка
+        // (название + автор/полоса, ~44dp суммарно) стоит РЯДОМ с иконкой (44dp) в
+        // одной строке — 1:1 с тем, как это выглядело в самой первой версии до
+        // разделения на 3 отдельные строки. Строка 3 (время) остаётся отдельной
+        // константной строкой НИЖЕ этого блока целиком (см. audioColumn.addView(audioTimeView...)).
+        audioTopRow.addView(audioTitleColumn, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1f, 10, 0, 0, 0));
 
-        // Строка 1: только название — исполнитель больше НЕ живёт в этой колонке
-        // (раньше был здесь, вторым TextView'ом под названием, отсюда и жалоба
-        // "во время игры остаётся только название и сразу полоса" — исполнитель просто
-        // схлопывался в GONE без анимации и без своего места). Теперь исполнитель —
-        // часть строки 2 (audioSecondRow) ниже, наравне с полосой перемотки.
+        // Строка 1 (внутри audioTitleColumn): название.
         audioTitleView = new TextView(context);
         audioTitleView.setTextSize(15);
         audioTitleView.setTypeface(AndroidUtilities.bold());
@@ -403,12 +399,12 @@ public class PotokFeedPostCell extends LinearLayout {
         audioTitleView.setEllipsize(TextUtils.TruncateAt.END);
         audioTitleColumn.addView(audioTitleView);
 
-        // Строка 2 (переключаемая, с анимацией): исполнитель ИЛИ полоса перемотки —
-        // 1:1 с ChatMessageCell, где performerLayout и seekBar рисуются на ОДНОЙ и той
-        // же Y-координате и кроссфейдятся (alpha + лёгкий scale) друг в друга, вместо
-        // того чтобы одно резко исчезало, а другое резко появлялось ниже отдельной
-        // строкой. Оба ребёнка лежат в одном FrameLayout один поверх другого;
-        // видимость/прозрачность переключается в updateAudioSeekRowVisibility().
+        // Строка 2 (переключаемая, с анимацией, тоже внутри audioTitleColumn, сразу
+        // под названием): исполнитель ИЛИ полоса перемотки — 1:1 с ChatMessageCell,
+        // где performerLayout и seekBar рисуются на ОДНОЙ и той же Y-координате и
+        // кроссфейдятся (alpha) друг в друга. Оба ребёнка лежат в одном FrameLayout
+        // один поверх другого; видимость/прозрачность переключается в
+        // updateAudioSeekRowVisibility().
         audioPerformerView = new TextView(context);
         audioPerformerView.setTextSize(13);
         audioPerformerView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
@@ -421,7 +417,7 @@ public class PotokFeedPostCell extends LinearLayout {
         // Видны ОБА варианта заранее, переключается только visibility в setPost() в
         // зависимости от isVoice()/isMusic() — как и в оригинале, где это тоже два
         // разных пути отрисовки внутри одной и той же ячейки. Время сюда больше НЕ
-        // добавляется сбоку — оно теперь отдельная константная строка 3 (см. ниже).
+        // добавляется сбоку — оно отдельная константная строка 3 (см. ниже).
         audioSeekBarView = new AudioSeekBarView(context, resourcesProvider);
         audioWaveformView = new AudioWaveformView(context, resourcesProvider);
 
@@ -433,22 +429,17 @@ public class PotokFeedPostCell extends LinearLayout {
         this.audioSeekRow = audioSeekRow;
 
         audioSecondRow = new FrameLayout(context);
-        audioColumn.addView(audioSecondRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 24, 54, 2, 8, 0));
+        audioTitleColumn.addView(audioSecondRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 24, 0, 2, 0, 0));
         audioSecondRow.addView(audioPerformerView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL));
         audioSecondRow.addView(audioSeekRow, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
-        // Строка 3 (константа): "0:00 / 3:45" — 1:1 с ChatMessageCell.durationLayout,
-        // которая рисуется на СВОЕЙ отдельной Y-координате (dp(57) в оригинале, ниже
-        // строки 2) и видна ВСЕГДА — и до первого тапа play, и во время игры, и на
-        // паузе, независимо от activelyPlaying. В оригинале для типа "музыка" (не
-        // войс-АУДИО-документ, а именно DOCUMENT_ATTACH_TYPE_MUSIC) в этой строке нет
-        // размера файла — только время, поэтому размер файла сюда сознательно не
-        // добавлен (раньше в audioStaticInfoView был "0:00 / 2:56  5,9 MB" — это не
-        // совпадало с оригиналом, который для музыки размер вообще не показывает).
+        // Строка 3 (константа, отдельно ПОД всем блоком иконка+название+автор/полоса):
+        // "0:00 / 3:45" — 1:1 с ChatMessageCell.durationLayout, видна ВСЕГДА, для
+        // музыки без размера файла (см. подробности в предыдущих комментариях сессии).
         audioTimeView = new TextView(context);
         audioTimeView.setTextSize(13);
         audioTimeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
-        audioColumn.addView(audioTimeView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 54, 2, 8, 0));
+        audioColumn.addView(audioTimeView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 54, 4, 8, 0));
 
 
         // --- Опрос ---
@@ -1098,6 +1089,8 @@ public class PotokFeedPostCell extends LinearLayout {
 
     private void openMediaViewer(MessageObject mo, int index, ArrayList<MessageObject> all) {
         if (mo == null || parentActivity == null) return;
+        org.telegram.messenger.PotokDebugLog.d("GHOST", "openMediaViewer post=" + mo.getId()
+            + " isVideo=" + (mo.isVideo() || mo.isGif()) + " isGif=" + mo.isGif() + " groupSize=" + (all != null ? all.size() : 1));
         PhotoViewer.getInstance().setParentActivity(parentActivity);
         long dialogId = mo.getDialogId();
         // Раньше здесь стоял EmptyPhotoViewerProvider — он намеренно НЕ даёт PhotoViewer
@@ -1521,6 +1514,23 @@ public class PotokFeedPostCell extends LinearLayout {
         }
 
         @Override
+        public void onViewAttachedToWindow(MediaHolder holder) {
+            super.onViewAttachedToWindow(holder);
+            org.telegram.messenger.PotokDebugLog.d("GHOST", "carousel ATTACH holder=" + System.identityHashCode(holder)
+                + " img=" + System.identityHashCode(holder.img)
+                + " hasBitmap=" + holder.img.getImageReceiver().hasBitmapImage()
+                + " isAnimation=" + (holder.img.getImageReceiver().getAnimation() != null));
+        }
+
+        @Override
+        public void onViewDetachedFromWindow(MediaHolder holder) {
+            super.onViewDetachedFromWindow(holder);
+            org.telegram.messenger.PotokDebugLog.d("GHOST", "carousel DETACH holder=" + System.identityHashCode(holder)
+                + " img=" + System.identityHashCode(holder.img)
+                + " isAnimation=" + (holder.img.getImageReceiver().getAnimation() != null));
+        }
+
+        @Override
         public void onBindViewHolder(MediaHolder holder, int position) {
             MessageObject mo = items.get(position);
             BackupImageView img = holder.img;
@@ -1609,6 +1619,13 @@ public class PotokFeedPostCell extends LinearLayout {
                 String currentPhotoFilterThumb = currentPhotoObjectThumb != null
                     ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h + "_b2" : "50_50_b2";
 
+                org.telegram.messenger.PotokDebugLog.d("BLUR", "post=" + mo.getId()
+                    + " strippedThumb=" + (strippedThumb != null)
+                    + " photoObjThumb=" + (currentPhotoObjectThumb != null
+                        ? (currentPhotoObjectThumb.w + "x" + currentPhotoObjectThumb.h) : "null")
+                    + " filterThumb=" + currentPhotoFilterThumb
+                    + " isVideo=" + isVideo);
+
                 // ГЛАВНОЕ ИЗМЕНЕНИЕ: видео больше НЕ подгружается/не стримится само по
                 // себе при показе поста. canDecodeFromVideo (декодирование реального
                 // кадра через стриминг) теперь разрешено ТОЛЬКО если файл уже реально
@@ -1647,6 +1664,9 @@ public class PotokFeedPostCell extends LinearLayout {
                     // на статичный.
                     img.getImageReceiver().setAllowDecodeSingleFrame(true);
                     img.getImageReceiver().setAllowStartAnimation(true);
+                    org.telegram.messenger.PotokDebugLog.d("GHOST", "carousel bind+startAnimation post=" + mo.getId()
+                        + " pos=" + position + " holder=" + System.identityHashCode(holder)
+                        + " img=" + System.identityHashCode(img));
                     img.getImageReceiver().setImage(
                         ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER,
                         ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
@@ -1720,6 +1740,10 @@ public class PotokFeedPostCell extends LinearLayout {
                 TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
                 if (photoSize == null) photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
                 TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50, false, null, true);
+                org.telegram.messenger.PotokDebugLog.d("BLUR", "post=" + mo.getId()
+                    + " (photo-branch) thumbSize=" + (thumbSize != null ? (thumbSize.w + "x" + thumbSize.h) : "NULL")
+                    + " strippedThumb=" + (mo.strippedThumb != null)
+                    + " sizesCount=" + (sizes != null ? sizes.size() : -1));
                 boolean photoAutoload = PotokFeedFragment.isAutoloadPhotoEnabled(getContext());
                 mo.checkMediaExistance(false);
                 if (photoAutoload || mo.mediaExists) {

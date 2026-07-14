@@ -1089,7 +1089,7 @@ public class PotokFeedPostCell extends LinearLayout {
 
     private void openMediaViewer(MessageObject mo, int index, ArrayList<MessageObject> all) {
         if (mo == null || parentActivity == null) return;
-        org.telegram.messenger.PotokDebugLog.d("GHOST", "openMediaViewer post=" + mo.getId()
+        PotokDebugLog.d("GHOST", "openMediaViewer post=" + mo.getId()
             + " isVideo=" + (mo.isVideo() || mo.isGif()) + " isGif=" + mo.isGif() + " groupSize=" + (all != null ? all.size() : 1));
         PhotoViewer.getInstance().setParentActivity(parentActivity);
         long dialogId = mo.getDialogId();
@@ -1516,7 +1516,7 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         public void onViewAttachedToWindow(MediaHolder holder) {
             super.onViewAttachedToWindow(holder);
-            org.telegram.messenger.PotokDebugLog.d("GHOST", "carousel ATTACH holder=" + System.identityHashCode(holder)
+            PotokDebugLog.d("GHOST", "carousel ATTACH holder=" + System.identityHashCode(holder)
                 + " img=" + System.identityHashCode(holder.img)
                 + " hasBitmap=" + holder.img.getImageReceiver().hasBitmapImage()
                 + " isAnimation=" + (holder.img.getImageReceiver().getAnimation() != null));
@@ -1525,7 +1525,7 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         public void onViewDetachedFromWindow(MediaHolder holder) {
             super.onViewDetachedFromWindow(holder);
-            org.telegram.messenger.PotokDebugLog.d("GHOST", "carousel DETACH holder=" + System.identityHashCode(holder)
+            PotokDebugLog.d("GHOST", "carousel DETACH holder=" + System.identityHashCode(holder)
                 + " img=" + System.identityHashCode(holder.img)
                 + " isAnimation=" + (holder.img.getImageReceiver().getAnimation() != null));
         }
@@ -1619,7 +1619,7 @@ public class PotokFeedPostCell extends LinearLayout {
                 String currentPhotoFilterThumb = currentPhotoObjectThumb != null
                     ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h + "_b2" : "50_50_b2";
 
-                org.telegram.messenger.PotokDebugLog.d("BLUR", "post=" + mo.getId()
+                PotokDebugLog.d("BLUR", "post=" + mo.getId()
                     + " strippedThumb=" + (strippedThumb != null)
                     + " photoObjThumb=" + (currentPhotoObjectThumb != null
                         ? (currentPhotoObjectThumb.w + "x" + currentPhotoObjectThumb.h) : "null")
@@ -1664,7 +1664,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     // на статичный.
                     img.getImageReceiver().setAllowDecodeSingleFrame(true);
                     img.getImageReceiver().setAllowStartAnimation(true);
-                    org.telegram.messenger.PotokDebugLog.d("GHOST", "carousel bind+startAnimation post=" + mo.getId()
+                    PotokDebugLog.d("GHOST", "carousel bind+startAnimation post=" + mo.getId()
                         + " pos=" + position + " holder=" + System.identityHashCode(holder)
                         + " img=" + System.identityHashCode(img));
                     img.getImageReceiver().setImage(
@@ -1740,7 +1740,7 @@ public class PotokFeedPostCell extends LinearLayout {
                 TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
                 if (photoSize == null) photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
                 TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50, false, null, true);
-                org.telegram.messenger.PotokDebugLog.d("BLUR", "post=" + mo.getId()
+                PotokDebugLog.d("BLUR", "post=" + mo.getId()
                     + " (photo-branch) thumbSize=" + (thumbSize != null ? (thumbSize.w + "x" + thumbSize.h) : "NULL")
                     + " strippedThumb=" + (mo.strippedThumb != null)
                     + " sizesCount=" + (sizes != null ? sizes.size() : -1));

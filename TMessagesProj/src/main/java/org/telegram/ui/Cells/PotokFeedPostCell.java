@@ -1451,9 +1451,35 @@ public class PotokFeedPostCell extends LinearLayout {
         private int heightDp = MIN_MEDIA_HEIGHT_DP;
 
         void setMessages(ArrayList<MessageObject> msgs, int hDp) {
+            heightDp = hDp;
+            // Фикс "двоение кадров видео/GIF" (см. лог GHOST: "carousel
+            // bind+startAnimation" повторялся каждые ~16мс — то есть КАЖДЫЙ кадр,
+            // хотя пользователь не листал и не менял пост). Раньше здесь стояло
+            // items.clear()+items.addAll()+notifyDataSetChanged() БЕЗУСЛОВНО при
+            // каждом вызове setMessages() — а setPost() этой ячейки дёргается
+            // родительской лентой заметно чаще, чем реально меняется набор медиа
+            // в посте. notifyDataSetChanged() на RecyclerView с непустым (дефолтным)
+            // ItemAnimator запускает анимацию "смены содержимого": старый и новый
+            // ViewHolder на короткое время СУЩЕСТВУЮТ И РИСУЮТСЯ ОДНОВРЕМЕННО, пока
+            // идёт кросс-фейд — а у нас каждый из них независимо декодирует и
+            // проигрывает СВОЙ экземпляр видео/GIF. Два независимых декодера одного
+            // и того же файла, рисующихся друг поверх друга на разных кадрах — это и
+            // есть визуальное "двоение". Пропускаем notifyDataSetChanged(), если
+            // набор медиа (id сообщений, в том же порядке) фактически не изменился.
+            boolean same = items.size() == msgs.size();
+            if (same) {
+                for (int i = 0; i < items.size(); i++) {
+                    if (items.get(i).getId() != msgs.get(i).getId()) {
+                        same = false;
+                        break;
+                    }
+                }
+            }
+            if (same) {
+                return;
+            }
             items.clear();
             items.addAll(msgs);
-            heightDp = hDp;
             notifyDataSetChanged();
         }
 

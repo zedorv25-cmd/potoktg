@@ -257,7 +257,13 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         tabs[INDEX_CONTACTS] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_contacts, R.string.PotokTabContacts);
         tabs[INDEX_CHATS].setOnLongClickListener(this::openFoldersSelector);
         tabs[INDEX_CONTACTS].setOnLongClickListener(v -> {
-            PotokDebugLog.showFiltered(context, "Potok");
+            // Фикс "в логах видна только одна левая строка": жёсткий фильтр "Potok"
+            // отсеивал ВСЕ диагностические записи с тегами BLUR/GHOST (см.
+            // PotokFeedPostCell.java) — они не содержат подстроку "Potok" ни в теге,
+            // ни в тексте сообщения, поэтому getFiltered("Potok") их выбрасывал.
+            // Выжила только строка с тегом "PotokFeedLogo", которая формально
+            // содержит "Potok" в САМОМ ТЕГЕ. Показываем буфер целиком, без фильтра.
+            PotokDebugLog.showFiltered(context, null);
             return true;
         });
 

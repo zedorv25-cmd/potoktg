@@ -35,7 +35,7 @@ import java.util.Locale;
  */
 public class PotokDebugLog {
 
-    private static final int MAX_LINES = 400;
+    private static final int MAX_LINES = 4000;
     private static final ArrayDeque<String> lines = new ArrayDeque<>();
     private static final SimpleDateFormat fmt = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US);
 

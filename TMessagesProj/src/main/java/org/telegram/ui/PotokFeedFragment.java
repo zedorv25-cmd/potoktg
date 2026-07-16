@@ -526,15 +526,35 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         if (miniPlayerGapBlur != null) {
             ViewGroup.LayoutParams gapLpRaw = miniPlayerGapBlur.getLayoutParams();
             if (gapLpRaw instanceof FrameLayout.LayoutParams) {
-                ((FrameLayout.LayoutParams) gapLpRaw).topMargin = actionBarBottom;
-                miniPlayerGapBlur.setLayoutParams(gapLpRaw);
+                FrameLayout.LayoutParams gapLp = (FrameLayout.LayoutParams) gapLpRaw;
+                // Фикс "слабый блюр на части постов при первом открытии ленты":
+                // setLayoutParams() у Android ВСЕГДА вызывает requestLayout(),
+                // даже если реальные значения не изменились. WindowInsets-колбэк
+                // на части устройств (в т.ч. Samsung) повторно диспатчится на
+                // каждом layout-проходе окна — получалась цепная реакция insets
+                // -> applyTopLayout() -> setLayoutParams() -> requestLayout() ->
+                // снова insets, ~90 раз за первые ~1.5с. Каждый такой проход
+                // перекладывал ВСЁ окно, из-за чего видимые посты в карусели
+                // ленты биндились заново на каждый кадр — асинхронная декодировка/
+                // блюр их thumbnail'ов обрывалась и перезапускалась 90 раз подряд,
+                // не успевая докрутиться (см. лог [BLUR], спам на post=49308,
+                // начавшийся в ту же миллисекунду, что первый WindowInsets-лог).
+                // Теперь дёргаем requestLayout() только если margin реально другой.
+                if (gapLp.topMargin != actionBarBottom) {
+                    gapLp.topMargin = actionBarBottom;
+                    miniPlayerGapBlur.setLayoutParams(gapLp);
+                }
             }
         }
         if (miniPlayerContainer != null) {
             ViewGroup.LayoutParams lpRaw = miniPlayerContainer.getLayoutParams();
             if (lpRaw instanceof FrameLayout.LayoutParams) {
-                ((FrameLayout.LayoutParams) lpRaw).topMargin = actionBarBottom + gapPx;
-                miniPlayerContainer.setLayoutParams(lpRaw);
+                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) lpRaw;
+                int newTopMargin = actionBarBottom + gapPx;
+                if (lp.topMargin != newTopMargin) {
+                    lp.topMargin = newTopMargin;
+                    miniPlayerContainer.setLayoutParams(lp);
+                }
             }
         }
     }

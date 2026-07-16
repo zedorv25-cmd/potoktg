@@ -307,6 +307,20 @@ public class PotokFeedPostCell extends LinearLayout {
         PagerSnapHelper snapHelper = new PagerSnapHelper();
         snapHelper.attachToRecyclerView(carouselView);
         carouselView.setVisibility(GONE);
+        // Фикс "раздвоение кадров" (лог GHOST): дефолтный RecyclerView.ItemAnimator
+        // при повторном/replacement-биндe одной и той же позиции (например, после
+        // полного relayout окна из-за смены window insets/actionbar height — см.
+        // лог "onLayoutChildren -> ViewRootImpl.performTraversals" перед вторым
+        // onBindViewHolder) запускает cross-fade: старый и новый ViewHolder
+        // ФИЗИЧЕСКИ существуют и рисуются одновременно, пока идёт анимация смены
+        // содержимого. По логу видно именно это: holder B (новый) успевает
+        // ATTACH'нуться с уже готовым битмапом за ~280мс ДО того, как holder A
+        // (старый) реально DETACH'ится — то есть оба кадра видны на экране
+        // одновременно. В карусели одновременно виден только один элемент
+        // (PagerSnapHelper), поэтому анимация смены содержимого тут не нужна
+        // вообще — отключаем её полностью, чтобы старый holder убирался сразу,
+        // без анимационного окна перекрытия.
+        carouselView.setItemAnimator(null);
         addView(carouselView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, MIN_MEDIA_HEIGHT_DP, 1, 10, 1, 0));
 
         // --- Точки-индикатор ---
@@ -1466,6 +1480,27 @@ public class PotokFeedPostCell extends LinearLayout {
         private int heightDp = MIN_MEDIA_HEIGHT_DP;
         private final java.util.HashMap<Integer, Long> lastBindStackLogTime = new java.util.HashMap<>(); // ВРЕМЕННОЕ поле для диагностики
 
+        CarouselAdapter() {
+            // Фикс "раздвоение кадров" (лог GHOST), часть 2: без stable ID
+            // RecyclerView сопоставляет ViewHolder с элементом ТОЛЬКО по текущей
+            // позиции в момент бинда. После структурного relayout (например,
+            // полного relayout окна — см. стек onLayoutChildren ->
+            // ViewRootImpl.performTraversals в логе) RecyclerView не может
+            // однозначно определить, что уже существующий (прикреплённый или
+            // закэшированный) holder на позиции 0 — это тот же самый пост, что и
+            // раньше, и на всякий случай создаёт/биндит НОВЫЙ holder вместо
+            // переиспользования старого — отсюда и два holder'а с разными
+            // ImageReceiver для одного и того же поста одновременно на экране.
+            // getItemId() на основе реального id сообщения даёт RecyclerView
+            // точный критерий "это тот же элемент", а не только позицию.
+            setHasStableIds(true);
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return items.get(position).getId();
+        }
+
         void setMessages(ArrayList<MessageObject> msgs, int hDp) {
             heightDp = hDp;
             // Фикс "двоение кадров видео/GIF" (см. лог GHOST: "carousel
@@ -1798,8 +1833,22 @@ public class PotokFeedPostCell extends LinearLayout {
                 TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
                 if (photoSize == null) photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
                 TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50, false, null, true);
+                // Фикс "блюр иногда не показывается/не совпадает" (фото-ветка):
+                // раньше здесь стоял ЗАХАРДКОЖЕННЫЙ фильтр "50_50_b2" независимо от
+                // РЕАЛЬНОГО размера, который вернул getClosestPhotoSizeWithSize(sizes,
+                // 50, ...) — по логам этот метод для многих постов возвращает совсем
+                // не близкий к 50x50 размер (например 320x320, если среди сохранённых
+                // photoSize нет ничего действительно маленького). Ключ фильтра в
+                // Telegram ImageLoader кодирует целевые width_height — при рассинхроне
+                // с реальными пиксельными размерами исходника блюр-плейсхолдер иногда
+                // либо не применяется, либо визуально не совпадает с ожидаемым. В
+                // видео-ветке (выше) фильтр строится ИЗ РЕАЛЬНЫХ pw/ph — здесь делаем
+                // то же самое.
+                String thumbFilter = thumbSize != null
+                    ? thumbSize.w + "_" + thumbSize.h + "_b2" : "50_50_b2";
                 PotokDebugLog.d("BLUR", "post=" + mo.getId()
                     + " (photo-branch) thumbSize=" + (thumbSize != null ? (thumbSize.w + "x" + thumbSize.h) : "NULL")
+                    + " filterThumb=" + thumbFilter
                     + " strippedThumb=" + (mo.strippedThumb != null)
                     + " sizesCount=" + (sizes != null ? sizes.size() : -1));
                 boolean photoAutoload = PotokFeedFragment.isAutoloadPhotoEnabled(getContext());
@@ -1816,7 +1865,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     // уже сама тащит фото — отсюда и жалоба "фото чёткое, а кнопка есть").
                     img.setImage(
                         ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
-                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50_b2",
+                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, thumbFilter,
                         mo.strippedThumb, (String) null, 0, 0, mo
                     );
                     holder.photoOverlay.setVisibility(GONE);
@@ -1833,7 +1882,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     // пустота вместо блюра.
                     img.setImage(
                         (ImageLocation) null, (String) null,
-                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, "50_50_b2",
+                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, thumbFilter,
                         mo.strippedThumb, (String) null, 0, 0, mo
                     );
                     final int photoBindPosition = position;

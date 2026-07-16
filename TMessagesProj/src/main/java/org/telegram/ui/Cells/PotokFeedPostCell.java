@@ -1589,6 +1589,7 @@ public class PotokFeedPostCell extends LinearLayout {
             // уже переиспользованную под другое видео ячейку.
             holder.downloadPlate.unbind();
             holder.photoOverlay.unbind();
+            holder.lastAutoplayDocumentId = 0;
         }
 
         @Override
@@ -1757,16 +1758,23 @@ public class PotokFeedPostCell extends LinearLayout {
                     // на статичный.
                     img.getImageReceiver().setAllowDecodeSingleFrame(true);
                     img.getImageReceiver().setAllowStartAnimation(true);
-                    PotokDebugLog.d("GHOST", "carousel bind+startAnimation post=" + mo.getId()
-                        + " pos=" + position + " holder=" + System.identityHashCode(holder)
-                        + " img=" + System.identityHashCode(img));
-                    img.getImageReceiver().setImage(
-                        ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER,
-                        ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
-                        ImageLocation.getForObject(currentPhotoObjectThumb, document), currentPhotoFilterThumb,
-                        strippedThumb, document.size, (String) null, mo, 0
-                    );
-                    img.getImageReceiver().startAnimation();
+                    // См. комментарий у поля MediaHolder.lastAutoplayDocumentId — не
+                    // перезапускаем декодер/анимацию, если тот же самый документ уже
+                    // играет в этом holder'е (повторный onBindViewHolder на ту же
+                    // позицию без реальной смены видео).
+                    if (holder.lastAutoplayDocumentId != document.id) {
+                        holder.lastAutoplayDocumentId = document.id;
+                        PotokDebugLog.d("GHOST", "carousel bind+startAnimation post=" + mo.getId()
+                            + " pos=" + position + " holder=" + System.identityHashCode(holder)
+                            + " img=" + System.identityHashCode(img));
+                        img.getImageReceiver().setImage(
+                            ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER,
+                            ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
+                            ImageLocation.getForObject(currentPhotoObjectThumb, document), currentPhotoFilterThumb,
+                            strippedThumb, document.size, (String) null, mo, 0
+                        );
+                        img.getImageReceiver().startAnimation();
+                    }
                 } else if (!videoAutoload && !fileExists) {
                     // Автозагрузка выключена — только стрип-thumb/маленькая миниатюра,
                     // без полноразмерного превью. Тап по кадру (openMediaViewer, см. ниже)
@@ -1833,19 +1841,24 @@ public class PotokFeedPostCell extends LinearLayout {
                 TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
                 if (photoSize == null) photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
                 TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50, false, null, true);
-                // Фикс "блюр иногда не показывается/не совпадает" (фото-ветка):
-                // раньше здесь стоял ЗАХАРДКОЖЕННЫЙ фильтр "50_50_b2" независимо от
-                // РЕАЛЬНОГО размера, который вернул getClosestPhotoSizeWithSize(sizes,
-                // 50, ...) — по логам этот метод для многих постов возвращает совсем
-                // не близкий к 50x50 размер (например 320x320, если среди сохранённых
-                // photoSize нет ничего действительно маленького). Ключ фильтра в
-                // Telegram ImageLoader кодирует целевые width_height — при рассинхроне
-                // с реальными пиксельными размерами исходника блюр-плейсхолдер иногда
-                // либо не применяется, либо визуально не совпадает с ожидаемым. В
-                // видео-ветке (выше) фильтр строится ИЗ РЕАЛЬНЫХ pw/ph — здесь делаем
-                // то же самое.
-                String thumbFilter = thumbSize != null
-                    ? thumbSize.w + "_" + thumbSize.h + "_b2" : "50_50_b2";
+                // Фикс "блюр слабый/непостоянный" (фото-ветка), ФИНАЛЬНАЯ версия:
+                // предыдущая правка ошибочно строила filter ИЗ РЕАЛЬНЫХ размеров
+                // thumbSize (например "320_320_b2", если у фото не нашлось мелкого
+                // photoSize) по аналогии с видео-веткой — это оказалось НЕ причиной
+                // непостоянного блюра, а привело к РЕГРЕССИИ силы блюра (подтверждено
+                // сравнением скринов: с "320_320_b2" блюр стал заметно слабее эталона
+                // из настоящего Telegram). Причина: filter-строка в Telegram ImageLoader
+                // задаёт ЦЕЛЕВОЙ размер, до которого декодируется/масштабируется
+                // картинка ПЕРЕД блюром — а не описание реальных пикселей исходника.
+                // Радиус блюра (в _b2 — 3 прохода, радиус 7) фиксирован в пикселях
+                // относительно ЭТОГО целевого размера. Чем МЕНЬШЕ целевой размер —
+                // тем СИЛЬНЕЕ выглядит блюр после растяжения на весь экран (тот же
+                // видео-ветка нативно попадает в маленький 50x50, поэтому там всё
+                // всегда было верно). Поэтому здесь снова принудительно маленький
+                // фиксированный target "50_50_b2" НЕЗАВИСИМО от реальных размеров
+                // thumbSize — источник (thumbLocation) всё равно берётся из реального
+                // thumbSize, просто декодируется/блюрится в низком разрешении.
+                String thumbFilter = "50_50_b2";
                 PotokDebugLog.d("BLUR", "post=" + mo.getId()
                     + " (photo-branch) thumbSize=" + (thumbSize != null ? (thumbSize.w + "x" + thumbSize.h) : "NULL")
                     + " filterThumb=" + thumbFilter
@@ -1917,6 +1930,19 @@ public class PotokFeedPostCell extends LinearLayout {
             final PlayIndicatorView playIndicator;
             final VideoDownloadPlate downloadPlate;
             final PhotoDownloadOverlay photoOverlay;
+            // Фикс "раздвоение кадров" (лог GHOST), часть 3 — САМАЯ ЧАСТАЯ причина по
+            // новым логам: RecyclerView может вызывать onBindViewHolder на тот же
+            // holder/позицию много раз подряд (каждый кадр во время settle/scroll —
+            // само по себе штатное поведение LinearLayoutManager, НЕ обязательно баг).
+            // Раньше видео-ветка на КАЖДЫЙ такой вызов безусловно заново дёргала
+            // img.getImageReceiver().setImage(...) + startAnimation() — то есть
+            // декодер и его анимация ПЕРЕЗАПУСКАЛИСЬ С НУЛЯ на каждый повторный bind,
+            // даже если показывать нужно было ТО ЖЕ САМОЕ видео что и секунду назад.
+            // Рестарт декодера посреди воспроизведения — и есть видимое раздвоение/
+            // дёргание кадра. Запоминаем id уже забинженного автоплей-документа —
+            // если при повторном bind() это тот же документ, setImage/startAnimation
+            // просто пропускаем, декодер продолжает играть как играл.
+            long lastAutoplayDocumentId = 0;
             MediaHolder(View wrapper, BackupImageView img, PlayIndicatorView playIndicator, VideoDownloadPlate downloadPlate, PhotoDownloadOverlay photoOverlay) {
                 super(wrapper);
                 this.img = img;

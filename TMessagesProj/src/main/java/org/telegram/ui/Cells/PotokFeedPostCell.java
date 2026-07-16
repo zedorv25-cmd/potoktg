@@ -530,8 +530,23 @@ public class PotokFeedPostCell extends LinearLayout {
 
     // ------------------------------------------------------------------ setPost
 
+    private long lastSetPostStackLogTime = 0; // ВРЕМЕННОЕ поле для диагностики двоения кадров
+
     public void setPost(ArrayList<MessageObject> messages, TLRPC.Chat channel) {
         if (messages == null || messages.isEmpty()) return;
+        // ВРЕМЕННАЯ диагностика двоения кадров (см. переписку с пользователем):
+        // дедуп в CarouselAdapter.setMessages() не остановил повторный бинд на
+        // каждый кадр — значит, дело не в notifyDataSetChanged() оттуда. Ловим
+        // РЕАЛЬНЫЙ стек вызова setPost(), троттлированно (раз в секунду на пост),
+        // чтобы увидеть, кто и как часто его дёргает.
+        {
+            long now = System.currentTimeMillis();
+            if (now - lastSetPostStackLogTime > 1000) {
+                lastSetPostStackLogTime = now;
+                PotokDebugLog.d("GHOST", "setPost CALLED post=" + messages.get(0).getId() + " stack="
+                    + android.util.Log.getStackTraceString(new Throwable()).replace("\n", " <- "));
+            }
+        }
         currentMessages = messages;
         currentChannel = channel;
         MessageObject messageObject = messages.get(0);
@@ -1449,6 +1464,7 @@ public class PotokFeedPostCell extends LinearLayout {
     private class CarouselAdapter extends RecyclerView.Adapter<CarouselAdapter.MediaHolder> {
         private final ArrayList<MessageObject> items = new ArrayList<>();
         private int heightDp = MIN_MEDIA_HEIGHT_DP;
+        private final java.util.HashMap<Integer, Long> lastBindStackLogTime = new java.util.HashMap<>(); // ВРЕМЕННОЕ поле для диагностики
 
         void setMessages(ArrayList<MessageObject> msgs, int hDp) {
             heightDp = hDp;
@@ -1561,6 +1577,21 @@ public class PotokFeedPostCell extends LinearLayout {
         public void onBindViewHolder(MediaHolder holder, int position) {
             MessageObject mo = items.get(position);
             BackupImageView img = holder.img;
+
+            // ВРЕМЕННАЯ диагностика двоения кадров: ловим реальный стек вызова
+            // onBindViewHolder, троттлированно (раз в секунду на пост), чтобы
+            // увидеть настоящую причину повторного бинда на каждый кадр — раз
+            // дедуп в setMessages() не помог, значит notifyDataSetChanged() оттуда
+            // не единственный источник (или не источник вовсе).
+            {
+                long now = System.currentTimeMillis();
+                Long last = lastBindStackLogTime.get(mo.getId());
+                if (last == null || now - last > 1000) {
+                    lastBindStackLogTime.put(mo.getId(), now);
+                    PotokDebugLog.d("GHOST", "onBindViewHolder CALLED post=" + mo.getId() + " pos=" + position + " stack="
+                        + android.util.Log.getStackTraceString(new Throwable()).replace("\n", " <- "));
+                }
+            }
 
             TLRPC.MessageMedia media = mo.messageOwner != null ? mo.messageOwner.media : null;
             // GIF в Telegram технически хранится как тот же немой зацикленный

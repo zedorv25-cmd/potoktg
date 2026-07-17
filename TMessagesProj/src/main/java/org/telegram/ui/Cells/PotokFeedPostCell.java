@@ -1876,6 +1876,18 @@ public class PotokFeedPostCell extends LinearLayout {
                     // так грузится само, поэтому оверлей принудительно скрываем/
                     // отвязываем (раньше он показывался ВСЕГДА, даже когда автозагрузка
                     // уже сама тащит фото — отсюда и жалоба "фото чёткое, а кнопка есть").
+                    // ФИКС: наша карусель — вложенный RecyclerView, GapWorker префетчит
+                    // фото заранее (см. двойной onBindViewHolder в [GHOST]-логах), из-за
+                    // чего к моменту реального показа полное фото часто уже тёплое в
+                    // memCache — ImageLoader в этом случае (ImageLoader.java:3411-3416)
+                    // отдаёт его СИНХРОННО и полностью пропускает thumb/блюр. У оригинала
+                    // ChatMessageCell такого двойного префетча нет, поэтому там это не
+                    // проявляется. setForcePreview гарантирует, что thumb всё равно
+                    // загрузится и будет установлен; setForceCrossfade гарантирует, что
+                    // переход thumb->полное фото всегда анимируется (виден блюр), даже
+                    // если полное фото пришло из memCache мгновенно.
+                    img.setForcePreview(true);
+                    img.setForceCrossfade(true);
                     img.setImage(
                         ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
                         thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, thumbFilter,

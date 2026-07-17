@@ -1891,7 +1891,12 @@ public class PotokFeedPostCell extends LinearLayout {
                 // силуэты). "16_16" — промежуточное значение, шаг к балансу между
                 // "структура ещё видна" и "фото нечитаемо"; проверить на устройстве и
                 // при необходимости подвинуть ещё раз в ту или иную сторону.
-                String thumbFilter = "16_16_b2";
+                // "16_16" (предыдущая проверка на устройстве, 17.07) — всё ещё СЛИШКОМ
+                // сильно: фото превращается в однородное пятно без всякой структуры, в
+                // отличие от настоящего Telegram, где сквозь блюр видны силуэты/пятна.
+                // "24_24" — следующий шаг в сторону увеличения; если опять слишком
+                // сильно/слабо — подвинуть ещё раз.
+                String thumbFilter = "24_24_b2";
                 ImageLocation thumbLocation = thumbSize != null
                     ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject)
                     : null;
@@ -1946,6 +1951,13 @@ public class PotokFeedPostCell extends LinearLayout {
                     // оригинале используется ТОЛЬКО для TTL/спойлеров и НИКОГДА не
                     // снимается вручную — поэтому фото зависало заблюренным навсегда).
                     // Убрано полностью, вызов приведён к чистому виду как в оригинале.
+                    // Явно выставляем длительность кроссфейда перехода
+                    // "блюр -> чёткое фото". По умолчанию в ImageReceiver стоит 150мс
+                    // (DEFAULT_CROSSFADE_DURATION) — сам по себе не рвётся, но при
+                    // ручной докачке (кнопка загрузки -> notifyItemChanged -> полный
+                    // ребинд ячейки) недостаточно заметен на глаз, ощущается как
+                    // "резкий щелчок". 250мс — плавнее, но всё ещё быстро, не тянется.
+                    img.getImageReceiver().setCrossfadeDuration(250);
                     img.setImage(
                         ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
                         thumbLocation, thumbFilter,
@@ -2400,6 +2412,15 @@ public class PotokFeedPostCell extends LinearLayout {
         private String fileName;
         private Runnable onReady;
         private int buttonState; // -1 = скачано/скрыто, 1 = грузится, 2 = скачать
+        // Фикс "спиннер загрузки не виден на маленьких/быстрых файлах": маленькие
+        // фото-превью качаются иногда за один кадр, и onSuccessDownload() приходил
+        // раньше, чем кольцо загрузки успевало хоть раз отрисоваться — кнопка
+        // просто исчезала, будто ничего не произошло. Гарантируем, что с момента
+        // тапа кольцо провисит на экране минимум MIN_LOADING_VISIBLE_MS, даже если
+        // реальная докачка уже закончилась раньше.
+        private static final long MIN_LOADING_VISIBLE_MS = 400;
+        private long loadingStartedAt;
+        private Runnable pendingHideRunnable;
 
         PhotoDownloadOverlay(Context context) {
             super(context);
@@ -2434,10 +2455,23 @@ public class PotokFeedPostCell extends LinearLayout {
             if (fileName != null) {
                 DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
             }
+            if (pendingHideRunnable != null) {
+                removeCallbacks(pendingHideRunnable);
+                pendingHideRunnable = null;
+            }
+            loadingStartedAt = 0;
             photoSize = null;
             parentObject = null;
             fileName = null;
             onReady = null;
+        }
+
+        private void finishHide() {
+            buttonState = -1;
+            setVisibility(GONE);
+            if (onReady != null) {
+                onReady.run();
+            }
         }
 
         private void updateState(boolean animated) {
@@ -2452,15 +2486,28 @@ public class PotokFeedPostCell extends LinearLayout {
             boolean isLoading = FileLoader.getInstance(currentAccount).isLoadingFile(fileName);
             if (fileExists) {
                 DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
-                buttonState = -1;
-                setVisibility(GONE);
-                if (onReady != null) {
-                    onReady.run();
+                // Фикс "спиннер не виден на быстрых докачках": если кольцо загрузки
+                // было показано меньше MIN_LOADING_VISIBLE_MS назад, не прячем кнопку
+                // мгновенно — докручиваем кольцо до 100% и прячем чуть позже, по
+                // таймеру, а не в момент реального завершения файла.
+                long elapsed = loadingStartedAt == 0 ? MIN_LOADING_VISIBLE_MS : System.currentTimeMillis() - loadingStartedAt;
+                if (buttonState == 1 && elapsed < MIN_LOADING_VISIBLE_MS && pendingHideRunnable == null) {
+                    radialProgress.setProgress(1, true);
+                    pendingHideRunnable = () -> {
+                        pendingHideRunnable = null;
+                        finishHide();
+                    };
+                    postDelayed(pendingHideRunnable, MIN_LOADING_VISIBLE_MS - elapsed);
+                } else if (pendingHideRunnable == null) {
+                    finishHide();
                 }
             } else {
                 setVisibility(VISIBLE);
                 DownloadController.getInstance(currentAccount).addLoadingFileObserver(fileName, this);
                 if (isLoading) {
+                    if (buttonState != 1) {
+                        loadingStartedAt = System.currentTimeMillis();
+                    }
                     buttonState = 1;
                     Float progress = org.telegram.messenger.ImageLoader.getInstance().getFileProgress(fileName);
                     radialProgress.setProgress(progress != null ? progress : 0, animated);
@@ -2489,6 +2536,7 @@ public class PotokFeedPostCell extends LinearLayout {
                 // дальнейшие реальные апдейты придут через onProgressDownload/
                 // onSuccessDownload и просто подтвердят то же самое состояние.
                 buttonState = 1;
+                loadingStartedAt = System.currentTimeMillis();
                 radialProgress.setProgress(0, false);
                 radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, true);
                 invalidate();

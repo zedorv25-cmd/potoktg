@@ -1886,8 +1886,8 @@ public class PotokFeedPostCell extends LinearLayout {
                     // загрузится и будет установлен; setForceCrossfade гарантирует, что
                     // переход thumb->полное фото всегда анимируется (виден блюр), даже
                     // если полное фото пришло из memCache мгновенно.
-                    img.setForcePreview(true);
-                    img.setForceCrossfade(true);
+                    img.getImageReceiver().setForcePreview(true);
+                    img.getImageReceiver().setForceCrossfade(true);
                     img.setImage(
                         ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
                         thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, thumbFilter,

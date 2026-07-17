@@ -241,15 +241,12 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         if (actionBar == null) {
             return;
         }
-        // "POTOK " обычным цветом заголовка + "ЛЕНТА" акцентным цветом (тот же акцент,
-        // что используется у спиннера pull-to-refresh — key_featuredStickers_addButton).
-        android.text.SpannableStringBuilder title = new android.text.SpannableStringBuilder();
-        title.append("POTOK ");
-        int accentStart = title.length();
-        title.append("ЛЕНТА");
-        title.setSpan(new android.text.style.ForegroundColorSpan(Theme.getColor(Theme.key_featuredStickers_addButton)),
-                accentStart, title.length(), android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-        actionBar.setTitle(title);
+        // Заголовок "typefeed" (по референсу пользователя, один тон, без разбивки
+        // цветом) — раньше было "POTOK " + акцентным цветом "ЛЕНТА". Шрифт менять не
+        // нужно: у ActionBar.titleTextView уже стоит AndroidUtilities.bold() по
+        // умолчанию (см. ActionBar.java) — тот же жирный шрифт, что использует сам
+        // Telegram, так что внешний вид уже совпадает с референсом без доп. правок.
+        actionBar.setTitle("typefeed");
 
         ActionBarMenu menu = actionBar.createMenu();
         org.telegram.ui.ActionBar.ActionBarMenuItem menuItem = menu.addItem(MENU_ITEM_FILTER, org.telegram.messenger.R.drawable.ic_ab_other);

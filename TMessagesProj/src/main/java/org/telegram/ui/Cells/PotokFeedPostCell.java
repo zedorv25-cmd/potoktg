@@ -1840,25 +1840,28 @@ public class PotokFeedPostCell extends LinearLayout {
                 ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;
                 TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
                 if (photoSize == null) photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
-                TLRPC.PhotoSize thumbSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 50, false, null, true);
-                // Фикс "блюр слабый/непостоянный" (фото-ветка), ФИНАЛЬНАЯ версия:
-                // предыдущая правка ошибочно строила filter ИЗ РЕАЛЬНЫХ размеров
-                // thumbSize (например "320_320_b2", если у фото не нашлось мелкого
-                // photoSize) по аналогии с видео-веткой — это оказалось НЕ причиной
-                // непостоянного блюра, а привело к РЕГРЕССИИ силы блюра (подтверждено
-                // сравнением скринов: с "320_320_b2" блюр стал заметно слабее эталона
-                // из настоящего Telegram). Причина: filter-строка в Telegram ImageLoader
-                // задаёт ЦЕЛЕВОЙ размер, до которого декодируется/масштабируется
-                // картинка ПЕРЕД блюром — а не описание реальных пикселей исходника.
-                // Радиус блюра (в _b2 — 3 прохода, радиус 7) фиксирован в пикселях
-                // относительно ЭТОГО целевого размера. Чем МЕНЬШЕ целевой размер —
-                // тем СИЛЬНЕЕ выглядит блюр после растяжения на весь экран (тот же
-                // видео-ветка нативно попадает в маленький 50x50, поэтому там всё
-                // всегда было верно). Поэтому здесь снова принудительно маленький
-                // фиксированный target "50_50_b2" НЕЗАВИСИМО от реальных размеров
-                // thumbSize — источник (thumbLocation) всё равно берётся из реального
-                // thumbSize, просто декодируется/блюрится в низком разрешении.
+                // 1:1 с оригиналом (ChatMessageCell.java:8296-8306): thumbSize (сетевой
+                // маленький размер) запрашивается ТОЛЬКО если у сообщения нет
+                // strippedThumb (встроенного в сообщение мини-превью, приезжающего без
+                // сети вместе с самим сообщением). Если strippedThumb есть — сетевой
+                // thumb вообще не тянем, используем только его. Раньше мы всегда тянули
+                // thumbSize независимо от наличия strippedThumb — реальное расхождение
+                // с оригиналом, найденное сверкой кода.
+                TLRPC.PhotoSize thumbSize = mo.strippedThumb == null
+                    ? FileLoader.getClosestPhotoSizeWithSize(sizes, 40, false, null, true)
+                    : null;
+                if (thumbSize == photoSize) thumbSize = null;
+                // Filter-таргет "50_50_b2" — НЕ из оригинала, подобран и подтверждён в
+                // прошлой сессии прямым сравнением скринов с эталоном (принудительно
+                // маленький целевой размер декодирования усиливает видимый блюр после
+                // растяжения на весь экран сильнее, чем "%d_%d_b" на реальных размерах
+                // из оригинала — тот вариант проверялся и давал заметно более слабый
+                // результат). Оставляем как есть, трогаем только реальные расхождения.
                 String thumbFilter = "50_50_b2";
+                ImageLocation thumbLocation = thumbSize != null
+                    ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject)
+                    : null;
+                Drawable thumbDrawable = mo.strippedThumb;
                 PotokDebugLog.d("BLUR", "post=" + mo.getId()
                     + " (photo-branch) thumbSize=" + (thumbSize != null ? (thumbSize.w + "x" + thumbSize.h) : "NULL")
                     + " filterThumb=" + thumbFilter
@@ -1874,41 +1877,31 @@ public class PotokFeedPostCell extends LinearLayout {
                     // грузится thumbSize/photoSize, видно ЕГО, а не пустоту. Отдельная
                     // кнопка загрузки тут не нужна и не должна показываться — фото и
                     // так грузится само, поэтому оверлей принудительно скрываем/
-                    // отвязываем (раньше он показывался ВСЕГДА, даже когда автозагрузка
-                    // уже сама тащит фото — отсюда и жалоба "фото чёткое, а кнопка есть").
-                    // ФИКС: наша карусель — вложенный RecyclerView, GapWorker префетчит
-                    // фото заранее (см. двойной onBindViewHolder в [GHOST]-логах), из-за
-                    // чего к моменту реального показа полное фото часто уже тёплое в
-                    // memCache — ImageLoader в этом случае (ImageLoader.java:3411-3416)
-                    // отдаёт его СИНХРОННО и полностью пропускает thumb/блюр. У оригинала
-                    // ChatMessageCell такого двойного префетча нет, поэтому там это не
-                    // проявляется. setForcePreview гарантирует, что thumb всё равно
-                    // загрузится и будет установлен; setForceCrossfade гарантирует, что
-                    // переход thumb->полное фото всегда анимируется (виден блюр), даже
-                    // если полное фото пришло из memCache мгновенно.
-                    img.getImageReceiver().setForcePreview(true);
-                    img.getImageReceiver().setForceCrossfade(true);
+                    // отвязываем.
+                    //
+                    // ОТКАТ forcePreview/forceCrossfade: сверка с оригиналом
+                    // (ChatMessageCell.java, строка ~8575) показала, что для обычного
+                    // фото-сообщения там НЕТ ни setForcePreview, ни setForceCrossfade —
+                    // это был самодельный, неправильно понятый костыль (forcePreview в
+                    // оригинале используется ТОЛЬКО для TTL/спойлеров и НИКОГДА не
+                    // снимается вручную — поэтому фото зависало заблюренным навсегда).
+                    // Убрано полностью, вызов приведён к чистому виду как в оригинале.
                     img.setImage(
                         ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
-                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, thumbFilter,
-                        mo.strippedThumb, (String) null, 0, 0, mo
+                        thumbLocation, thumbFilter,
+                        thumbDrawable, (String) null, 0, 0, mo
                     );
                     holder.photoOverlay.setVisibility(GONE);
                     holder.photoOverlay.unbind();
                 } else {
                     // Автозагрузка выключена и файла ещё нет — грузим ТОЛЬКО маленький
-                    // thumbSize ("50_50", копеечный по размеру, качается независимо от
+                    // thumb ("50_50", копеечный по размеру, качается независимо от
                     // настройки автозагрузки полного размера — так же, как в самом
                     // Telegram: превью всегда бесплатное, ограничивается только full-size).
-                    // mo.strippedThumb — мгновенный fallback ДРАВЕБЛ, показывается, пока
-                    // даже этот маленький thumbSize не успел загрузиться. Раньше здесь обе
-                    // ImageLocation были null — ImageReceiver в таком случае, похоже, не
-                    // рисует вообще ничего (даже переданный thumb Drawable), отсюда и была
-                    // пустота вместо блюра.
                     img.setImage(
                         (ImageLocation) null, (String) null,
-                        thumbSize != null ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject) : null, thumbFilter,
-                        mo.strippedThumb, (String) null, 0, 0, mo
+                        thumbLocation, thumbFilter,
+                        thumbDrawable, (String) null, 0, 0, mo
                     );
                     final int photoBindPosition = position;
                     holder.photoOverlay.bind(photoSize, mo.photoThumbsObject, mo.currentAccount, () -> {

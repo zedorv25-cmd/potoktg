@@ -13791,7 +13791,21 @@ public boolean onTouchEvent(MotionEvent ev) {
         final float factor1 = 1f - animatorSearchVisible.getFloatValue();
         final float factor2 = 1f - getRightSlidingProgress();
         final float factor3 = 1f - animatorDoneButtonVisible.getFloatValue();
-        final float factor = Math.max(progressToActionMode, factor1 * factor2 * factor3);
+        // Фикс "гамбургер и крестик наложены друг на друга": эта функция вызывается
+        // на каждом кадре анимации показа/скрытия action mode (см. апдейтеры
+        // actionBarColorAnimator в showOrUpdateActionMode/hideActionMode) и раньше
+        // формулой Math.max(progressToActionMode, ...) каждый раз ВОЗВРАЩАЛА
+        // гамбургеру полную видимость по мере роста progressToActionMode — это
+        // сводило на нет setVisibility(GONE), который мы выставляем отдельно в
+        // showOrUpdateActionMode, поэтому оригинальный гамбургер оставался виден
+        // поверх нашего собственного крестика (actionModeCloseView) в режиме
+        // hasMainTabs. Когда у нас есть свой крестик, прогресс action mode должен
+        // не ПОКАЗЫВАТЬ гамбургер, а ГАСИТЬ его — иначе он останется рисоваться под
+        // крестиком до самого конца анимации.
+        final boolean ownActionModeCloseButton = hasMainTabs && actionModeCloseView != null;
+        final float factor = ownActionModeCloseButton
+            ? Math.min(1f - progressToActionMode, factor1 * factor2 * factor3)
+            : Math.max(progressToActionMode, factor1 * factor2 * factor3);
         FragmentFloatingButton.setAnimatedVisibility(actionBar.getBackButton(), factor);
     }
 

@@ -1713,12 +1713,27 @@ public class PotokFeedPostCell extends LinearLayout {
                 String currentPhotoFilterThumb = currentPhotoObjectThumb != null
                     ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h + "_b2" : "50_50_b2";
 
-                PotokDebugLog.d("BLUR", "post=" + mo.getId()
-                    + " strippedThumb=" + (strippedThumb != null)
-                    + " photoObjThumb=" + (currentPhotoObjectThumb != null
-                        ? (currentPhotoObjectThumb.w + "x" + currentPhotoObjectThumb.h) : "null")
-                    + " filterThumb=" + currentPhotoFilterThumb
-                    + " isVideo=" + isVideo);
+                // ДИАГНОСТИКА (по просьбе): пользователь заметил, что посты из разных
+                // каналов блюрятся по-разному (Манчестер Юнайтед — нормально, Реальный
+                // Футбол LIVE — слабо), хотя видимые параметры фильтра одинаковые.
+                // Добавлено название канала прямо в лог + фильтр, чтобы не собирать
+                // вручную сотни строк по всем каналам сразу — пишем только эти два,
+                // остальные каналы намеренно пропускаем (return без лога).
+                String channelTitleDbg = currentChannel != null ? currentChannel.title : "?";
+                // Сравнение по ID, а не по названию строкой — надёжнее (title мог бы не
+                // совпасть из-за лишнего пробела/регистра, id совпадает всегда).
+                // 1391358048 = Манчестер Юнайтед, 1365921811 = Реальный Футбол LIVE
+                // (id взяты из твоих же логов loadFeed).
+                boolean isTrackedChannelDbg = currentChannel != null
+                    && (currentChannel.id == 1391358048L || currentChannel.id == 1365921811L);
+                if (isTrackedChannelDbg) {
+                    PotokDebugLog.d("BLUR", "channel=[" + channelTitleDbg + "] post=" + mo.getId()
+                        + " strippedThumb=" + (strippedThumb != null)
+                        + " photoObjThumb=" + (currentPhotoObjectThumb != null
+                            ? (currentPhotoObjectThumb.w + "x" + currentPhotoObjectThumb.h) : "null")
+                        + " filterThumb=" + currentPhotoFilterThumb
+                        + " isVideo=" + isVideo);
+                }
 
                 // ГЛАВНОЕ ИЗМЕНЕНИЕ: видео больше НЕ подгружается/не стримится само по
                 // себе при показе поста. canDecodeFromVideo (декодирование реального
@@ -1862,13 +1877,39 @@ public class PotokFeedPostCell extends LinearLayout {
                     ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject)
                     : null;
                 Drawable thumbDrawable = mo.strippedThumb;
-                PotokDebugLog.d("BLUR", "post=" + mo.getId()
-                    + " (photo-branch) thumbSize=" + (thumbSize != null ? (thumbSize.w + "x" + thumbSize.h) : "NULL")
-                    + " filterThumb=" + thumbFilter
-                    + " strippedThumb=" + (mo.strippedThumb != null)
-                    + " sizesCount=" + (sizes != null ? sizes.size() : -1));
+                String channelTitleDbgPhoto = currentChannel != null ? currentChannel.title : "?";
+                boolean isTrackedChannelDbgPhoto = currentChannel != null
+                    && (currentChannel.id == 1391358048L || currentChannel.id == 1365921811L);
                 boolean photoAutoload = PotokFeedFragment.isAutoloadPhotoEnabled(getContext());
                 mo.checkMediaExistance(false);
+                if (isTrackedChannelDbgPhoto) {
+                    // Полный дамп ВСЕХ доступных вариантов размера фото (не только
+                    // выбранных thumbSize/photoSize) — тип, w x h И реальный вес файла
+                    // в байтах (PhotoSize.size). Раньше сравнивали только объявленные
+                    // w/h, которые оказались одинаковыми у обоих каналов — но при
+                    // одинаковом w/h реальный вес (степень сжатия/детализация
+                    // исходного JPEG) может отличаться в разы, и именно это не
+                    // попадало в лог до сих пор.
+                    StringBuilder allSizesDbg = new StringBuilder();
+                    if (sizes != null) {
+                        for (TLRPC.PhotoSize s : sizes) {
+                            if (s == null) continue;
+                            allSizesDbg.append("[type=").append(s.type)
+                                .append(" ").append(s.w).append("x").append(s.h)
+                                .append(" bytes=").append(s.size).append("]");
+                        }
+                    }
+                    PotokDebugLog.d("BLUR", "channel=[" + channelTitleDbgPhoto + "] post=" + mo.getId()
+                        + " (photo-branch) thumbSize=" + (thumbSize != null ? (thumbSize.w + "x" + thumbSize.h + " bytes=" + thumbSize.size) : "NULL")
+                        + " photoSize=" + (photoSize != null ? (photoSize.w + "x" + photoSize.h + " bytes=" + photoSize.size) : "NULL")
+                        + " filterThumb=" + thumbFilter
+                        + " strippedThumb=" + (mo.strippedThumb != null
+                            ? ("yes intrinsicW=" + (mo.strippedThumb.getIntrinsicWidth()) ) : "no")
+                        + " sizesCount=" + (sizes != null ? sizes.size() : -1)
+                        + " allSizes=" + allSizesDbg
+                        + " photoAutoload=" + photoAutoload
+                        + " mediaExists=" + mo.mediaExists);
+                }
                 if (photoAutoload || mo.mediaExists) {
                     // Автозагрузка включена (или файл и так уже реально в кэше) —
                     // грузим/показываем штатным путём ImageReceiver: сразу выставляем

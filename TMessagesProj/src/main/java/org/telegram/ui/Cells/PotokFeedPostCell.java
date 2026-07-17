@@ -126,6 +126,7 @@ public class PotokFeedPostCell extends LinearLayout {
     private android.app.Activity parentActivity;
     private TLRPC.Chat currentChannel;
     private ImageView menuButton;
+    private ImageView forwardButton;
     private org.telegram.ui.ActionBar.BaseFragment parentFragment;
 
     public void setParentFragment(org.telegram.ui.ActionBar.BaseFragment fragment) {
@@ -214,6 +215,21 @@ public class PotokFeedPostCell extends LinearLayout {
         timeView.setTextSize(13);
         timeView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
         titleColumn.addView(timeView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+
+        // --- Кнопка "переслать" (быстрая пересылка одним тапом) ---
+        // Ставится ЛЕВЕЕ кнопки "три точки", тот же размер/стиль кружка. По тапу
+        // сразу открывает диалог выбора получателя (openForwardDialog, тот же метод,
+        // что и пункт "Переслать" в выпадающем меню ниже), без промежуточного меню.
+        // Иконка msg_forward — та же, что используется для пункта "Переслать" в
+        // showPostMenu() (см. ниже), для единообразия.
+        forwardButton = new ImageView(context);
+        forwardButton.setImageResource(org.telegram.messenger.R.drawable.msg_forward);
+        forwardButton.setColorFilter(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
+        forwardButton.setScaleType(ImageView.ScaleType.CENTER);
+        forwardButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+        forwardButton.setBackground(Theme.createSelectorDrawable(Theme.getColor(Theme.key_listSelector, resourcesProvider), Theme.RIPPLE_MASK_CIRCLE_20DP));
+        forwardButton.setOnClickListener(v -> openForwardDialog(false));
+        headerRow.addView(forwardButton, LayoutHelper.createLinear(40, 40, Gravity.CENTER_VERTICAL));
 
         // --- Кнопка меню ---
         // Фикс: раньше это был текстовый символ "⋮" с неровными отступами (8/4) —
@@ -1866,21 +1882,16 @@ public class PotokFeedPostCell extends LinearLayout {
                     ? FileLoader.getClosestPhotoSizeWithSize(sizes, 40, false, null, true)
                     : null;
                 if (thumbSize == photoSize) thumbSize = null;
-                // Filter-таргет ИЗМЕНЁН с "50_50" на "8_8" (сохраняя суффикс "_b2"):
-                // сверка с ImageLoader.java (строки 1212-1298, 1385-1396) показала, что
-                // число в фильтре умножается на плотность экрана (обычно 2.5-3.5), а
-                // затем движок уменьшает картинку только грубыми шагами кратно 2, и
-                // ТОЧНОЕ доуменьшение до цели ПРОПУСКАЕТСЯ, если после грубого шага
-                // картинка не превышает цель больше чем на 20px. При "50_50" и реальных
-                // исходниках ~256-320px (это ВСЕ фото, что мы видели в логах) итоговый
-                // размер ПЕРЕД блюром оставался ~150-170px — блюр на таком размере
-                // выглядит заметно слабее, чем на реально маленькой картинке, даже с тем
-                // же радиусом. С "8_8" тот же исходник 256-320px после тех же грубых
-                // шагов (кратно 2) стабильно попадает в ~20-40px независимо от плотности
-                // экрана и точного исходного размера — блюр становится равномерно
-                // сильным у всех фото, а не только у тех, кому "повезло" оказаться ближе
-                // к цели после грубого шага.
-                String thumbFilter = "8_8_b2";
+                // Filter-таргет: было "50_50" (блюр слишком слабый, картинка перед
+                // блюром оставалась ~150-170px), затем "8_8" (после сборки и визуальной
+                // проверки на устройстве — блюр стал СЛИШКОМ сильным: картинка перед
+                // блюром схлопывалась до ~20-40px, из-за чего 3 прохода радиусом 7
+                // стирали вообще любую структуру и оставляли ровное цветовое пятно —
+                // в отличие от настоящего Telegram, где сквозь блюр всё ещё угадываются
+                // силуэты). "16_16" — промежуточное значение, шаг к балансу между
+                // "структура ещё видна" и "фото нечитаемо"; проверить на устройстве и
+                // при необходимости подвинуть ещё раз в ту или иную сторону.
+                String thumbFilter = "16_16_b2";
                 ImageLocation thumbLocation = thumbSize != null
                     ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject)
                     : null;

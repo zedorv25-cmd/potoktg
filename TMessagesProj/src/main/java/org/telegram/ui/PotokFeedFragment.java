@@ -247,6 +247,24 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // умолчанию (см. ActionBar.java) — тот же жирный шрифт, что использует сам
         // Telegram, так что внешний вид уже совпадает с референсом без доп. правок.
         actionBar.setTitle("typefeed");
+        // Кастомный шрифт ТОЛЬКО для этого заголовка — по референсу пользователя
+        // (округлый геометричный жирный шрифт, визуально не похожий на стандартный
+        // AndroidUtilities.bold(), который использует весь остальной интерфейс).
+        // Poppins Bold — ближайший бесплатный аналог с открытой лицензией (OFL),
+        // файл лежит в assets/fonts/poppins_bold.ttf. Применяется точечно через
+        // getTitleTextView(), не через глобальный AndroidUtilities.bold() — весь
+        // остальной интерфейс (включая другие заголовки) остаётся на оригинальном
+        // шрифте Telegram, как того требует правило проекта "копировать 1:1".
+        try {
+            android.graphics.Typeface typefeedFont = android.graphics.Typeface.createFromAsset(
+                context.getAssets(), "fonts/poppins_bold.ttf"
+            );
+            if (actionBar.getTitleTextView() != null) {
+                actionBar.getTitleTextView().setTypeface(typefeedFont);
+            }
+        } catch (Exception e) {
+            PotokDebugLog.log("PotokFeedLogo", "typefeed: не удалось загрузить кастомный шрифт: " + e.getMessage());
+        }
 
         ActionBarMenu menu = actionBar.createMenu();
         org.telegram.ui.ActionBar.ActionBarMenuItem menuItem = menu.addItem(MENU_ITEM_FILTER, org.telegram.messenger.R.drawable.ic_ab_other);

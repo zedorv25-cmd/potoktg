@@ -1662,7 +1662,18 @@ public class PotokFeedPostCell extends LinearLayout {
             // Спойлер — до ветвления на фото/видео/GIF, применяется одинаково к
             // любому типу медиа (как и в оригинале, флаг лежит в самом media, а
             // не привязан к конкретному типу вложения).
-            holder.spoilerOverlay.bind(mo);
+            // callback onRevealed: когда пользователь снимает спойлер тапом,
+            // ячейку нужно перебиндить (notifyItemChanged), чтобы currentPhotoFilter/
+            // currentPhotoFilterThumb ниже пересчитались уже БЕЗ принудительного
+            // "_b2" (см. spoilerActive) — иначе после снятия спойлера частицы уходят,
+            // а сам блюр остаётся висеть, потому что img уже загружен с заблюренным
+            // фильтром и не перезапрашивается сам по себе.
+            holder.spoilerOverlay.bind(mo, () -> {
+                int pos = holder.getAdapterPosition();
+                if (pos != RecyclerView.NO_POSITION) {
+                    notifyItemChanged(pos);
+                }
+            });
             // GIF в Telegram технически хранится как тот же немой зацикленный
             // video/mp4-документ (TL_documentAttributeAnimated) — тот же контейнер,
             // что и обычное видео, поэтому дальше по пайплайну (инлайн-превью,
@@ -1670,6 +1681,12 @@ public class PotokFeedPostCell extends LinearLayout {
             // Раньше mo.isGif() нигде не проверялся, и такие посты не считались
             // медиа вообще (см. hasMedia-проверки выше) — GIF просто не отображался.
             boolean isVideo = mo.isVideo() || mo.isGif();
+            // Спойлер + блюр (и для фото, и для видео/GIF): пока спойлер не снят,
+            // финальное изображение должно оставаться заблюренным ДАЖЕ ПОСЛЕ полной
+            // загрузки в кэш — обычная (не-спойлерная) прогрузка убирает блюр по
+            // готовности, а спойлерная — нет, специально. См. использование ниже
+            // и в фото-ветке.
+            boolean spoilerActive = mo.hasMediaSpoilers() && !mo.isSpoilersRevealed;
 
             if (isVideo && media instanceof TLRPC.TL_messageMediaDocument
                     && media.document != null) {
@@ -1751,6 +1768,26 @@ public class PotokFeedPostCell extends LinearLayout {
                 String currentPhotoFilterThumb = currentPhotoObjectThumb != null
                     ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h : currentPhotoFilter;
 
+                // СПОЙЛЕР + ВИДЕО/GIF: раньше блюр от спойлера НЕ было видно вообще —
+                // единственным слоем, скрывающим контент, были редкие частицы
+                // SpoilerEffect2, а сам currentPhotoFilter/currentPhotoFilterThumb
+                // (см. выше) всегда были БЕЗ блюра (это правильно для ОБЫЧНОГО
+                // видео/GIF без спойлера — блюр у них теперь принципиально не
+                // нужен, см. комментарий выше), из-за чего финальный кадр
+                // прогружался и показывался чётким ПРЯМО СКВОЗЬ частицы спойлера.
+                // Пока спойлер активен (флаг не снят), к обоим фильтрам
+                // принудительно добавляется тот же сильный блюр "_b2", что и у фото
+                // (см. фото-ветку ниже) — так на экране одновременно два слоя:
+                // блюр + частицы, как и должно быть для чувствительного медиа.
+                // Как только спойлер снимается тапом (см. SpoilerOverlay.startReveal
+                // -> onRevealed callback ниже), ячейка перебиндивается
+                // (notifyItemChanged) и spoilerActive становится false — тогда сюда
+                // попадает обычный, уже НЕ заблюренный фильтр.
+                if (spoilerActive) {
+                    currentPhotoFilter = currentPhotoFilter + "_b2";
+                    currentPhotoFilterThumb = currentPhotoFilterThumb + "_b2";
+                }
+
                 // ДИАГНОСТИКА (по просьбе): пользователь заметил, что посты из разных
                 // каналов блюрятся по-разному (Манчестер Юнайтед — нормально, Реальный
                 // Футбол LIVE — слабо), хотя видимые параметры фильтра одинаковые.
@@ -1789,7 +1826,16 @@ public class PotokFeedPostCell extends LinearLayout {
                 // forceCache=false для документов, кроме wallpaper.
                 java.io.File cacheFile = FileLoader.getInstance(mo.currentAccount).getPathToAttach(document, false);
                 boolean fileExists = cacheFile != null && cacheFile.exists();
-                boolean canDecodeFromVideo = !mo.isRepostPreview && fileExists && mo.canStreamVideo();
+                // СПОЙЛЕР + АВТОВОСПРОИЗВЕДЕНИЕ: ветка ниже (canDecodeFromVideo)
+                // проигрывает РЕАЛЬНЫЙ ролик через AUTOPLAY_FILTER — отдельный
+                // путь, который НЕ проходит через currentPhotoFilter/
+                // currentPhotoFilterThumb (туда мы принудительно добавляем блюр
+                // при активном спойлере, см. ниже) — то есть спойлерное видео/GIF
+                // после докачки начало бы само проигрываться в обход блюра и
+                // частиц. Пока спойлер активен, принудительно не пускаем в эту
+                // ветку — видео просто покажет статичный (заблюренный) кадр под
+                // спойлером, как и фото, до тапа.
+                boolean canDecodeFromVideo = !mo.isRepostPreview && fileExists && mo.canStreamVideo() && !spoilerActive;
                 // Настройка "Скачивать видео" из меню трёх точек (по умолчанию включена).
                 // Если выключена и сам видеофайл ещё не докачан пользователем вручную —
                 // НЕ подгружаем даже полноразмерный статичный превью-кадр с сервера сам
@@ -1956,6 +2002,20 @@ public class PotokFeedPostCell extends LinearLayout {
                 // "24_24" — следующий шаг в сторону увеличения; если опять слишком
                 // сильно/слабо — подвинуть ещё раз.
                 String thumbFilter = "24_24_b2";
+                // СПОЙЛЕР + ФОТО: обычно главный (финальный, полноразмерный) слой
+                // фото грузится и показывается БЕЗ блюра (filter=null, см. вызов
+                // img.setImage() ниже) — блюр есть только у thumbFilter, и это
+                // ПРАВИЛЬНО для обычных фото (задумано как временный плейсхолдер на
+                // время загрузки, не постоянный эффект). Но пока активен спойлер
+                // (flag mo.hasMediaSpoilers() && !isSpoilersRevealed), финальный
+                // слой ТОЖЕ должен оставаться заблюренным — иначе после полной
+                // загрузки в кэш фото становится чётким ПРЯМО СКВОЗЬ редкие частицы
+                // спойлера (см. SpoilerOverlay), которые сами по себе ничего не
+                // закрывают. Используем тот же сильный "24_24_b2", что и у thumb —
+                // после снятия спойлера тапом (SpoilerOverlay.onRevealed callback)
+                // ячейка перебиндивается и spoilerActive становится false, тогда
+                // здесь снова окажется null (нормальное чёткое фото).
+                String mainPhotoFilter = spoilerActive ? thumbFilter : null;
                 ImageLocation thumbLocation = thumbSize != null
                     ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject)
                     : null;
@@ -2011,7 +2071,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     // снимается вручную — поэтому фото зависало заблюренным навсегда).
                     // Убрано полностью, вызов приведён к чистому виду как в оригинале.
                     img.setImage(
-                        ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
+                        ImageLocation.getForObject(photoSize, mo.photoThumbsObject), mainPhotoFilter,
                         thumbLocation, thumbFilter,
                         thumbDrawable, (String) null, 0, 0, mo
                     );
@@ -2042,7 +2102,7 @@ public class PotokFeedPostCell extends LinearLayout {
                         // finishHide()) до вызова этого колбэка — остаётся просто
                         // переставить картинку в тот же img, без notifyItemChanged.
                         img.setImage(
-                            ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
+                            ImageLocation.getForObject(photoSize, mo.photoThumbsObject), mainPhotoFilter,
                             thumbLocation, thumbFilter,
                             thumbDrawable, (String) null, 0, 0, mo
                         );
@@ -2703,6 +2763,7 @@ public class PotokFeedPostCell extends LinearLayout {
     private static class SpoilerOverlay extends View {
         private SpoilerEffect2 effect;
         private MessageObject boundMessage;
+        private Runnable onRevealed;
         private boolean attachedToWindow;
         private final Path revealPath = new Path();
         private float revealX, revealY, revealMaxRadius, revealProgress;
@@ -2712,8 +2773,9 @@ public class PotokFeedPostCell extends LinearLayout {
             setWillNotDraw(false);
         }
 
-        void bind(MessageObject mo) {
+        void bind(MessageObject mo, Runnable onRevealedCallback) {
             boundMessage = mo;
+            onRevealed = onRevealedCallback;
             revealProgress = (mo != null && mo.isSpoilersRevealed) ? 1f : 0f;
             updateEffect();
             updateVisibility();
@@ -2721,6 +2783,7 @@ public class PotokFeedPostCell extends LinearLayout {
 
         void unbind() {
             boundMessage = null;
+            onRevealed = null;
             revealProgress = 0f;
             updateEffect();
             setVisibility(GONE);
@@ -2853,6 +2916,14 @@ public class PotokFeedPostCell extends LinearLayout {
                     }
                     if (boundMessage == revealingMessage) {
                         updateVisibility();
+                        // Перебиндиваем ячейку, чтобы currentPhotoFilter/
+                        // currentPhotoFilterThumb в CarouselAdapter пересчитались уже
+                        // без принудительного "_b2" (см. spoilerActive в
+                        // onBindViewHolder) — иначе картинка/видео останется
+                        // заблюренной даже после того как частицы спойлера ушли.
+                        if (onRevealed != null) {
+                            onRevealed.run();
+                        }
                     }
                 }
             });

@@ -1891,8 +1891,16 @@ public class PotokFeedPostCell extends LinearLayout {
                 holder.downloadPlate.unbind();
                 // Фото — стандартный путь
                 ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;
-                TLRPC.PhotoSize photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
-                if (photoSize == null) photoSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
+                TLRPC.PhotoSize photoSizeClosest = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
+                // Раньше здесь было "if (photoSize == null) photoSize = ...;" —
+                // переприсваивание делает переменную НЕ effectively final, из-за чего
+                // javac не даёт использовать её внутри лямбды (photoOverlay.bind(...)
+                // ниже) — "local variables referenced from a lambda expression must be
+                // final or effectively final". Заменено на тернарник с одним
+                // присваиванием — поведение то же самое, просто без reassignment.
+                final TLRPC.PhotoSize photoSize = photoSizeClosest != null
+                    ? photoSizeClosest
+                    : FileLoader.getClosestPhotoSizeWithSize(sizes, 1280);
                 // 1:1 с оригиналом (ChatMessageCell.java:8296-8306): thumbSize (сетевой
                 // маленький размер) запрашивается ТОЛЬКО если у сообщения нет
                 // strippedThumb (встроенного в сообщение мини-превью, приезжающего без

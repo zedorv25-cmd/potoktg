@@ -10,6 +10,11 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.Region;
+import android.animation.ValueAnimator;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import org.telegram.ui.Components.spoilers.SpoilerEffect2;
 import android.graphics.RectF;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -1594,7 +1599,13 @@ public class PotokFeedPostCell extends LinearLayout {
             photoOverlay.setVisibility(GONE);
             wrapper.addView(photoOverlay, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
-            return new MediaHolder(wrapper, img, playIndicator, downloadPlate, photoOverlay);
+            // Спойлер — последним, поверх ВСЕГО (в т.ч. поверх плашки загрузки),
+            // как в оригинале: спойлер скрывает даже сам факт "надо скачивать".
+            SpoilerOverlay spoilerOverlay = new SpoilerOverlay(parent.getContext());
+            spoilerOverlay.setVisibility(GONE);
+            wrapper.addView(spoilerOverlay, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+            return new MediaHolder(wrapper, img, playIndicator, downloadPlate, photoOverlay, spoilerOverlay);
         }
 
         @Override
@@ -1605,6 +1616,7 @@ public class PotokFeedPostCell extends LinearLayout {
             // уже переиспользованную под другое видео ячейку.
             holder.downloadPlate.unbind();
             holder.photoOverlay.unbind();
+            holder.spoilerOverlay.unbind();
             holder.lastAutoplayDocumentId = 0;
         }
 
@@ -1646,6 +1658,11 @@ public class PotokFeedPostCell extends LinearLayout {
             }
 
             TLRPC.MessageMedia media = mo.messageOwner != null ? mo.messageOwner.media : null;
+
+            // Спойлер — до ветвления на фото/видео/GIF, применяется одинаково к
+            // любому типу медиа (как и в оригинале, флаг лежит в самом media, а
+            // не привязан к конкретному типу вложения).
+            holder.spoilerOverlay.bind(mo);
             // GIF в Telegram технически хранится как тот же немой зацикленный
             // video/mp4-документ (TL_documentAttributeAnimated) — тот же контейнер,
             // что и обычное видео, поэтому дальше по пайплайну (инлайн-превью,
@@ -1726,8 +1743,13 @@ public class PotokFeedPostCell extends LinearLayout {
                 // PhotoSize. Добавлены те же фиксированные размеры "50_50", что и в
                 // видео/GIF-ветке ниже — теперь любой путь даунскейлится перед блюром
                 // одинаково, независимо от исходного разрешения.
+                // УБРАН блюр у видео/GIF (по просьбе): в настоящем Telegram видео/GIF
+                // в каналах НЕ показываются с блюр-плейсхолдером — только у фото. Раньше
+                // здесь стоял суффикс "_b2" (сильный блюр), теперь — обычный фильтр без
+                // блюра, тех же размеров, что и currentPhotoFilter у самого видео (чтобы
+                // thumb не выглядел мельче/крупнее финального кадра при подмене).
                 String currentPhotoFilterThumb = currentPhotoObjectThumb != null
-                    ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h + "_b2" : "50_50_b2";
+                    ? currentPhotoObjectThumb.w + "_" + currentPhotoObjectThumb.h : currentPhotoFilter;
 
                 // ДИАГНОСТИКА (по просьбе): пользователь заметил, что посты из разных
                 // каналов блюрятся по-разному (Манчестер Юнайтед — нормально, Реальный
@@ -2012,6 +2034,7 @@ public class PotokFeedPostCell extends LinearLayout {
             final PlayIndicatorView playIndicator;
             final VideoDownloadPlate downloadPlate;
             final PhotoDownloadOverlay photoOverlay;
+            final SpoilerOverlay spoilerOverlay;
             // Фикс "раздвоение кадров" (лог GHOST), часть 3 — САМАЯ ЧАСТАЯ причина по
             // новым логам: RecyclerView может вызывать onBindViewHolder на тот же
             // holder/позицию много раз подряд (каждый кадр во время settle/scroll —
@@ -2025,12 +2048,13 @@ public class PotokFeedPostCell extends LinearLayout {
             // если при повторном bind() это тот же документ, setImage/startAnimation
             // просто пропускаем, декодер продолжает играть как играл.
             long lastAutoplayDocumentId = 0;
-            MediaHolder(View wrapper, BackupImageView img, PlayIndicatorView playIndicator, VideoDownloadPlate downloadPlate, PhotoDownloadOverlay photoOverlay) {
+            MediaHolder(View wrapper, BackupImageView img, PlayIndicatorView playIndicator, VideoDownloadPlate downloadPlate, PhotoDownloadOverlay photoOverlay, SpoilerOverlay spoilerOverlay) {
                 super(wrapper);
                 this.img = img;
                 this.playIndicator = playIndicator;
                 this.downloadPlate = downloadPlate;
                 this.photoOverlay = photoOverlay;
+                this.spoilerOverlay = spoilerOverlay;
             }
         }
     }
@@ -2606,6 +2630,166 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         public int getObserverTag() {
             return TAG;
+        }
+    }
+
+    // ------------------------------------------------------------------ SpoilerOverlay
+    /**
+     * Спойлер для чувствительного медиа — перенесён 1:1 из механизма оригинального
+     * Telegram (ChatMessageCell.java: mediaSpoilerEffect2 + isSpoilerRevealing;
+     * SharedPhotoVideoCell2.java: startRevealMedia/canRevealSpoiler — та же анимация
+     * кругового раскрытия, но в самодостаточной, проще переносимой форме, т.к.
+     * SharedPhotoVideoCell2 сама рисует картинку, а у нас картинку рисует отдельный
+     * img (BackupImageView) НИЖЕ этого оверлея в том же wrapper).
+     *
+     * Логика: если у сообщения выставлен флаг спойлера (mo.hasMediaSpoilers() —
+     * то же самое условие, что и в оригинале, ничего своего не придумано), этот
+     * View добавляется ПОВЕРХ img (последним в wrapper, см. onCreateViewHolder) и
+     * рисует анимированные частицы SpoilerEffect2 на весь кадр — полностью
+     * закрывая фото/видео под ним. Сам img продолжает грузить и показывать
+     * реальное фото/видео как обычно (в т.ч. свой блюр-плейсхолдер) — оверлей
+     * просто рисуется НАД ним, пока не снят.
+     *
+     * По тапу (onTouchEvent, ACTION_UP) запускается круговая анимация раскрытия
+     * от точки тапа (как в оригинале): растущий круг вырезается из области
+     * отрисовки частиц через canvas.clipPath(..., Region.Op.DIFFERENCE) — внутри
+     * круга оверлей ничего не рисует, и там становится виден реальный img под
+     * ним. По завершении анимации оверлей скрывается целиком (GONE), после чего
+     * повторный тап уже обычным образом открывает медиа в полноэкранном
+     * просмотрщике (клик на img, как обычно).
+     *
+     * mo.isSpoilersRevealed — то же самое поле MessageObject, что использует
+     * оригинал (ChatMessageCell), поэтому раз раскрытое состояние не сбрасывается
+     * при пересборке/повторном заходе в ленту в рамках одной сессии приложения —
+     * так же, как в настоящем Telegram.
+     */
+    private static class SpoilerOverlay extends View {
+        private SpoilerEffect2 effect;
+        private MessageObject boundMessage;
+        private boolean attachedToWindow;
+        private final Path revealPath = new Path();
+        private float revealX, revealY, revealMaxRadius, revealProgress;
+
+        SpoilerOverlay(Context context) {
+            super(context);
+            setWillNotDraw(false);
+        }
+
+        void bind(MessageObject mo) {
+            boundMessage = mo;
+            revealProgress = (mo != null && mo.isSpoilersRevealed) ? 1f : 0f;
+            updateEffect();
+            updateVisibility();
+        }
+
+        void unbind() {
+            boundMessage = null;
+            revealProgress = 0f;
+            updateEffect();
+            setVisibility(GONE);
+        }
+
+        private boolean shouldShow() {
+            return boundMessage != null && boundMessage.hasMediaSpoilers() && !boundMessage.isSpoilersRevealed;
+        }
+
+        private void updateVisibility() {
+            setVisibility(shouldShow() ? VISIBLE : GONE);
+        }
+
+        private void updateEffect() {
+            if (shouldShow() && SpoilerEffect2.supports()) {
+                if (effect == null || effect.destroyed) {
+                    effect = SpoilerEffect2.getInstance(this);
+                    if (attachedToWindow && effect != null) {
+                        effect.attach(this);
+                    }
+                }
+            } else if (effect != null) {
+                effect.detach(this);
+                effect = null;
+            }
+        }
+
+        @Override
+        protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            attachedToWindow = true;
+            if (effect != null) {
+                if (effect.destroyed) {
+                    effect = SpoilerEffect2.getInstance(this);
+                } else {
+                    effect.attach(this);
+                }
+            }
+        }
+
+        @Override
+        protected void onDetachedFromWindow() {
+            super.onDetachedFromWindow();
+            attachedToWindow = false;
+            if (effect != null) {
+                effect.detach(this);
+            }
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            updateEffect();
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                return shouldShow();
+            }
+            if (event.getAction() == MotionEvent.ACTION_UP && shouldShow() && revealProgress == 0f) {
+                startReveal(event.getX(), event.getY());
+                return true;
+            }
+            return shouldShow();
+        }
+
+        private void startReveal(float x, float y) {
+            revealX = x;
+            revealY = y;
+            revealMaxRadius = (float) Math.sqrt(Math.pow(getWidth(), 2) + Math.pow(getHeight(), 2));
+            long duration = (long) Math.max(250, Math.min(550, revealMaxRadius * 0.3f));
+            ValueAnimator animator = ValueAnimator.ofFloat(0f, 1f).setDuration(duration);
+            animator.setInterpolator(CubicBezierInterpolator.EASE_BOTH);
+            final MessageObject revealingMessage = boundMessage;
+            animator.addUpdateListener(a -> {
+                revealProgress = (float) a.getAnimatedValue();
+                invalidate();
+            });
+            animator.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    if (revealingMessage != null) {
+                        revealingMessage.isSpoilersRevealed = true;
+                    }
+                    if (boundMessage == revealingMessage) {
+                        updateVisibility();
+                    }
+                }
+            });
+            animator.start();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            if (effect == null || !shouldShow()) return;
+            canvas.save();
+            canvas.clipRect(0, 0, getWidth(), getHeight());
+            if (revealProgress != 0f) {
+                revealPath.rewind();
+                revealPath.addCircle(revealX, revealY, revealMaxRadius * revealProgress, Path.Direction.CW);
+                canvas.clipPath(revealPath, Region.Op.DIFFERENCE);
+            }
+            effect.draw(canvas, this, getWidth(), getHeight());
+            canvas.restore();
         }
     }
 

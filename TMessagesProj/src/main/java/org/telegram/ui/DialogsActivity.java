@@ -3450,12 +3450,18 @@ public boolean onTouchEvent(MotionEvent ev) {
             } else {
                 statusDrawable = new AnimatedEmojiDrawable.SwapAnimatedEmojiDrawable(null, dp(26));
                 statusDrawable.center = true;
-                logoDrawable = context.getResources().getDrawable(R.drawable.telegram_logo_2).mutate();
-                logoDrawable.setBounds(0, dp(2), logoDrawable.getIntrinsicWidth(), dp(2) + logoDrawable.getIntrinsicHeight());
-                logoDrawable.setColorFilter(getThemedColor(Theme.key_telegram_color_dialogsLogo), PorterDuff.Mode.MULTIPLY);
-                SpannableStringBuilder ssb = new SpannableStringBuilder(getString(R.string.AppName));
-                ssb.setSpan(new ImageSpan(logoDrawable), 0, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                actionBar.setTitle(ssb, statusDrawable);
+                // Заголовок "typefeed" (замена лого "Telegram") — обычный текст + шрифт Avenir Black,
+                // тот же принцип, что в PotokFeedFragment.setupActionBar()
+                actionBar.setTitle("typefeed", statusDrawable);
+                try {
+                    android.graphics.Typeface typefeedFont = android.graphics.Typeface.createFromAsset(
+                            context.getAssets(), "fonts/avenir_black.ttf");
+                    if (actionBar.getTitleTextView() != null) {
+                        actionBar.getTitleTextView().setTypeface(typefeedFont);
+                    }
+                } catch (Exception e) {
+                    PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: fonts/avenir_black.ttf не найден в assets, использован дефолтный шрифт: " + e.getMessage());
+                }
                 updateStatus(UserConfig.getInstance(currentAccount).getCurrentUser(), false);
             }
             if (folderId == 0) {

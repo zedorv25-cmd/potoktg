@@ -1772,7 +1772,6 @@ public class PotokFeedPostCell extends LinearLayout {
                         + " filterThumb=" + currentPhotoFilterThumb
                         + " isVideo=" + isVideo);
                 }
-
                 // ГЛАВНОЕ ИЗМЕНЕНИЕ: видео больше НЕ подгружается/не стримится само по
                 // себе при показе поста. canDecodeFromVideo (декодирование реального
                 // кадра через стриминг) теперь разрешено ТОЛЬКО если файл уже реально
@@ -1798,6 +1797,36 @@ public class PotokFeedPostCell extends LinearLayout {
                 // стрип-thumb, который и так приходит вместе с самим сообщением бесплатно.
                 boolean videoAutoload = PotokFeedFragment.isAutoloadVideoEnabled(getContext())
                     && PotokFeedFragment.isSizeOkForVideoAutoload(document.size);
+
+                // ДИАГНОСТИКА (видео/GIF всё ещё выглядит заблюренным после удаления
+                // "_b2" из currentPhotoFilterThumb) — суффикса "_b2" в этой ветке
+                // (currentPhotoFilter/currentPhotoFilterThumb) больше нет, код
+                // перепроверен построчно. Гипотеза: видимый блюр — это НЕ наш
+                // искусственный фильтр, а strippedThumb (всегда слегка заблюрен
+                // "b"-фильтром при создании, MessageObject.createStrippedThumb()) —
+                // он передаётся ВО ВСЕ ветки setImage ниже как нижний слой, и если
+                // currentPhotoObject/currentPhotoObjectThumb по какой-то причине не
+                // догружаются, на экране надолго остаётся именно он, растянутый на
+                // всю ширину поста (тиньк-картинка растянутая до ~1080px и выглядит
+                // блюром/пикселями, даже с одним слабым проходом фильтра). Лог ниже
+                // покажет для ЛЮБОГО отслеживаемого канала, какая именно ветка
+                // setImage сработала и догрузился ли currentPhotoObject.
+                if (isTrackedChannelDbg) {
+                    PotokDebugLog.d("BLUR", "VIDEO/GIF post=" + mo.getId()
+                        + " channel=[" + channelTitleDbg + "]"
+                        + " canDecodeFromVideo=" + canDecodeFromVideo
+                        + " fileExists=" + fileExists
+                        + " videoAutoload=" + videoAutoload
+                        + " currentPhotoObject=" + (currentPhotoObject != null
+                            ? (currentPhotoObject.w + "x" + currentPhotoObject.h) : "null")
+                        + " currentPhotoObjectThumb=" + (currentPhotoObjectThumb != null
+                            ? (currentPhotoObjectThumb.w + "x" + currentPhotoObjectThumb.h) : "null")
+                        + " strippedThumb=" + (strippedThumb != null)
+                        + " branch=" + (canDecodeFromVideo ? "DECODE_VIDEO"
+                            : (!videoAutoload && !fileExists) ? "THUMB_ONLY_NO_AUTOLOAD"
+                            : (currentPhotoObjectThumb != null || strippedThumb != null) ? "THUMB_PLUS_FULL"
+                            : "FULL_ONLY"));
+                }
                 if (canDecodeFromVideo) {
                     // Бесшумное инлайн-автовоспроизведение кэшированного видео — как GIF,
                     // точная копия ветки DOCUMENT_ATTACH_TYPE_VIDEO из оригинального
@@ -2701,6 +2730,39 @@ public class PotokFeedPostCell extends LinearLayout {
             return boundMessage != null && boundMessage.hasMediaSpoilers() && !boundMessage.isSpoilersRevealed;
         }
 
+        // ФИКС "неправильный порядок тап -> загрузка -> снятие спойлера": было —
+        // тап сразу снимал спойлер (startReveal), а загрузка (если медиа не в
+        // кэше) начиналась только ПОСЛЕ, уже на открытом медиа. Нужно наоборот:
+        // первый тап на ещё не скачанном медиа должен ЗАПУСТИТЬ загрузку (через
+        // уже существующую кнопку PhotoDownloadOverlay/VideoDownloadPlate,
+        // которая рисуется НИЖЕ этого оверлея в том же wrapper — см.
+        // onCreateViewHolder), а спойлер должен ОСТАВАТЬСЯ поверх на всё время
+        // загрузки. Только когда файл РЕАЛЬНО уже в кэше, тап должен запускать
+        // startReveal(). Проверяем это заново на каждый тап (а не один раз при
+        // bind()), т.к. состояние кэша могло измениться (докачалось) уже после
+        // bind() этой ячейки.
+        private boolean isMediaDownloaded() {
+            if (boundMessage == null) return false;
+            TLRPC.MessageMedia media = boundMessage.messageOwner != null ? boundMessage.messageOwner.media : null;
+            if (media == null) return false;
+            try {
+                if (media.document != null) {
+                    java.io.File f = FileLoader.getInstance(boundMessage.currentAccount)
+                        .getPathToAttach(media.document, false);
+                    return f != null && f.exists();
+                }
+                if (media.photo != null && media.photo.sizes != null) {
+                    TLRPC.PhotoSize best = FileLoader.getClosestPhotoSizeWithSize(media.photo.sizes, AndroidUtilities.getPhotoSize());
+                    if (best == null) return false;
+                    java.io.File f = FileLoader.getInstance(boundMessage.currentAccount)
+                        .getPathToAttach(best, false);
+                    return f != null && f.exists();
+                }
+            } catch (Exception ignore) {
+            }
+            return false;
+        }
+
         private void updateVisibility() {
             setVisibility(shouldShow() ? VISIBLE : GONE);
         }
@@ -2749,14 +2811,26 @@ public class PotokFeedPostCell extends LinearLayout {
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                return shouldShow();
+            if (!shouldShow()) {
+                return false;
             }
-            if (event.getAction() == MotionEvent.ACTION_UP && shouldShow() && revealProgress == 0f) {
+            boolean downloaded = isMediaDownloaded();
+            if (!downloaded) {
+                // Медиа ещё не в кэше — НЕ перехватываем тап, пропускаем его дальше
+                // (в wrapper это дойдёт до PhotoDownloadOverlay/VideoDownloadPlate,
+                // которые лежат в том же FrameLayout ниже по z-порядку и сами
+                // запустят загрузку). Спойлер при этом остаётся видимым как есть —
+                // мы просто не меняем revealProgress/видимость здесь.
+                return false;
+            }
+            if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                return true;
+            }
+            if (event.getAction() == MotionEvent.ACTION_UP && revealProgress == 0f) {
                 startReveal(event.getX(), event.getY());
                 return true;
             }
-            return shouldShow();
+            return true;
         }
 
         private void startReveal(float x, float y) {

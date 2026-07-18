@@ -78,6 +78,7 @@ import org.telegram.ui.Components.BackButtonMenu;
 import org.telegram.ui.EmptyBaseFragment;
 import org.telegram.ui.GradientHeaderActivity;
 import org.telegram.ui.MainTabsActivity;
+import org.telegram.ui.PotokDebugLog;
 import org.telegram.ui.bots.BotWebViewSheet;
 import org.telegram.ui.Components.Bulletin;
 import org.telegram.ui.Components.ChatAttachAlert;
@@ -1419,7 +1420,20 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                     velocityTracker.addMovement(ev);
                     if (!transitionAnimationInProgress && !inPreviewMode && maybeStartTracking && !startedTracking && dx >= AndroidUtilities.getPixelsInCM(0.4f, true) && Math.abs(dx) / 3 > dy) {
                         BaseFragment currentFragment = fragmentsStack.get(fragmentsStack.size() - 1);
-                        if (currentFragment.canBeginSlide() && findScrollingChild(this, ev.getX(), ev.getY()) == null) {
+                        // ДИАГНОСТИКА "свайп вправо в архиве открывает шторку вместо
+                        // возврата назад": логируем оба условия, которые решают, начнётся
+                        // ли штатный свайп-назад по стеку фрагментов — canBeginSlide()
+                        // (переопределён в DialogsActivity) и findScrollingChild() (если
+                        // под пальцем на старте свайпа есть горизонтально скроллящийся
+                        // child — например строка чата со своим свайп-жестом
+                        // архивировать/закрепить — свайп-назад блокируется и событие
+                        // уходит куда-то ещё, предположительно на открытие шторки).
+                        View scrollingChild = findScrollingChild(this, ev.getX(), ev.getY());
+                        PotokDebugLog.d("DRAWER", "swipe decision fragmentsStackSize=" + fragmentsStack.size()
+                            + " fragmentClass=" + currentFragment.getClass().getSimpleName()
+                            + " canBeginSlide=" + currentFragment.canBeginSlide()
+                            + " scrollingChild=" + (scrollingChild != null ? scrollingChild.getClass().getSimpleName() : "null"));
+                        if (currentFragment.canBeginSlide() && scrollingChild == null) {
                             startedTrackingX = (int) ev.getX();
                             prepareForMoving();
                         } else {

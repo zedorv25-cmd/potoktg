@@ -1951,13 +1951,6 @@ public class PotokFeedPostCell extends LinearLayout {
                     // оригинале используется ТОЛЬКО для TTL/спойлеров и НИКОГДА не
                     // снимается вручную — поэтому фото зависало заблюренным навсегда).
                     // Убрано полностью, вызов приведён к чистому виду как в оригинале.
-                    // Явно выставляем длительность кроссфейда перехода
-                    // "блюр -> чёткое фото". По умолчанию в ImageReceiver стоит 150мс
-                    // (DEFAULT_CROSSFADE_DURATION) — сам по себе не рвётся, но при
-                    // ручной докачке (кнопка загрузки -> notifyItemChanged -> полный
-                    // ребинд ячейки) недостаточно заметен на глаз, ощущается как
-                    // "резкий щелчок". 250мс — плавнее, но всё ещё быстро, не тянется.
-                    img.getImageReceiver().setCrossfadeDuration(250);
                     img.setImage(
                         ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
                         thumbLocation, thumbFilter,
@@ -1975,13 +1968,25 @@ public class PotokFeedPostCell extends LinearLayout {
                         thumbLocation, thumbFilter,
                         thumbDrawable, (String) null, 0, 0, mo
                     );
-                    final int photoBindPosition = position;
                     holder.photoOverlay.bind(photoSize, mo.photoThumbsObject, mo.currentAccount, () -> {
-                        carouselView.post(() -> {
-                            if (carouselAdapter != null) {
-                                notifyItemChanged(photoBindPosition);
-                            }
-                        });
+                        // Фикс "переход в чёткое фото — дёргано/медленно": раньше здесь
+                        // был notifyItemChanged() -> полный повторный onBindViewHolder()
+                        // для всей карусельной ячейки — лишний layout-проход посреди
+                        // анимации, из-за которого встроенный кроссфейд ImageReceiver
+                        // (тот же самый механизм, что и в ChatMessageCell настоящего
+                        // Telegram) не успевал доиграть гладко. В самом Telegram при
+                        // завершении докачки фото ничего не пересобирается — тот же
+                        // ImageReceiver просто получает то же изображение ещё раз (уже
+                        // с файлом в кэше) и доигрывает штатный кроссфейд
+                        // (DEFAULT_CROSSFADE_DURATION = 150мс) сам по себе. Делаем 1:1
+                        // так же: photoOverlay уже скрыл себя (setVisibility(GONE) в
+                        // finishHide()) до вызова этого колбэка — остаётся просто
+                        // переставить картинку в тот же img, без notifyItemChanged.
+                        img.setImage(
+                            ImageLocation.getForObject(photoSize, mo.photoThumbsObject), (String) null,
+                            thumbLocation, thumbFilter,
+                            thumbDrawable, (String) null, 0, 0, mo
+                        );
                     });
                 }
             }
@@ -2523,6 +2528,22 @@ public class PotokFeedPostCell extends LinearLayout {
         private void onClick() {
             if (photoSize == null) return;
             if (buttonState == 2) {
+                // Фикс "спиннер не появляется вообще, кнопка сразу пропадает": раньше
+                // buttonState=1 выставлялся ПОСЛЕ вызова loadFile(). Если FileLoader
+                // считает файл уже полностью в кэше (или докачка завершается почти
+                // мгновенно) и вызывает onSuccessDownload СИНХРОННО, внутри самого
+                // loadFile() — на тот момент buttonState всё ещё был 2 ("скачать"), и
+                // наша защита от мгновенного скрытия в updateState()
+                // (if buttonState == 1 && elapsed < MIN_LOADING_VISIBLE_MS) не
+                // срабатывала: код проваливался в else-ветку и прятал кнопку
+                // немедленно, ещё до единого отрисованного кадра кольца. Выставляем
+                // buttonState=1 и стартуем таймер ДО вызова loadFile() — тогда даже
+                // синхронный колбэк застаёт buttonState уже равным 1.
+                buttonState = 1;
+                loadingStartedAt = System.currentTimeMillis();
+                radialProgress.setProgress(0, false);
+                radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, true);
+                invalidate();
                 FileLoader.getInstance(currentAccount).loadFile(
                     ImageLocation.getForObject(photoSize, parentObject), parentObject, null,
                     FileLoader.PRIORITY_NORMAL, 0
@@ -2532,14 +2553,9 @@ public class PotokFeedPostCell extends LinearLayout {
                 // формально ещё не считается "грузящимся" (та же гонка, что уже чинили
                 // в VideoDownloadPlate.onClick() ранее) — из-за неё кнопка визуально
                 // не реагировала на тап ("как будто нажимаю на кирпич"), хотя загрузка
-                // реально стартовала. Выставляем buttonState=1 сразу оптимистично —
+                // реально стартовала. buttonState=1 выставлен заранее (см. выше) —
                 // дальнейшие реальные апдейты придут через onProgressDownload/
                 // onSuccessDownload и просто подтвердят то же самое состояние.
-                buttonState = 1;
-                loadingStartedAt = System.currentTimeMillis();
-                radialProgress.setProgress(0, false);
-                radialProgress.setIcon(MediaActionDrawable.ICON_CANCEL, false, true);
-                invalidate();
             } else if (buttonState == 1) {
                 FileLoader.getInstance(currentAccount).cancelLoadFile(photoSize);
                 updateState(true);

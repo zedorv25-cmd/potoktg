@@ -255,15 +255,26 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // getTitleTextView(), не через глобальный AndroidUtilities.bold() — весь
         // остальной интерфейс (включая другие заголовки) остаётся на оригинальном
         // шрифте Telegram, как того требует правило проекта "копировать 1:1".
+        // Кастомный шрифт заголовка — Avenir Black (жирное начертание), по просьбе
+        // пользователя. ВАЖНО: Avenir — платный лицензионный шрифт (Linotype/
+        // Monotype), ассистент не может ни сгенерировать, ни скачать сам файл —
+        // его должен предоставить пользователь (например, .ttf/.otf с личным
+        // лицензионным экземпляром). Ожидаемый путь ниже. Раньше здесь стояла
+        // ссылка на "fonts/poppins_bold.ttf" — этого файла в assets НЕ было
+        // физически, попытка загрузки всегда падала в catch, и заголовок всё это
+        // время рисовался обычным жирным шрифтом Telegram (AndroidUtilities.bold())
+        // без пользователя заметно об этом — теперь хотя бы честно логируется.
         try {
             android.graphics.Typeface typefeedFont = android.graphics.Typeface.createFromAsset(
-                context.getAssets(), "fonts/poppins_bold.ttf"
+                context.getAssets(), "fonts/avenir_black.ttf"
             );
             if (actionBar.getTitleTextView() != null) {
                 actionBar.getTitleTextView().setTypeface(typefeedFont);
             }
         } catch (Exception e) {
-            PotokDebugLog.log("PotokFeedLogo", "typefeed: не удалось загрузить кастомный шрифт: " + e.getMessage());
+            // Файл fonts/avenir_black.ttf не найден в assets — заголовок остаётся
+            // на дефолтном жирном шрифте Telegram, пока файл не будет добавлен.
+            PotokDebugLog.log("PotokFeedLogo", "typefeed: fonts/avenir_black.ttf не найден в assets, использован дефолтный шрифт: " + e.getMessage());
         }
 
         ActionBarMenu menu = actionBar.createMenu();

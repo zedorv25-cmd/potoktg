@@ -12,6 +12,7 @@ import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
 import android.graphics.Matrix;
@@ -181,6 +182,31 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
     private StoriesUtilities.EnsureStoryFileLoadedObject globalCancelable;
     private float menuItemsOffset;
 
+    // ФИКС логотипа Telegram в свёрнутом состоянии полосы историй (см. комментарий
+    // у telegramLogoView в конструкторе) — рендерим "typefeed" шрифтом
+    // avenir_black.ttf в битмап белым цветом (под последующий MULTIPLY-тонинг).
+    // Разрешение битмапа заведомо выше конечного размера вьюхи (90x22dp) — ImageView
+    // со ScaleType.CENTER_INSIDE сам аккуратно впишет его без размытия на плотных
+    // экранах.
+    private static Bitmap createTypefeedLogoBitmap(Context context) {
+        final int w = dp(180), h = dp(44);
+        Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(0xFFFFFFFF);
+        try {
+            paint.setTypeface(android.graphics.Typeface.createFromAsset(context.getAssets(), "fonts/avenir_black.ttf"));
+        } catch (Exception e) {
+            paint.setTypeface(AndroidUtilities.bold());
+        }
+        paint.setTextSize(dp(30));
+        Paint.FontMetrics fm = paint.getFontMetrics();
+        float textWidth = paint.measureText("typefeed");
+        float x = (w - textWidth) / 2f;
+        float y = h / 2f - (fm.ascent + fm.descent) / 2f;
+        canvas.drawText("typefeed", x, y, paint);
+        return bitmap;
+    }
     public DialogStoriesCell(@NonNull Context context, BaseFragment fragment, int currentAccount, int type) {
         super(context);
         this.type = type;
@@ -371,7 +397,22 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
         telegramLogoView = new ImageView(context);
         telegramLogoView.setContentDescription(getString(R.string.AppName));
         telegramLogoView.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        telegramLogoView.setImageResource(R.drawable.telegram_logo_2);
+        // ФИКС "в свёрнутом состоянии полосы историй виден старый логотип Telegram":
+        // раньше здесь была статичная векторная картинка telegram_logo_2.xml
+        // (слово "Telegram", отрисованное как SVG-путь) — независимая от заголовка
+        // actionBar.getTitleTextView() в DialogsActivity (который мы там уже
+        // поправили на текст "typefeed" + Avenir Black), поэтому фикс сюда не
+        // доходил. Векторного файла с текстом "typefeed" нет (это платный шрифт,
+        // который нельзя просто нарисовать SVG-путями без reverse-engineering
+        // каждой буквы) — вместо этого рисуем "typefeed" тем же самым
+        // avenir_black.ttf в битмап во время создания вьюхи и подставляем его как
+        // картинку. Цвет текста — БЕЛЫЙ (не бренд-цвета): ниже по коду (и при
+        // смене темы, см. onThemeChanged) применяется setColorFilter(..., MULTIPLY)
+        // поверх этой картинки — тот же механизм, что и у оригинального лого,
+        // рассчитанный именно на светлый/белый исходник, который перекрашивается
+        // под тему. Если исходник вместо этого будет уже цветным, MULTIPLY даст
+        // неправильный результат.
+        telegramLogoView.setImageBitmap(createTypefeedLogoBitmap(context));
         telegramLogoView.setColorFilter(getTextLogoColor(), PorterDuff.Mode.MULTIPLY);
         telegramLogoView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         telegramLogoView.setFocusableInTouchMode(true);

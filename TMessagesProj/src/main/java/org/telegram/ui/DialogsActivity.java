@@ -3458,6 +3458,21 @@ public boolean onTouchEvent(MotionEvent ev) {
                             context.getAssets(), "fonts/avenir_black.ttf");
                     if (actionBar.getTitleTextView() != null) {
                         actionBar.getTitleTextView().setTypeface(typefeedFont);
+                        // ДИАГНОСТИКА "шрифт заголовка typefeed на главном экране — не
+                        // Avenir Black": по коду загрузка шрифта и применение должны
+                        // отрабатывать без ошибок (см. try/catch), но пользователь
+                        // визуально видит другой шрифт. Логируем УСПЕШНОЕ применение
+                        // явно (раньше логировался только сбой в catch) — если этот
+                        // лог появится, значит код точно отработал и typeface
+                        // применился на view, а расхождение нужно искать в другом
+                        // месте (например, что-то СБРАСЫВАЕТ typeface обратно уже
+                        // ПОСЛЕ этой строки — при обновлении темы/пересоздании
+                        // actionBar и т.п.). Если лога НЕ будет вообще — значит этот
+                        // блок кода в реальности не выполняется на устройстве, и
+                        // проблема на уровне "какая сборка реально установлена".
+                        PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: avenir_black.ttf успешно применён на titleTextView, typeface=" + typefeedFont);
+                    } else {
+                        PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: actionBar.getTitleTextView() == null, применить typeface некуда");
                     }
                 } catch (Exception e) {
                     PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: fonts/avenir_black.ttf не найден в assets, использован дефолтный шрифт: " + e.getMessage());

@@ -13,6 +13,7 @@ import android.opengl.GLES31;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
+import org.telegram.ui.PotokDebugLog;
 import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
@@ -221,6 +222,18 @@ public class SpoilerEffect2 {
         // Точка опоры (0,0) вместо центра — растянутый бокс теперь всегда
         // начинается в (0,0) и гарантированно покрывает весь (w,h), независимо от
         // соотношения размеров.
+        // ДИАГНОСТИКА "частицы спойлера всё ещё не доходят до низа у высоких
+        // карточек (хотя блюр от img — доходит)": несмотря на фикс точки опоры
+        // масштабирования выше, баг воспроизводится снова. Логируем реальные числа
+        // ПЕРЕД веткой масштабирования — раз в сборке нет компилятора для реальной
+        // проверки, нужны факты с устройства, а не ещё одна догадка поверх
+        // предыдущей.
+        if (w > ow || h > oh) {
+            PotokDebugLog.d("SPOILER_SIZE", "scale-branch: ow=" + ow + " oh=" + oh
+                + " w=" + w + " h=" + h + " scale=" + Math.max(w / (float) ow, h / (float) oh));
+        } else {
+            PotokDebugLog.d("SPOILER_SIZE", "no-scale-branch: ow=" + ow + " oh=" + oh + " w=" + w + " h=" + h);
+        }
         if (w > ow || h > oh) {
             final float scale = Math.max(w / (float) ow, h / (float) oh);
             canvas.scale(scale, scale, 0, 0);

@@ -1783,6 +1783,14 @@ public class PotokFeedPostCell extends LinearLayout {
                 // -> onRevealed callback ниже), ячейка перебиндивается
                 // (notifyItemChanged) и spoilerActive становится false — тогда сюда
                 // попадает обычный, уже НЕ заблюренный фильтр.
+                // Сохраняем ЧИСТЫЕ (без "_b2") версии фильтров ДО мутации ниже — они
+                // нужны позже, в onRevealed callback (см. конец видео-ветки), чтобы
+                // после снятия спойлера показать/заиграть видео уже без блюра. Сама
+                // переменная currentPhotoFilter/currentPhotoFilterThumb ниже МУТИРУЕТСЯ
+                // (дописывается "_b2"), если спойлер активен на момент этого bind —
+                // просто переиспользовать её после реворота статуса спойлера нельзя.
+                final String sharpMainFilter = currentPhotoFilter;
+                final String sharpThumbFilterCaptured = currentPhotoFilterThumb;
                 if (spoilerActive) {
                     currentPhotoFilter = currentPhotoFilter + "_b2";
                     currentPhotoFilterThumb = currentPhotoFilterThumb + "_b2";
@@ -1854,25 +1862,28 @@ public class PotokFeedPostCell extends LinearLayout {
                 // currentPhotoObject/currentPhotoObjectThumb по какой-то причине не
                 // догружаются, на экране надолго остаётся именно он, растянутый на
                 // всю ширину поста (тиньк-картинка растянутая до ~1080px и выглядит
-                // блюром/пикселями, даже с одним слабым проходом фильтра). Лог ниже
-                // покажет для ЛЮБОГО отслеживаемого канала, какая именно ветка
-                // setImage сработала и догрузился ли currentPhotoObject.
-                if (isTrackedChannelDbg) {
-                    PotokDebugLog.d("BLUR", "VIDEO/GIF post=" + mo.getId()
-                        + " channel=[" + channelTitleDbg + "]"
-                        + " canDecodeFromVideo=" + canDecodeFromVideo
-                        + " fileExists=" + fileExists
-                        + " videoAutoload=" + videoAutoload
-                        + " currentPhotoObject=" + (currentPhotoObject != null
-                            ? (currentPhotoObject.w + "x" + currentPhotoObject.h) : "null")
-                        + " currentPhotoObjectThumb=" + (currentPhotoObjectThumb != null
-                            ? (currentPhotoObjectThumb.w + "x" + currentPhotoObjectThumb.h) : "null")
-                        + " strippedThumb=" + (strippedThumb != null)
-                        + " branch=" + (canDecodeFromVideo ? "DECODE_VIDEO"
-                            : (!videoAutoload && !fileExists) ? "THUMB_ONLY_NO_AUTOLOAD"
-                            : (currentPhotoObjectThumb != null || strippedThumb != null) ? "THUMB_PLUS_FULL"
-                            : "FULL_ONLY"));
-                }
+                // блюром/пикселями, даже с одним слабым проходом фильтра).
+                // ВАЖНО: раньше лог был обёрнут в "if (isTrackedChannelDbg)" — то же
+                // условие, что и для СОВСЕМ ДРУГОЙ задачи (сравнение силы блюра ФОТО
+                // между двумя конкретными каналами). Проблема с видео/гиф НИКАК не
+                // привязана именно к этим двум каналам, поэтому лог физически не мог
+                // появиться, если тестовое видео было из любого другого канала — а
+                // это и объясняет, почему лога не было ни разу за 8-9 попыток. Теперь
+                // логируем для ЛЮБОГО видео/гиф без привязки к каналу.
+                PotokDebugLog.d("BLUR", "VIDEO/GIF post=" + mo.getId()
+                    + " channel=[" + channelTitleDbg + "]"
+                    + " canDecodeFromVideo=" + canDecodeFromVideo
+                    + " fileExists=" + fileExists
+                    + " videoAutoload=" + videoAutoload
+                    + " currentPhotoObject=" + (currentPhotoObject != null
+                        ? (currentPhotoObject.w + "x" + currentPhotoObject.h) : "null")
+                    + " currentPhotoObjectThumb=" + (currentPhotoObjectThumb != null
+                        ? (currentPhotoObjectThumb.w + "x" + currentPhotoObjectThumb.h) : "null")
+                    + " strippedThumb=" + (strippedThumb != null)
+                    + " branch=" + (canDecodeFromVideo ? "DECODE_VIDEO"
+                        : (!videoAutoload && !fileExists) ? "THUMB_ONLY_NO_AUTOLOAD"
+                        : (currentPhotoObjectThumb != null || strippedThumb != null) ? "THUMB_PLUS_FULL"
+                        : "FULL_ONLY"));
                 if (canDecodeFromVideo) {
                     // Бесшумное инлайн-автовоспроизведение кэшированного видео — как GIF,
                     // точная копия ветки DOCUMENT_ATTACH_TYPE_VIDEO из оригинального
@@ -1960,11 +1971,61 @@ public class PotokFeedPostCell extends LinearLayout {
                         }
                     });
                 });
-            } else {
-                holder.playIndicator.setVisibility(GONE);
-                holder.downloadPlate.setVisibility(GONE);
-                holder.downloadPlate.unbind();
-                // Фото — стандартный путь
+
+                // СПОЙЛЕР + ВИДЕО/GIF, снятие: раньше единственным способом "ожить"
+                // после тапа-снятия был notifyItemChanged(holder.getAdapterPosition())
+                // из общего callback'а bind() (см. начало onBindViewHolder) —
+                // адаптерная позиция в момент тапа теоретически может быть
+                // невалидна (RecyclerView.NO_POSITION) в каких-то граничных
+                // случаях, и тогда перебиндивания просто не происходило — кадр
+                // оставался зависшим статичным/заблюренным навсегда, ровно как
+                // сообщал пользователь. Ниже — прямой обработчик: не полагается на
+                // позицию в адаптере вообще, все нужные объекты (img, document, mo,
+                // currentPhotoObject/Thumb, strippedThumb, holder) уже захвачены из
+                // замыкания напрямую. Пересчитывает актуальное состояние (файл мог
+                // докачаться за время, пока спойлер был активен) и либо запускает
+                // автовоспроизведение, либо показывает чёткий (без "_b2") статичный
+                // кадр — на выбор, в зависимости от того, можно ли уже стримить.
+                final TLRPC.PhotoSize sharpThumbObj = currentPhotoObjectThumb;
+                final TLRPC.PhotoSize sharpPhotoObj = currentPhotoObject;
+                final BitmapDrawable sharpStripped = strippedThumb;
+                holder.spoilerOverlay.setOnRevealed(() -> {
+                    java.io.File freshCacheFile = FileLoader.getInstance(mo.currentAccount).getPathToAttach(document, false);
+                    boolean freshFileExists = freshCacheFile != null && freshCacheFile.exists();
+                    boolean freshCanDecode = !mo.isRepostPreview && freshFileExists && mo.canStreamVideo();
+                    if (freshCanDecode) {
+                        img.getImageReceiver().setAllowDecodeSingleFrame(true);
+                        img.getImageReceiver().setAllowStartAnimation(true);
+                        holder.lastAutoplayDocumentId = document.id;
+                        img.getImageReceiver().setImage(
+                            ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER,
+                            ImageLocation.getForObject(sharpPhotoObj, document), sharpMainFilter,
+                            ImageLocation.getForObject(sharpThumbObj, document), sharpThumbFilterCaptured,
+                            sharpStripped, document.size, (String) null, mo, 0
+                        );
+                        img.getImageReceiver().startAnimation();
+                        holder.playIndicator.setVisibility(GONE);
+                        holder.downloadPlate.setVisibility(GONE);
+                    } else {
+                        img.setImage(
+                            ImageLocation.getForObject(sharpPhotoObj, document), sharpMainFilter,
+                            ImageLocation.getForObject(sharpThumbObj, document), sharpThumbFilterCaptured,
+                            (ImageLocation) null, (String) null,
+                            (String) null, 0, 0, mo
+                        );
+                    }
+                    // Плюс обычный notifyItemChanged как второй, подстраховочный
+                    // путь — синхронизирует остальное состояние ячейки (плашки,
+                    // индикаторы), если адаптерная позиция всё же валидна.
+                    int pos = holder.getAdapterPosition();
+                    if (pos != RecyclerView.NO_POSITION && carouselAdapter != null) {
+                        carouselView.post(() -> {
+                            if (carouselAdapter != null) {
+                                notifyItemChanged(pos);
+                            }
+                        });
+                    }
+                });
                 ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;
                 TLRPC.PhotoSize photoSizeClosest = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
                 // Раньше здесь было "if (photoSize == null) photoSize = ...;" —
@@ -2779,6 +2840,15 @@ public class PotokFeedPostCell extends LinearLayout {
             revealProgress = (mo != null && mo.isSpoilersRevealed) ? 1f : 0f;
             updateEffect();
             updateVisibility();
+        }
+
+        // Позволяет ЗАМЕНИТЬ/дополнить callback снятия спойлера уже ПОСЛЕ основного
+        // bind() — используется, чтобы дать прямой (не через notifyItemChanged/
+        // adapterPosition, который в момент тапа теоретически может быть невалиден)
+        // перерендер img с уже правильными (незаблюренными) фильтрами конкретно для
+        // этого holder'а. См. использование в CarouselAdapter.onBindViewHolder.
+        void setOnRevealed(Runnable onRevealedCallback) {
+            onRevealed = onRevealedCallback;
         }
 
         void unbind() {

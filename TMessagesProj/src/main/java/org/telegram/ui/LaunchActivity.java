@@ -9381,7 +9381,7 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                         BaseFragment top = mainFragmentsStack.get(mainFragmentsStack.size() - 1);
                         if (top instanceof MainTabsActivity) {
                             isOnChatsTab = ((MainTabsActivity) top).getCurrentPosition() == MainTabsActivity.POSITION_CHATS;
-                        } else if (top instanceof DialogsActivity) {
+                        } else if (top instanceof DialogsActivity && !((DialogsActivity) top).isArchive()) {
                             isOnChatsTab = true;
                         }
                     }

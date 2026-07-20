@@ -208,7 +208,7 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
         // (небольшой отступ сверху/снизу под выносные элементы букв), а ширина канваса
         // считается ПОСЛЕ измерения реальной ширины текста — без лишних пустых полей
         // по бокам, которые тоже "съедали" эффективный размер при вписывании в бокс.
-        float textSize = targetH * 0.82f;
+        float textSize = targetH * 0.902f;
         paint.setTextSize(textSize);
         float textWidth = paint.measureText("typefeed");
         final int hPad = dp(4);

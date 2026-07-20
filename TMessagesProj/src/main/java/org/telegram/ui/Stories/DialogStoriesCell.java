@@ -189,9 +189,10 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
     // со ScaleType.CENTER_INSIDE сам аккуратно впишет его без размытия на плотных
     // экранах.
     private static Bitmap createTypefeedLogoBitmap(Context context) {
-        final int w = dp(180), h = dp(44);
-        Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        Canvas canvas = new Canvas(bitmap);
+        // Вьюха-контейнер telegramLogoView — 90x22dp (см. addView ниже). Рендерим в
+        // 2x от этого размера для чёткости на плотных экранах, ScaleType.CENTER_INSIDE
+        // потом впишет обратно без искажений.
+        final int targetH = dp(22) * 2; // 44dp-экв.
         Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         paint.setColor(0xFFFFFFFF);
         try {
@@ -199,10 +200,24 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
         } catch (Exception e) {
             paint.setTypeface(AndroidUtilities.bold());
         }
-        paint.setTextSize(dp(30));
-        Paint.FontMetrics fm = paint.getFontMetrics();
+        // РАНЬШЕ текст рисовался мелким textSize относительно большого фиксированного
+        // канваса (180x44dp) — вокруг текста оставалось много пустого места, из-за
+        // чего после масштабирования в маленькую вьюху (90x22dp) буквы выглядели
+        // мельче и тоньше, чем в остальных местах (иконка, обычный заголовок). Теперь
+        // размер шрифта подобран так, чтобы почти полностью заполнять высоту канваса
+        // (небольшой отступ сверху/снизу под выносные элементы букв), а ширина канваса
+        // считается ПОСЛЕ измерения реальной ширины текста — без лишних пустых полей
+        // по бокам, которые тоже "съедали" эффективный размер при вписывании в бокс.
+        float textSize = targetH * 0.82f;
+        paint.setTextSize(textSize);
         float textWidth = paint.measureText("typefeed");
-        float x = (w - textWidth) / 2f;
+        final int hPad = dp(4);
+        final int w = Math.round(textWidth) + hPad * 2;
+        final int h = targetH;
+        Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        Paint.FontMetrics fm = paint.getFontMetrics();
+        float x = hPad;
         float y = h / 2f - (fm.ascent + fm.descent) / 2f;
         canvas.drawText("typefeed", x, y, paint);
         return bitmap;

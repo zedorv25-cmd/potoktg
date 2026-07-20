@@ -1392,6 +1392,26 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
 
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
+        // ДИАГНОСТИКА "свайп вправо в архиве открывает шторку вместо возврата
+        // назад": прошлый лог (внутри ACTION_MOVE-ветки, за несколькими условиями)
+        // ни разу не сработал за несколько тестов — значит событие свайпа либо не
+        // доходит до onTouchEvent() этого класса вообще, либо обрывается на одном
+        // из внешних условий ДО того места. Логируем самый верх метода безусловно
+        // на ACTION_DOWN — минимум это покажет, доходит ли событие сюда в принципе
+        // и что показывают checkTransitionAnimation()/inActionMode/
+        // animationInProgress/predictiveBackInProgress/fragmentsStack.size() в
+        // момент свайпа в архиве.
+        if (ev != null && ev.getAction() == MotionEvent.ACTION_DOWN) {
+            BaseFragment topFrag = !fragmentsStack.isEmpty() ? fragmentsStack.get(fragmentsStack.size() - 1) : null;
+            PotokDebugLog.d("DRAWER", "ActionBarLayout.onTouchEvent ACTION_DOWN"
+                + " fragmentsStackSize=" + fragmentsStack.size()
+                + " topFragment=" + (topFrag != null ? topFrag.getClass().getSimpleName() : "null")
+                + " checkTransitionAnimation=" + checkTransitionAnimation()
+                + " inActionMode=" + inActionMode
+                + " animationInProgress=" + animationInProgress
+                + " predictiveBackInProgress=" + predictiveBackInProgress
+                + " allowSwipe=" + allowSwipe());
+        }
         if (!checkTransitionAnimation() && !inActionMode && !animationInProgress && !predictiveBackInProgress) {
             if (fragmentsStack.size() > 1 && allowSwipe()) {
                 if (ev != null && ev.getAction() == MotionEvent.ACTION_DOWN) {

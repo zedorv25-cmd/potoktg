@@ -2026,6 +2026,15 @@ public class PotokFeedPostCell extends LinearLayout {
                         });
                     }
                 });
+            } else {
+                // ФИКС: раньше здесь не было "} else {" — весь код обработки ФОТО
+                // ниже физически находился ВНУТРИ условия "if (isVideo && ...)" и
+                // поэтому либо никогда не выполнялся (для настоящих фото-постов —
+                // отсюда пустые места вместо фото), либо выполнялся СРАЗУ ПОСЛЕ
+                // видео-кода для видео/гиф-постов и перезаписывал тот же img другим
+                // setImage()-вызовом, обнуляя только что запущенное
+                // автовоспроизведение (отсюда "видео зависает статичным кадром").
+                // Теперь это отдельная, полноценная else-ветка "медиа — фото".
                 ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;
                 TLRPC.PhotoSize photoSizeClosest = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
                 // Раньше здесь было "if (photoSize == null) photoSize = ...;" —

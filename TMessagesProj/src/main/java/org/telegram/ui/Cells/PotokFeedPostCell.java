@@ -1642,7 +1642,7 @@ public class PotokFeedPostCell extends LinearLayout {
                 holder.lastAutoplayDocumentId = 0;
                 int pos = holder.getAdapterPosition();
                 if (pos != RecyclerView.NO_POSITION) {
-                    notifyItemChanged(pos);
+                    safeNotifyItemChanged(pos);
                 }
             }
         }
@@ -1653,6 +1653,39 @@ public class PotokFeedPostCell extends LinearLayout {
             PotokDebugLog.d("GHOST", "carousel DETACH holder=" + System.identityHashCode(holder)
                 + " img=" + System.identityHashCode(holder.img)
                 + " isAnimation=" + (holder.img.getImageReceiver().getAnimation() != null));
+        }
+
+        // ФИКС КРАША "IllegalStateException: Cannot call this method while
+        // RecyclerView is computing a layout or scrolling": прошлый фикс уже
+        // откладывал notifyItemChanged() через carouselView.post(), но этого
+        // оказалось недостаточно — если карусель продолжает скроллиться/лейаутиться
+        // кадр за кадром (например, во время быстрого fling), то к моменту
+        // выполнения ОТЛОЖЕННОГО runnable'а она всё ещё может быть "in layout or
+        // scroll" (это подтверждено реальным стектрейсом краша: исключение вылетело
+        // ИЗНУТРИ уже отложенного через post() вызова). Это единая точка входа для
+        // всех notifyItemChanged() в этом адаптере: перед вызовом проверяем
+        // carouselView.isComputingLayout() — если true, переоткладываем себя ещё
+        // на кадр вперёд (а не вызываем в любом случае), и вдобавок оборачиваем сам
+        // notifyItemChanged() в try-catch как абсолютно последнюю страховку —
+        // если состояние всё равно не синхронизировалось по какой-то ещё не
+        // учтённой причине, пропускаем этот конкретный ребинд вместо краша всего
+        // приложения; следующий естественный bind (скролл/notifyDataSetChanged)
+        // всё равно подхватит актуальные данные.
+        private void safeNotifyItemChanged(int position) {
+            if (carouselView == null) {
+                return;
+            }
+            if (carouselView.isComputingLayout()) {
+                carouselView.post(() -> safeNotifyItemChanged(position));
+                return;
+            }
+            try {
+                notifyItemChanged(position);
+            } catch (IllegalStateException e) {
+                PotokDebugLog.d("CRASH", "safeNotifyItemChanged(" + position
+                    + ") подавил IllegalStateException (RecyclerView всё ещё в layout/scroll"
+                    + " несмотря на проверку isComputingLayout()): " + e);
+            }
         }
 
         @Override
@@ -1689,7 +1722,7 @@ public class PotokFeedPostCell extends LinearLayout {
             holder.spoilerOverlay.bind(mo, () -> {
                 int pos = holder.getAdapterPosition();
                 if (pos != RecyclerView.NO_POSITION) {
-                    notifyItemChanged(pos);
+                    safeNotifyItemChanged(pos);
                 }
             });
             // GIF в Telegram технически хранится как тот же немой зацикленный
@@ -1760,6 +1793,46 @@ public class PotokFeedPostCell extends LinearLayout {
                 // подключался — отсюда и "то сильно, то слабо" в зависимости от
                 // случайного наличия/отсутствия strippedThumb у конкретного поста.
                 BitmapDrawable strippedThumb = mo.strippedThumb;
+
+                // ФИКС "видео без спойлера стало пустым местом вместо превью":
+                // прошлый фикс обнулял currentPhotoObject/currentPhotoObjectThumb,
+                // когда это TL_photoStrippedSize (см. ниже) — это правильно устраняло
+                // блюр (см. ImageLoader.CacheOutTask, строка ~874: любой объект
+                // TL_photoStrippedSize, попавший в ImageLocation, блюрится ЖЁСТКО,
+                // фильтр из setImage() не учитывается вообще), НО заодно убирало
+                // единственное доступное превью целиком — у большинства видео в
+                // document.thumbs ЕДИНСТВЕННЫЙ элемент это как раз TL_photoStrippedSize
+                // (сервер ещё не сгенерировал/не прислал полноразмерный сетевой thumb).
+                // Решение: те же самые сырые байты декодируем САМИ, напрямую,
+                // МИНУЯ ImageLoader.CacheOutTask целиком (так же, как это делает
+                // MessageObject.createStrippedThumb() для strippedThumb выше) — но
+                // с ПУСТЫМ фильтром вместо жёстко зашитого там "b", поэтому blurBitmap()
+                // внутри getStrippedPhotoBitmap() не вызывается (см. ImageLoader.java:
+                // "if (filter.contains("b")) { Utilities.blurBitmap(...) }"). Результат —
+                // тот же самый маленький (обычно 40-50px) кадр видео, но резкий, без
+                // затемнения/блюра. Разрешение низкое, пока не докачается кадр
+                // побольше/не начнётся автовоспроизведение — это ожидаемо и лучше,
+                // чем пустое место.
+                BitmapDrawable sharpStrippedThumb = null;
+                if (!spoilerActive) {
+                    try {
+                        for (TLRPC.PhotoSize size : document.thumbs) {
+                            if (size instanceof TLRPC.TL_photoStrippedSize) {
+                                android.graphics.Bitmap sharpBmp = org.telegram.messenger.ImageLoader.getStrippedPhotoBitmap(
+                                    ((TLRPC.TL_photoStrippedSize) size).bytes, "");
+                                if (sharpBmp != null) {
+                                    sharpStrippedThumb = new BitmapDrawable(
+                                        org.telegram.messenger.ApplicationLoader.applicationContext.getResources(), sharpBmp);
+                                }
+                                break;
+                            }
+                        }
+                    } catch (Throwable e) {
+                        // декодирование крошечного превью не должно ронять бинд ячейки
+                        PotokDebugLog.d("VIDEO_THUMB", "post=" + mo.getId()
+                            + " sharpStrippedThumb decode failed: " + e);
+                    }
+                }
 
                 if (currentPhotoObject != null && (currentPhotoObject.w == 0 || currentPhotoObject.h == 0
                         || currentPhotoObject instanceof TLRPC.TL_photoStrippedSize)) {
@@ -2016,7 +2089,7 @@ public class PotokFeedPostCell extends LinearLayout {
                             ImageLocation.getForObject(currentPhotoObjectThumb, document), currentPhotoFilterThumb,
                             // Тот же фикс блюра, что и в ветках выше: strippedThumb
                             // только при активном спойлере, иначе null.
-                            spoilerActive ? strippedThumb : null, document.size, (String) null, mo, 0
+                            spoilerActive ? strippedThumb : sharpStrippedThumb, document.size, (String) null, mo, 0
                         );
                         img.getImageReceiver().startAnimation();
                     }
@@ -2036,7 +2109,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     img.setImage(
                         currentPhotoObjectThumb != null ? ImageLocation.getForObject(currentPhotoObjectThumb, document) : null, currentPhotoFilterThumb,
                         (ImageLocation) null, (String) null,
-                        spoilerActive ? strippedThumb : null, (String) null, 0, 0, mo
+                        spoilerActive ? strippedThumb : sharpStrippedThumb, (String) null, 0, 0, mo
                     );
                 } else if (currentPhotoObjectThumb != null || strippedThumb != null) {
                     // 10-param: mediaLocation, mediaFilter, imageLocation, imageFilter, thumbLocation, thumbFilter, ext, size, cacheType, parentObject
@@ -2053,7 +2126,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     img.setImage(
                         ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
                         (ImageLocation) null, (String) null,
-                        spoilerActive ? strippedThumb : null, (String) null, 0, 0, mo
+                        spoilerActive ? strippedThumb : sharpStrippedThumb, (String) null, 0, 0, mo
                     );
                 }
 
@@ -2074,19 +2147,14 @@ public class PotokFeedPostCell extends LinearLayout {
                     // увидит fileExists=true и покажет уже настоящий декодированный кадр.
                     // КРИТИЧНО: этот колбэк прилетает из DownloadController в произвольный
                     // момент — в том числе прямо во время скролла/layout-прохода самой
-                    // карусели (пользователь свайпает, пока видео докачивается). Прямой
-                    // notifyItemChanged() в такой момент — это классический
-                    // IllegalStateException ("Cannot call this method while RecyclerView is
-                    // computing a layout or scrolling"), который и был причиной краша:
-                    // кадр "подвисал" затемнённым на последнем отрисованном состоянии,
-                    // скролл переставал отвечать, дальше приложение вылетало. Откладываем
-                    // через post() на следующий цикл отрисовки — к этому моменту текущий
-                    // layout-проход уже завершён, вызывать notifyItemChanged() безопасно.
-                    carouselView.post(() -> {
-                        if (carouselAdapter != null) {
-                            notifyItemChanged(bindPosition);
-                        }
-                    });
+                    // карусели (пользователь свайпает, пока видео докачивается). Раньше
+                    // здесь был "carouselView.post(() -> notifyItemChanged(...))" — этого
+                    // оказалось недостаточно (реальный краш подтвердил: исключение вылетело
+                    // ИЗНУТРИ уже отложенного через post() вызова, когда карусель всё ещё
+                    // была "in layout or scroll" на момент выполнения). Теперь используем
+                    // safeNotifyItemChanged(), которая сама проверяет isComputingLayout()
+                    // и при необходимости переоткладывает себя ещё раз.
+                    safeNotifyItemChanged(bindPosition);
                 });
 
                 // СПОЙЛЕР + ВИДЕО/GIF, снятие: раньше единственным способом "ожить"
@@ -2140,11 +2208,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     // индикаторы), если адаптерная позиция всё же валидна.
                     int pos = holder.getAdapterPosition();
                     if (pos != RecyclerView.NO_POSITION && carouselAdapter != null) {
-                        carouselView.post(() -> {
-                            if (carouselAdapter != null) {
-                                notifyItemChanged(pos);
-                            }
-                        });
+                        safeNotifyItemChanged(pos);
                     }
                 });
             } else {

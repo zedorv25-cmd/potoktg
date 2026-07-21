@@ -1843,7 +1843,15 @@ public class PotokFeedPostCell extends LinearLayout {
                 // частиц. Пока спойлер активен, принудительно не пускаем в эту
                 // ветку — видео просто покажет статичный (заблюренный) кадр под
                 // спойлером, как и фото, до тапа.
-                boolean canDecodeFromVideo = !mo.isRepostPreview && fileExists && mo.canStreamVideo() && !spoilerActive;
+                // ФИКС "видео/гиф не воспроизводится, стоит с блюром": mo.canStreamVideo()
+                // проверяет флаг supports_streaming — он относится к проигрыванию ВО ВРЕМЯ
+                // докачки (частичный файл). Мы же уже требуем fileExists==true (файл
+                // ПОЛНОСТЬЮ в кэше) — для локального декодирования уже скачанного файла
+                // этот флаг не имеет значения и ошибочно блокировал автовоспроизведение
+                // для видео/гиф без этого флага (частый случай). Оставлена только проверка
+                // на зашифрованные документы (секретные чаты) вместо canStreamVideo().
+                boolean canDecodeFromVideo = !mo.isRepostPreview && fileExists
+                    && !(document instanceof TLRPC.TL_documentEncrypted) && !spoilerActive;
                 // Настройка "Скачивать видео" из меню трёх точек (по умолчанию включена).
                 // Если выключена и сам видеофайл ещё не докачан пользователем вручную —
                 // НЕ подгружаем даже полноразмерный статичный превью-кадр с сервера сам
@@ -1992,7 +2000,11 @@ public class PotokFeedPostCell extends LinearLayout {
                 holder.spoilerOverlay.setOnRevealed(() -> {
                     java.io.File freshCacheFile = FileLoader.getInstance(mo.currentAccount).getPathToAttach(document, false);
                     boolean freshFileExists = freshCacheFile != null && freshCacheFile.exists();
-                    boolean freshCanDecode = !mo.isRepostPreview && freshFileExists && mo.canStreamVideo();
+                    // Тот же фикс, что и у canDecodeFromVideo выше — canStreamVideo() тут
+                    // тоже не нужен, файл уже полностью в кэше (freshFileExists проверяет
+                    // именно это).
+                    boolean freshCanDecode = !mo.isRepostPreview && freshFileExists
+                        && !(document instanceof TLRPC.TL_documentEncrypted);
                     if (freshCanDecode) {
                         img.getImageReceiver().setAllowDecodeSingleFrame(true);
                         img.getImageReceiver().setAllowStartAnimation(true);

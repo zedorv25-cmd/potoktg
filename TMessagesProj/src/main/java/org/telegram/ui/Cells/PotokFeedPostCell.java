@@ -1627,6 +1627,24 @@ public class PotokFeedPostCell extends LinearLayout {
                 + " img=" + System.identityHashCode(holder.img)
                 + " hasBitmap=" + holder.img.getImageReceiver().hasBitmapImage()
                 + " isAnimation=" + (holder.img.getImageReceiver().getAnimation() != null));
+            // ФИКС "видео зависает/не воспроизводится после скролла туда-обратно":
+            // ImageReceiver освобождает decoded-анимацию при onDetachedFromWindow
+            // (экономия памяти), а guard lastAutoplayDocumentId (см. onBindViewHolder,
+            // ветка canDecodeFromVideo) намеренно НЕ вызывает повторно setImage+
+            // startAnimation() для того же document.id — это верно для обычного
+            // повторного bind'а БЕЗ смены видео, но ломается, если RecyclerView
+            // просто заново прикрепляет ту же вьюху БЕЗ нового onBindViewHolder
+            // (типичный сценарий быстрого скролла туда-обратно): анимация уже
+            // потеряна, а guard всё ещё думает, что видео "играет", и новый bind
+            // может вообще не случиться. Если видим именно такое рассогласование —
+            // сбрасываем guard и форсируем настоящий re-bind этой позиции.
+            if (holder.lastAutoplayDocumentId != 0 && holder.img.getImageReceiver().getAnimation() == null) {
+                holder.lastAutoplayDocumentId = 0;
+                int pos = holder.getAdapterPosition();
+                if (pos != RecyclerView.NO_POSITION) {
+                    notifyItemChanged(pos);
+                }
+            }
         }
 
         @Override

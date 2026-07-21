@@ -1741,13 +1741,21 @@ public class PotokFeedPostCell extends LinearLayout {
                         || currentPhotoObject instanceof TLRPC.TL_photoStrippedSize)) {
                     for (TLRPC.DocumentAttribute attr : document.attributes) {
                         if (attr instanceof TLRPC.TL_documentAttributeVideo) {
-                            if (currentPhotoObject instanceof TLRPC.TL_photoStrippedSize) {
-                                float scale = Math.max(attr.w, attr.h) / 50.0f;
-                                currentPhotoObject.w = (int) (attr.w / scale);
-                                currentPhotoObject.h = (int) (attr.h / scale);
-                            } else {
-                                currentPhotoObject.w = attr.w;
-                                currentPhotoObject.h = attr.h;
+                            // ФИКС КРАША: у свежесозданного видео сервер иногда ещё не
+                            // прислал реальные attr.w/attr.h (оба 0) — тогда
+                            // Math.max(0,0)/50f=0 и деление attr.w/scale=0/0=NaN,
+                            // (int)NaN=0. Не даём scale быть 0 — пропускаем присвоение
+                            // размеров вовсе, если attr.w/attr.h ещё не пришли, чтобы
+                            // ниже сработал безопасный плейсхолдер вместо фильтра "0_0".
+                            if (attr.w > 0 && attr.h > 0) {
+                                if (currentPhotoObject instanceof TLRPC.TL_photoStrippedSize) {
+                                    float scale = Math.max(attr.w, attr.h) / 50.0f;
+                                    currentPhotoObject.w = (int) (attr.w / scale);
+                                    currentPhotoObject.h = (int) (attr.h / scale);
+                                } else {
+                                    currentPhotoObject.w = attr.w;
+                                    currentPhotoObject.h = attr.h;
+                                }
                             }
                             break;
                         }
@@ -1756,6 +1764,25 @@ public class PotokFeedPostCell extends LinearLayout {
 
                 int pw = currentPhotoObject != null ? currentPhotoObject.w : AndroidUtilities.displaySize.x;
                 int ph = currentPhotoObject != null ? currentPhotoObject.h : AndroidUtilities.displaySize.x;
+                // ФИКС КРАША "видео из только что отправленного поста ломает приложение":
+                // у свежего видео (только что закинутого в канал) сервер иногда ещё не
+                // успевает прислать реальные attr.w/attr.h (документ уже есть, но метаданные
+                // ffprobe на стороне сервера ещё не готовы) — тогда выше scale=Math.max(0,0)/50f=0,
+                // и currentPhotoObject.w/h = (int)(0/0f) = (int)NaN = 0. С pw=0/ph=0 фильтр
+                // получается буквально "0_0" — ImageLoader пытается декодировать/смасштабировать
+                // битмап нулевого размера, что на части Android-версий бросает
+                // IllegalArgumentException необработанно (краш всего процесса — ровно то,
+                // что и было: открыл ленту сразу после публикации видео → вылет). Пока
+                // сервер не прислал реальные размеры, используем безопасный плейсхолдер-квадрат
+                // вместо 0 — как только метаданные подтянутся (следующий bind/notifyItemChanged),
+                // пересчитается корректно.
+                if (pw <= 0 || ph <= 0) {
+                    PotokDebugLog.d("CRASH", "post=" + mo.getId()
+                        + " video zero-size guard fired: attrW/H отсутствуют или равны 0,"
+                        + " подставлен safe-плейсхолдер вместо currentPhotoFilter=\"0_0\"");
+                    pw = AndroidUtilities.getPhotoSize();
+                    ph = AndroidUtilities.getPhotoSize();
+                }
                 String currentPhotoFilter = pw + "_" + ph;
                 // Фикс "разный блюр на разных постах": здесь раньше был суффикс "_b"
                 // (слабый блюр, 1 проход) — тот же баг, что уже чинили для фото (см.
@@ -1936,7 +1963,9 @@ public class PotokFeedPostCell extends LinearLayout {
                             ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER,
                             ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
                             ImageLocation.getForObject(currentPhotoObjectThumb, document), currentPhotoFilterThumb,
-                            strippedThumb, document.size, (String) null, mo, 0
+                            // Тот же фикс блюра, что и в ветках выше: strippedThumb
+                            // только при активном спойлере, иначе null.
+                            spoilerActive ? strippedThumb : null, document.size, (String) null, mo, 0
                         );
                         img.getImageReceiver().startAnimation();
                     }
@@ -1944,10 +1973,19 @@ public class PotokFeedPostCell extends LinearLayout {
                     // Автозагрузка выключена — только стрип-thumb/маленькая миниатюра,
                     // без полноразмерного превью. Тап по кадру (openMediaViewer, см. ниже)
                     // всё равно скачает и покажет видео целиком независимо от этой настройки.
+                    // ФИКС "блюр на видео без спойлера": strippedThumb печётся в
+                    // MessageObject.createStrippedThumb() с зашитым на уровне пикселей
+                    // блюром (фильтр "b" применяется прямо при декодировании байтов,
+                    // см. ImageLoader.getStrippedPhotoBitmap) — сам этот битмап ВСЕГДА
+                    // визуально заблюрен, независимо от currentPhotoFilterThumb (там
+                    // "_b2" добавляется только при spoilerActive). Раньше strippedThumb
+                    // передавался сюда безусловно — поэтому видео выглядело заблюренным
+                    // даже без спойлера, просто пока не докачалось полноразмерное превью.
+                    // Теперь передаём его только если спойлер реально активен.
                     img.setImage(
                         currentPhotoObjectThumb != null ? ImageLocation.getForObject(currentPhotoObjectThumb, document) : null, currentPhotoFilterThumb,
                         (ImageLocation) null, (String) null,
-                        strippedThumb, (String) null, 0, 0, mo
+                        spoilerActive ? strippedThumb : null, (String) null, 0, 0, mo
                     );
                 } else if (currentPhotoObjectThumb != null || strippedThumb != null) {
                     // 10-param: mediaLocation, mediaFilter, imageLocation, imageFilter, thumbLocation, thumbFilter, ext, size, cacheType, parentObject
@@ -1959,10 +1997,12 @@ public class PotokFeedPostCell extends LinearLayout {
                     );
                 } else {
                     // 9-param: imageLocation, imageFilter, thumbLocation, thumbFilter, thumb(Drawable), ext, size, cacheType, parentObject
+                    // Тот же фикс, что и в ветке выше: strippedThumb передаём только
+                    // если активен спойлер, иначе null — без встроенного блюра.
                     img.setImage(
                         ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
                         (ImageLocation) null, (String) null,
-                        strippedThumb, (String) null, 0, 0, mo
+                        spoilerActive ? strippedThumb : null, (String) null, 0, 0, mo
                     );
                 }
 

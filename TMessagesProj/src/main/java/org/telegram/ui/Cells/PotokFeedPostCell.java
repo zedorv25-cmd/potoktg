@@ -1698,7 +1698,31 @@ public class PotokFeedPostCell extends LinearLayout {
             // докачка, автовоспроизведение из кэша) обрабатывается идентично.
             // Раньше mo.isGif() нигде не проверялся, и такие посты не считались
             // медиа вообще (см. hasMedia-проверки выше) — GIF просто не отображался.
-            boolean isVideo = mo.isVideo() || mo.isGif();
+            // ФИКС "видео, отправленное в канал КАК ФАЙЛ, не отображается как видео":
+            // mo.isVideo()/isVideoDocument() смотрят ИСКЛЮЧИТЕЛЬНО на наличие атрибута
+            // TL_documentAttributeVideo — а когда видео отправляют именно "как файл"
+            // (не "как видео"), клиент-отправитель обычно СОЗНАТЕЛЬНО не прикладывает
+            // этот атрибут (это и есть разница между "видео" и "файл" на уровне
+            // протокола). Документ при этом всё равно honestly видео по содержимому
+            // (mime_type начинается с "video/") — просто без специальных метаданных.
+            // Раньше такие посты проваливались в ФОТО-ветку ниже: показывали только
+            // статичный кадр без плей-кнопки и автовоспроизведения. Добавлена
+            // подстраховка по MIME-типу — round-видеосообщения (кружки) отдельно
+            // исключены явно, у них своя, отдельная от карусели обработка.
+            boolean isVideoAsFile = false;
+            if (!mo.isVideo() && !mo.isGif() && media instanceof TLRPC.TL_messageMediaDocument
+                    && media.document != null && media.document.mime_type != null
+                    && media.document.mime_type.startsWith("video/")) {
+                boolean isRoundMessage = false;
+                for (TLRPC.DocumentAttribute attr : media.document.attributes) {
+                    if (attr instanceof TLRPC.TL_documentAttributeVideo && attr.round_message) {
+                        isRoundMessage = true;
+                        break;
+                    }
+                }
+                isVideoAsFile = !isRoundMessage;
+            }
+            boolean isVideo = mo.isVideo() || mo.isGif() || isVideoAsFile;
             // Спойлер + блюр (и для фото, и для видео/GIF): пока спойлер не снят,
             // финальное изображение должно оставаться заблюренным ДАЖЕ ПОСЛЕ полной
             // загрузки в кэш — обычная (не-спойлерная) прогрузка убирает блюр по
@@ -1759,6 +1783,33 @@ public class PotokFeedPostCell extends LinearLayout {
                             }
                             break;
                         }
+                    }
+                }
+
+                // ГЛАВНЫЙ ФИКС "блюр на видео не уходит": ImageLoader.CacheOutTask.run()
+                // (см. ImageLoader.java, строка ~874) содержит ЖЁСТКО ЗАШИТУЮ проверку
+                // "if (photoSize instanceof TL_photoStrippedSize) { getStrippedPhotoBitmap(
+                // bytes, "b") }" — если объект превью, который мы передаём в setImage(),
+                // САМ является TL_photoStrippedSize (протокольная мини-картинка, встроенная
+                // прямо в байты сообщения), ImageLoader принудительно блюрит её ВСЕГДА,
+                // ПОЛНОСТЬЮ ИГНОРИРУЯ переданный нами currentPhotoFilter/currentPhotoFilterThumb.
+                // Блок выше только досчитывал currentPhotoObject.w/h для такого объекта, но
+                // НЕ менял его тип — объект как был TL_photoStrippedSize, так им и остаётся,
+                // и попадает в этот блюр-путь в обход любых наших фильтров. Это и есть причина,
+                // почему предыдущий фикс (уборка "_b2" из фильтра и strippedThumb-заглушки)
+                // блюр не убрал до конца: сам currentPhotoObject/currentPhotoObjectThumb
+                // оставался TL_photoStrippedSize.
+                // Для видео БЕЗ спойлера это нежелательно — обнуляем такие объекты вместо
+                // использования (в setImage() ниже отсутствие currentPhotoObject/Thumb просто
+                // означает "показывать нечего, пока не докачается/не придёт нормальный
+                // PhotoSize с сервера" — это лучше персистентного блюра). Для спойлера
+                // (spoilerActive) блюр как раз нужен — там оставляем как есть.
+                if (!spoilerActive) {
+                    if (currentPhotoObject instanceof TLRPC.TL_photoStrippedSize) {
+                        currentPhotoObject = null;
+                    }
+                    if (currentPhotoObjectThumb instanceof TLRPC.TL_photoStrippedSize) {
+                        currentPhotoObjectThumb = null;
                     }
                 }
 
@@ -2105,6 +2156,16 @@ public class PotokFeedPostCell extends LinearLayout {
                 // setImage()-вызовом, обнуляя только что запущенное
                 // автовоспроизведение (отсюда "видео зависает статичным кадром").
                 // Теперь это отдельная, полноценная else-ветка "медиа — фото".
+                // ФИКС "иконка плей/загрузки на фото-постах": playIndicator и
+                // downloadPlate относятся только к видео-ветке выше и никогда не
+                // трогаются здесь — при переиспользовании ViewHolder'а RecyclerView'ом
+                // (тот же holder раньше показывал видео, теперь показывает фото)
+                // они оставались VISIBLE от предыдущего bind'а. unbind() у
+                // downloadPlate теперь тоже сам прячет себя (см. VideoDownloadPlate),
+                // но дублируем здесь явно — на случай перебиндинга в обход
+                // onViewRecycled (например, через notifyItemChanged на тот же holder).
+                holder.playIndicator.setVisibility(GONE);
+                holder.downloadPlate.unbind();
                 ArrayList<TLRPC.PhotoSize> sizes = mo.photoThumbs;
                 TLRPC.PhotoSize photoSizeClosest = FileLoader.getClosestPhotoSizeWithSize(sizes, 1280, false, null, true);
                 // Раньше здесь было "if (photoSize == null) photoSize = ...;" —
@@ -2442,6 +2503,14 @@ public class PotokFeedPostCell extends LinearLayout {
             document = null;
             fileName = null;
             onReady = null;
+            // ФИКС "плей/загрузка на фото-постах": unbind() раньше только отписывался
+            // от DownloadController, но НЕ прятал саму плашку — при переиспользовании
+            // ViewHolder'а RecyclerView'ом (видео-пост -> фото-пост в том же holder'е)
+            // плашка оставалась VISIBLE с текстом/иконкой от предыдущего видео,
+            // потому что фото-ветка onBindViewHolder никогда её не трогает вообще
+            // (она относится только к видео). Теперь unbind() гарантированно прячет
+            // себя — фото-ветка сама явно не обязана об этом знать.
+            setVisibility(GONE);
         }
 
         private void updateState(boolean animated) {

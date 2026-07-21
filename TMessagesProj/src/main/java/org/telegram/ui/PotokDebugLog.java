@@ -136,15 +136,33 @@ public class PotokDebugLog {
      * обработчик — чтобы поведение самого Telegram/системы на краше не менялось.
      * Безопасно вызывать несколько раз — повторные вызовы игнорируются.
      */
+    // ФИКС "краш происходит, но в логах его не видно": installCrashHandler и раньше
+    // ловил исключение и писал его через d() — НО d() кладёт строку только в
+    // in-memory ArrayDeque (см. поле lines выше). При фатальном необработанном
+    // исключении сразу ПОСЛЕ этого вызова происходит previous.uncaughtException(),
+    // который убивает процесс — вся оперативная память, включая этот буфер,
+    // исчезает вместе с ним ДО того, как пользователь успевает открыть экран
+    // логов. Именно поэтому после каждого краша буфер оказывался чистым/обычным,
+    // как будто краша не было вообще. Теперь стектрейс СНАЧАЛА синхронно
+    // записывается в файл на диске (переживает смерть процесса), а при следующем
+    // запуске приложения (см. вызов loadPendingCrashIfAny ниже) этот файл
+    // читается и его содержимое подставляется в начало буфера — так его можно
+    // увидеть тем же способом (долгое нажатие на "Контакты"), что и обычные логи.
+    private static final String CRASH_FILE_NAME = "potok_last_crash.txt";
+
     public static synchronized void installCrashHandler(Context context) {
         if (crashHandlerInstalled) {
             return;
         }
         crashHandlerInstalled = true;
+        final Context appContext = context != null ? context.getApplicationContext() : null;
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             try {
-                d("CRASH", "Uncaught in thread " + thread.getName() + ": " + Log_getStackTraceString(throwable));
+                String text = fmt.format(new Date()) + " [CRASH] Uncaught in thread "
+                    + thread.getName() + ": " + Log_getStackTraceString(throwable);
+                d("CRASH", text);
+                writeCrashFile(appContext, text);
             } catch (Throwable ignore) {
                 // никогда не даём диагностике сломать доставку краша дальше
             }
@@ -152,6 +170,57 @@ public class PotokDebugLog {
                 previous.uncaughtException(thread, throwable);
             }
         });
+        // При установке хендлера (т.е. при запуске приложения) сразу проверяем,
+        // не остался ли файл краша с прошлого запуска — если да, подгружаем его
+        // в буфер первыми строками и удаляем файл, чтобы не показывать повторно.
+        loadPendingCrashIfAny(appContext);
+    }
+
+    private static void writeCrashFile(Context context, String text) {
+        if (context == null) {
+            return;
+        }
+        try (java.io.FileOutputStream fos = context.openFileOutput(CRASH_FILE_NAME, Context.MODE_PRIVATE)) {
+            fos.write(text.getBytes("UTF-8"));
+            fos.flush();
+            fos.getFD().sync();
+        } catch (Throwable ignore) {
+            // диагностика не должна мешать доставке краша дальше
+        }
+    }
+
+    private static synchronized void loadPendingCrashIfAny(Context context) {
+        if (context == null) {
+            return;
+        }
+        java.io.File f = new java.io.File(context.getFilesDir(), CRASH_FILE_NAME);
+        if (!f.exists()) {
+            return;
+        }
+        try {
+            StringBuilder sb = new StringBuilder();
+            try (java.io.BufferedReader br = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    sb.append(line).append('\n');
+                }
+            }
+            // ВАЖНО: addFirst() в порядке чтения перевернул бы строки задом
+            // наперёд — вставляем в обратном порядке итерации, чтобы после
+            // всех addFirst() строки читались сверху вниз в исходной
+            // последовательности (маркер должен оказаться самым первым).
+            String[] crashLines = sb.toString().split("\n");
+            for (int i = crashLines.length - 1; i >= 0; i--) {
+                lines.addFirst(crashLines[i]);
+            }
+            lines.addFirst("════════ КРАШ С ПРОШЛОГО ЗАПУСКА (ниже) ════════");
+        } catch (Throwable ignore) {
+            // не даём падению чтения краш-файла сломать запуск приложения
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+        }
     }
 
     private static String Log_getStackTraceString(Throwable t) {

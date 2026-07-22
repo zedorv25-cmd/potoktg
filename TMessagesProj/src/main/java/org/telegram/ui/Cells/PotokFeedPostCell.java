@@ -1813,8 +1813,13 @@ public class PotokFeedPostCell extends LinearLayout {
                 // затемнения/блюра. Разрешение низкое, пока не докачается кадр
                 // побольше/не начнётся автовоспроизведение — это ожидаемо и лучше,
                 // чем пустое место.
+                // ФИКС "снятие спойлера топорное": теперь img ВСЕГДА должен быть готов
+                // показать резкое содержимое (даже пока спойлер активен) — во время
+                // круговой reveal-анимации растущий круг на SpoilerOverlay открывает
+                // именно img снизу, и там не должно быть пусто. Раньше это декодировалось
+                // только при !spoilerActive.
                 BitmapDrawable sharpStrippedThumb = null;
-                if (!spoilerActive) {
+                {
                     try {
                         for (TLRPC.PhotoSize size : document.thumbs) {
                             if (size instanceof TLRPC.TL_photoStrippedSize) {
@@ -1872,12 +1877,11 @@ public class PotokFeedPostCell extends LinearLayout {
                 // почему предыдущий фикс (уборка "_b2" из фильтра и strippedThumb-заглушки)
                 // блюр не убрал до конца: сам currentPhotoObject/currentPhotoObjectThumb
                 // оставался TL_photoStrippedSize.
-                // Для видео БЕЗ спойлера это нежелательно — обнуляем такие объекты вместо
-                // использования (в setImage() ниже отсутствие currentPhotoObject/Thumb просто
-                // означает "показывать нечего, пока не докачается/не придёт нормальный
-                // PhotoSize с сервера" — это лучше персистентного блюра). Для спойлера
-                // (spoilerActive) блюр как раз нужен — там оставляем как есть.
-                if (!spoilerActive) {
+                // Для видео обнуляем такие объекты ВСЕГДА (не только без спойлера) —
+                // теперь img всегда должен грузиться резким (см. правку выше: "_b2"
+                // больше не дописывается в фильтр при spoilerActive) — блюр рисует
+                // отдельным слоем SpoilerOverlay, а не сам img.
+                {
                     if (currentPhotoObject instanceof TLRPC.TL_photoStrippedSize) {
                         currentPhotoObject = null;
                     }
@@ -1952,18 +1956,26 @@ public class PotokFeedPostCell extends LinearLayout {
                 // -> onRevealed callback ниже), ячейка перебиндивается
                 // (notifyItemChanged) и spoilerActive становится false — тогда сюда
                 // попадает обычный, уже НЕ заблюренный фильтр.
-                // Сохраняем ЧИСТЫЕ (без "_b2") версии фильтров ДО мутации ниже — они
-                // нужны позже, в onRevealed callback (см. конец видео-ветки), чтобы
-                // после снятия спойлера показать/заиграть видео уже без блюра. Сама
-                // переменная currentPhotoFilter/currentPhotoFilterThumb ниже МУТИРУЕТСЯ
-                // (дописывается "_b2"), если спойлер активен на момент этого bind —
-                // просто переиспользовать её после реворота статуса спойлера нельзя.
+                // ФИКС "снятие спойлера топорное/рывком, не как в самом Telegram":
+                // раньше здесь ДОПИСЫВАЛСЯ "_b2" в фильтр загрузки img, если спойлер
+                // активен — блюр оказывался ЗАПЕЧЁН В ПИКСЕЛЯХ самого img. Круговой
+                // reveal-анимация (см. SpoilerOverlay.startReveal/onDraw, 1:1 портирован
+                // из ChatMessageCell.startRevealMedia/drawBlurredPhoto) анимировала ТОЛЬКО
+                // частицы поверх — сам блюр под ними менялся одним кадром в САМОМ КОНЦЕ
+                // анимации (полный notifyItemChanged), потому что перезапросить img с
+                // другим фильтром "на лету", посередине анимации, нельзя. В оригинальном
+                // Telegram (ChatMessageCell) фото/видео ВСЕГДА грузится резким, а блюр —
+                // ОТДЕЛЬНЫЙ слой (blurredPhotoImage), рисуемый ПОВЕРХ, вырезаемый ТЕМ ЖЕ
+                // растущим кругом, что и частицы (drawBlurredPhotoParticles) — то есть
+                // блюр и частицы анимируются как ЕДИНОЕ целое. Теперь у нас так же: img
+                // всегда грузится обычным (не заблюренным) фильтром — сам блюр рисует
+                // SpoilerOverlay ПОВЕРХ (см. его onDraw), той же самой revealPath, что
+                // и частицы. currentPhotoFilter/currentPhotoFilterThumb больше НЕ
+                // мутируются под спойлер — sharpMainFilter/sharpThumbFilterCaptured
+                // оставлены как есть (используются ниже в onRevealed для запуска
+                // автовоспроизведения) и теперь всегда равны исходным.
                 final String sharpMainFilter = currentPhotoFilter;
                 final String sharpThumbFilterCaptured = currentPhotoFilterThumb;
-                if (spoilerActive) {
-                    currentPhotoFilter = currentPhotoFilter + "_b2";
-                    currentPhotoFilterThumb = currentPhotoFilterThumb + "_b2";
-                }
 
                 // ДИАГНОСТИКА (по просьбе): пользователь заметил, что посты из разных
                 // каналов блюрятся по-разному (Манчестер Юнайтед — нормально, Реальный
@@ -2089,7 +2101,7 @@ public class PotokFeedPostCell extends LinearLayout {
                             ImageLocation.getForObject(currentPhotoObjectThumb, document), currentPhotoFilterThumb,
                             // Тот же фикс блюра, что и в ветках выше: strippedThumb
                             // только при активном спойлере, иначе null.
-                            spoilerActive ? strippedThumb : sharpStrippedThumb, document.size, (String) null, mo, 0
+                            sharpStrippedThumb, document.size, (String) null, mo, 0
                         );
                         img.getImageReceiver().startAnimation();
                     }
@@ -2109,15 +2121,34 @@ public class PotokFeedPostCell extends LinearLayout {
                     img.setImage(
                         currentPhotoObjectThumb != null ? ImageLocation.getForObject(currentPhotoObjectThumb, document) : null, currentPhotoFilterThumb,
                         (ImageLocation) null, (String) null,
-                        spoilerActive ? strippedThumb : sharpStrippedThumb, (String) null, 0, 0, mo
+                        sharpStrippedThumb, (String) null, 0, 0, mo
                     );
                 } else if (currentPhotoObjectThumb != null || strippedThumb != null) {
-                    // 10-param: mediaLocation, mediaFilter, imageLocation, imageFilter, thumbLocation, thumbFilter, ext, size, cacheType, parentObject
-                    img.setImage(
+                    // ФИКС "блюр на видео до сих пор не уходит": эта ветка — САМАЯ
+                    // ЧАСТАЯ для обычного просмотра ленты (автозагрузка видео включена,
+                    // файл ещё не докачан). Раньше здесь использовалась перегрузка
+                    // setImage() БЕЗ слота под Drawable-заглушку вообще (10-param:
+                    // mediaLocation/mediaFilter/imageLocation/imageFilter/thumbLocation/
+                    // thumbFilter/ext/size/cacheType/parentObject) — то есть фикс
+                    // sharpStrippedThumb/strippedThumb, добавленный в СОСЕДНИЕ ветки
+                    // (videoAutoload==false и fallback-else), сюда вообще не попадал:
+                    // эта ветка молча продолжала показывать то, что получалось из
+                    // currentPhotoObject/currentPhotoObjectThumb "как есть" — включая
+                    // случаи, когда один из них ещё TL_photoStrippedSize с остаточным
+                    // блюром по другим путям рендера, либо просто оставалась пустой/
+                    // низкодетализированной без нижнего слоя-заглушки вовсе. Переходим
+                    // на прямой ImageReceiver.setImage() (тот же 11-параметрический
+                    // вариант, что и в ветке автовоспроизведения выше) — он поддерживает
+                    // ОДНОВРЕМЕННО mediaLocation+imageLocation (как раньше) И
+                    // Drawable-заглушку нижним слоем, куда теперь так же подставляется
+                    // sharpStrippedThumb (резкий, без блюра) либо strippedThumb
+                    // (заблюренный, только если реально активен спойлер).
+                    img.getImageReceiver().setImage(
                         ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
                         ImageLocation.getForObject(currentPhotoObjectThumb, document), currentPhotoFilterThumb,
                         (ImageLocation) null, (String) null,
-                        (String) null, 0, 0, mo
+                        sharpStrippedThumb,
+                        0, (String) null, mo, 0
                     );
                 } else {
                     // 9-param: imageLocation, imageFilter, thumbLocation, thumbFilter, thumb(Drawable), ext, size, cacheType, parentObject
@@ -2126,7 +2157,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     img.setImage(
                         ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
                         (ImageLocation) null, (String) null,
-                        spoilerActive ? strippedThumb : sharpStrippedThumb, (String) null, 0, 0, mo
+                        sharpStrippedThumb, (String) null, 0, 0, mo
                     );
                 }
 
@@ -2280,7 +2311,18 @@ public class PotokFeedPostCell extends LinearLayout {
                 // после снятия спойлера тапом (SpoilerOverlay.onRevealed callback)
                 // ячейка перебиндивается и spoilerActive становится false, тогда
                 // здесь снова окажется null (нормальное чёткое фото).
-                String mainPhotoFilter = spoilerActive ? thumbFilter : null;
+                // ФИКС "снятие спойлера топорное/рывком, не как в самом Telegram":
+                // раньше здесь ПРИНУДИТЕЛЬНО подставлялся тот же "24_24_b2" на весь
+                // срок активности спойлера — главный слой img оставался заблюренным
+                // ЗАПЕЧЁННЫМ В ПИКСЕЛЯХ, круговой reveal анимировал только частицы
+                // поверх, а сам блюр снимался одним кадром в конце (полный
+                // notifyItemChanged) — рывком. В оригинале (ChatMessageCell.
+                // drawBlurredPhoto/startRevealMedia) фото ВСЕГДА грузится резким, а
+                // блюр — ОТДЕЛЬНЫЙ слой поверх, вырезаемый ТЕМ ЖЕ растущим кругом,
+                // что и частицы. Теперь так же: mainPhotoFilter всегда null (img
+                // всегда резкий), спойлерный блюр рисует SpoilerOverlay поверх (см.
+                // его onDraw) — той же revealPath, что и частицы.
+                String mainPhotoFilter = null;
                 ImageLocation thumbLocation = thumbSize != null
                     ? ImageLocation.getForObject(thumbSize, mo.photoThumbsObject)
                     : null;
@@ -2543,7 +2585,21 @@ public class PotokFeedPostCell extends LinearLayout {
             measuredContentWidth = computeDesiredWidth();
             animatedWidth.force(measuredContentWidth);
 
-            updateState(false);
+            // ФИКС "видео после скачивания стоит истуканом/не сразу играет":
+            // updateState(true-путь) ниже вызывает onReady.run() (=
+            // safeNotifyItemChanged) КАЖДЫЙ раз, когда видит fileExists==true —
+            // включая ЭТОТ самый первый вызов из bind(), если файл УЖЕ был в кэше
+            // на момент обычного (не асинхронного) байнда ячейки. Но в этом случае
+            // canDecodeFromVideo в onBindViewHolder УЖЕ корректно обработал
+            // воспроизведение в ЭТОМ ЖЕ проходе (см. ветку выше, до вызова этого
+            // bind()) — лишний повторный safeNotifyItemChanged() тут же, поверх
+            // только что стартовавшей анимации, оказывается избыточным ребиндом,
+            // который может сбить/сбросить только что запущенное воспроизведение
+            // (отсюда "стоит статичным кадром, хотя уже скачано"). Настоящее
+            // асинхронное завершение закачки (onSuccessDownload ниже) — совсем
+            // другой случай, там onReady нужен обязательно. Различаем их через
+            // allowReadyCallback.
+            updateState(false, false);
         }
 
         // Общая формула ширины подложки под текущий текст (длительность + вторая
@@ -2578,6 +2634,10 @@ public class PotokFeedPostCell extends LinearLayout {
         }
 
         private void updateState(boolean animated) {
+            updateState(animated, true);
+        }
+
+        private void updateState(boolean animated, boolean allowReadyCallback) {
             if (document == null || fileName == null) {
                 return;
             }
@@ -2594,7 +2654,15 @@ public class PotokFeedPostCell extends LinearLayout {
                 DownloadController.getInstance(currentAccount).removeLoadingFileObserver(this);
                 buttonState = -1;
                 setVisibility(GONE);
-                if (onReady != null) {
+                // allowReadyCallback=false — вызов из bind() (см. фикс "видео после
+                // скачивания стоит истуканом" там): если файл УЖЕ был в кэше на
+                // момент обычного байнда ячейки, воспроизведение уже корректно
+                // запущено в ЭТОМ ЖЕ проходе onBindViewHolder (через
+                // canDecodeFromVideo) — лишний onReady.run() здесь был бы
+                // избыточным повторным ребиндом поверх только что стартовавшей
+                // анимации. onReady нужен только для настоящего асинхронного
+                // перехода (onSuccessDownload), где allowReadyCallback=true.
+                if (onReady != null && allowReadyCallback) {
                     onReady.run();
                 }
             } else {
@@ -3040,6 +3108,12 @@ public class PotokFeedPostCell extends LinearLayout {
         private boolean attachedToWindow;
         private final Path revealPath = new Path();
         private float revealX, revealY, revealMaxRadius, revealProgress;
+        // ФИКС "снятие спойлера топорное": блюр теперь рисуется этим оверлеем
+        // (см. onDraw), а не запечён в пикселях img — нужны свои Paint/RectF
+        // для растяжения маленького заблюренного strippedThumb на весь размер
+        // вьюхи (BitmapDrawable-исходник обычно ~40-50px).
+        private final RectF blurDstRect = new RectF();
+        private final Paint blurPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
 
         SpoilerOverlay(Context context) {
             super(context);
@@ -3215,7 +3289,7 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            if (effect == null || !shouldShow()) return;
+            if (!shouldShow()) return;
             canvas.save();
             canvas.clipRect(0, 0, getWidth(), getHeight());
             if (revealProgress != 0f) {
@@ -3223,7 +3297,30 @@ public class PotokFeedPostCell extends LinearLayout {
                 revealPath.addCircle(revealX, revealY, revealMaxRadius * revealProgress, Path.Direction.CW);
                 canvas.clipPath(revealPath, Region.Op.DIFFERENCE);
             }
-            effect.draw(canvas, this, getWidth(), getHeight());
+            // ФИКС "снятие спойлера топорное/рывком, не как в самом Telegram":
+            // раньше этот onDraw() рисовал ТОЛЬКО частицы — сам блюр жил ОТДЕЛЬНО,
+            // запечённый в пикселях img (через фильтр "_b2"), и снимался одним
+            // кадром в конце анимации (полный notifyItemChanged), а не вместе с
+            // растущим кругом. В оригинале (ChatMessageCell.drawBlurredPhoto)
+            // блюр и частицы — ОДИН слой, вырезаемый ОДНИМ и тем же растущим
+            // кругом, поверх ВСЕГДА уже резкого фото снизу (см. правки выше в
+            // onBindViewHolder — img теперь всегда грузится без "_b2"). Теперь
+            // здесь то же самое: сначала рисуем сам блюр (растянутый на весь
+            // размер вьюхи strippedThumb — маленький, уже заблюренный битмап,
+            // тот же источник, что раньше использовался как заглушка), ЗАТЕМ
+            // частицы поверх — оба вырезаны ОДНОЙ и той же revealPath, поэтому
+            // растущий круг одновременно открывает резкий img снизу И убирает
+            // блюр+частицы сверху, как единое целое.
+            if (boundMessage != null && boundMessage.strippedThumb != null) {
+                Bitmap blurBitmap = boundMessage.strippedThumb.getBitmap();
+                if (blurBitmap != null && !blurBitmap.isRecycled()) {
+                    blurDstRect.set(0, 0, getWidth(), getHeight());
+                    canvas.drawBitmap(blurBitmap, null, blurDstRect, blurPaint);
+                }
+            }
+            if (effect != null) {
+                effect.draw(canvas, this, getWidth(), getHeight());
+            }
             canvas.restore();
         }
     }

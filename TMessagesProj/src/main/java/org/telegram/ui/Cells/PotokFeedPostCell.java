@@ -2031,15 +2031,40 @@ public class PotokFeedPostCell extends LinearLayout {
                 // этот флаг не имеет значения и ошибочно блокировал автовоспроизведение
                 // для видео/гиф без этого флага (частый случай). Оставлена только проверка
                 // на зашифрованные документы (секретные чаты) вместо canStreamVideo().
-                boolean canDecodeFromVideo = !mo.isRepostPreview && fileExists
-                    && !(document instanceof TLRPC.TL_documentEncrypted) && !spoilerActive;
                 // Настройка "Скачивать видео" из меню трёх точек (по умолчанию включена).
                 // Если выключена и сам видеофайл ещё не докачан пользователем вручную —
                 // НЕ подгружаем даже полноразмерный статичный превью-кадр с сервера сам
                 // по себе (это отдельный сетевой запрос за картинкой) — только маленький
                 // стрип-thumb, который и так приходит вместе с самим сообщением бесплатно.
+                // Перенесено ВЫШЕ canDecodeFromVideo — теперь используется и там же.
                 boolean videoAutoload = PotokFeedFragment.isAutoloadVideoEnabled(getContext())
                     && PotokFeedFragment.isSizeOkForVideoAutoload(document.size);
+                // ФИКС "блюр на видео без спойлера, ~90% постов" (Блок C, вариант А,
+                // согласован с пользователем): раньше canDecodeFromVideo требовал
+                // fileExists==true (файл ПОЛНОСТЬЮ в кэше) — до этого момента
+                // единственным видимым содержимым был крошечный (~40-50px)
+                // sharpStrippedThumb, растянутый на всю ширину поста — визуально
+                // неотличимо от блюра просто из-за апскейла. У большинства видео в
+                // document.thumbs НЕТ другого источника картинки (только
+                // TL_photoStrippedSize, см. комментарии выше), поэтому это состояние
+                // было ПОСТОЯННЫМ, а не временным, как в оригинальном Telegram.
+                // В оригинале (ChatMessageCell.java, DOCUMENT_ATTACH_TYPE_VIDEO,
+                // ~строка 8526-8529) условие входа в декодирование ИМЕННО ТАКОЕ:
+                // "(mediaExists || attachPathExists) || canStreamVideo() &&
+                // canDownloadMedia(...)" — то есть декодирование запускается И когда
+                // файл уже скачан, И когда его можно частично стримить (supports_streaming
+                // на документе) при разрешённой автозагрузке — FileLoader/AnimatedFileDrawable
+                // сами прогрессивно докачивают и декодируют кадры по мере поступления
+                // байт, не дожидаясь 100% файла. Это та же самая инфраструктура (форк
+                // полного Telegram, FileLoader не переписан), просто раньше мы её не
+                // пускали в этот путь. mo.canStreamVideo() проверяет флаг
+                // supports_streaming на document.attributes — если сервер его не
+                // выставил (редкие старые/специфичные контейнеры), условие просто не
+                // сработает и останется прежнее поведение (статичный маленький кадр
+                // до полной докачки).
+                boolean canDecodeFromVideo = !mo.isRepostPreview
+                    && !(document instanceof TLRPC.TL_documentEncrypted) && !spoilerActive
+                    && (fileExists || (mo.canStreamVideo() && videoAutoload));
 
                 // ДИАГНОСТИКА (видео/GIF всё ещё выглядит заблюренным после удаления
                 // "_b2" из currentPhotoFilterThumb) — суффикса "_b2" в этой ветке
@@ -2208,11 +2233,23 @@ public class PotokFeedPostCell extends LinearLayout {
                 holder.spoilerOverlay.setOnRevealed(() -> {
                     java.io.File freshCacheFile = FileLoader.getInstance(mo.currentAccount).getPathToAttach(document, false);
                     boolean freshFileExists = freshCacheFile != null && freshCacheFile.exists();
-                    // Тот же фикс, что и у canDecodeFromVideo выше — canStreamVideo() тут
-                    // тоже не нужен, файл уже полностью в кэше (freshFileExists проверяет
-                    // именно это).
-                    boolean freshCanDecode = !mo.isRepostPreview && freshFileExists
-                        && !(document instanceof TLRPC.TL_documentEncrypted);
+                    // ФИКС "воспроизведение стартует через 3-4 секунды после снятия
+                    // спойлера" (согласовано с пользователем как часть варианта А,
+                    // Блок C): раньше здесь проверялся ТОЛЬКО freshFileExists (файл
+                    // полностью в кэше) — если спойлерное видео ещё не было докачано
+                    // целиком к моменту тапа, снятие спойлера показывало только
+                    // статичный резкий кадр, а настоящее воспроизведение стартовало
+                    // ПОЗЖЕ, отдельно, когда downloadPlate.bind()-колбэк (см. ниже)
+                    // сообщал о завершении докачки — отсюда и ощутимая задержка.
+                    // Теперь используем ТО ЖЕ расширенное условие, что и у
+                    // canDecodeFromVideo выше — mo.canStreamVideo() && videoAutoload
+                    // запускает прогрессивное стриминг-декодирование сразу, без
+                    // ожидания полной докачки, точно как в оригинальном Telegram
+                    // (ChatMessageCell: revealingMediaSpoilers пускает в тот же
+                    // декодирующий путь ДО завершения анимации снятия).
+                    boolean freshCanDecode = !mo.isRepostPreview
+                        && !(document instanceof TLRPC.TL_documentEncrypted)
+                        && (freshFileExists || (mo.canStreamVideo() && videoAutoload));
                     if (freshCanDecode) {
                         img.getImageReceiver().setAllowDecodeSingleFrame(true);
                         img.getImageReceiver().setAllowStartAnimation(true);
@@ -3114,6 +3151,23 @@ public class PotokFeedPostCell extends LinearLayout {
         // вьюхи (BitmapDrawable-исходник обычно ~40-50px).
         private final RectF blurDstRect = new RectF();
         private final Paint blurPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+        // ФИКС "сквозь спойлер видны детали" (Блок D, найдено по коду оригинала):
+        // раньше здесь рисовался НАПРЯМУЮ boundMessage.strippedThumb.getBitmap() —
+        // это тот же СЛАБЫЙ 1-проходный блюр (filter "b", blurType=1), которым
+        // MessageObject.createStrippedThumb() создаёт мгновенный заполнитель. Он
+        // задумывался как быстрый placeholder, а не как маскировка спойлера, и
+        // сквозь него видны силуэты/цвета/детали — ровно то, что видно на скрине
+        // пользователя. В оригинале (ChatMessageCell.drawBlurredPhoto/строка ~8588)
+        // блюр под спойлером — это Utilities.stackBlurBitmapMax(), сильный
+        // многопроходный stack-blur. Здесь применяем его к тому же источнику
+        // (strippedThumb), но ОДИН РАЗ при бинде (не на каждый onDraw — stack-blur
+        // не бесплатный, а onDraw дёргается по 60 раз/сек во время анимации частиц)
+        // и кэшируем результат. stackBlurBitmapMax сам уменьшает картинку до ~20dp
+        // и блюрит её радиусом >=10px — на таком крошечном холсте это полностью
+        // уничтожает любую узнаваемую структуру (силуэты/контуры), остаются только
+        // усреднённые цветовые пятна — то, что и требуется для спойлера.
+        private Bitmap cachedBlurredBitmap;
+        private MessageObject cachedBlurredSource;
 
         SpoilerOverlay(Context context) {
             super(context);
@@ -3124,8 +3178,37 @@ public class PotokFeedPostCell extends LinearLayout {
             boundMessage = mo;
             onRevealed = onRevealedCallback;
             revealProgress = (mo != null && mo.isSpoilersRevealed) ? 1f : 0f;
+            updateBlurredBitmap();
             updateEffect();
             updateVisibility();
+        }
+
+        private void updateBlurredBitmap() {
+            if (boundMessage == null || boundMessage.strippedThumb == null) {
+                cachedBlurredBitmap = null;
+                cachedBlurredSource = null;
+                return;
+            }
+            if (cachedBlurredSource == boundMessage && cachedBlurredBitmap != null) {
+                return;
+            }
+            try {
+                Bitmap sourceBitmap = boundMessage.strippedThumb.getBitmap();
+                if (sourceBitmap != null && !sourceBitmap.isRecycled()) {
+                    cachedBlurredBitmap = org.telegram.messenger.Utilities.stackBlurBitmapMax(sourceBitmap);
+                    cachedBlurredSource = boundMessage;
+                } else {
+                    cachedBlurredBitmap = null;
+                    cachedBlurredSource = null;
+                }
+            } catch (Throwable e) {
+                // Сильный блюр не должен ронять бинд ячейки — при любой ошибке просто
+                // остаёмся без кэшированного блюра, onDraw ниже это проверяет.
+                cachedBlurredBitmap = null;
+                cachedBlurredSource = null;
+                PotokDebugLog.d("SPOILER_BLUR", "post=" + (boundMessage != null ? boundMessage.getId() : -1)
+                    + " stackBlurBitmapMax failed: " + e);
+            }
         }
 
         // Позволяет ЗАМЕНИТЬ/дополнить callback снятия спойлера уже ПОСЛЕ основного
@@ -3141,6 +3224,8 @@ public class PotokFeedPostCell extends LinearLayout {
             boundMessage = null;
             onRevealed = null;
             revealProgress = 0f;
+            cachedBlurredBitmap = null;
+            cachedBlurredSource = null;
             updateEffect();
             setVisibility(GONE);
         }
@@ -3311,12 +3396,12 @@ public class PotokFeedPostCell extends LinearLayout {
             // частицы поверх — оба вырезаны ОДНОЙ и той же revealPath, поэтому
             // растущий круг одновременно открывает резкий img снизу И убирает
             // блюр+частицы сверху, как единое целое.
-            if (boundMessage != null && boundMessage.strippedThumb != null) {
-                Bitmap blurBitmap = boundMessage.strippedThumb.getBitmap();
-                if (blurBitmap != null && !blurBitmap.isRecycled()) {
-                    blurDstRect.set(0, 0, getWidth(), getHeight());
-                    canvas.drawBitmap(blurBitmap, null, blurDstRect, blurPaint);
-                }
+            // ФИКС "сквозь спойлер видны детали": рисуем закэшированный СИЛЬНЫЙ
+            // stack-blur (см. updateBlurredBitmap/cachedBlurredBitmap выше), а не
+            // сырой слабо-заблюренный strippedThumb напрямую.
+            if (cachedBlurredBitmap != null && !cachedBlurredBitmap.isRecycled()) {
+                blurDstRect.set(0, 0, getWidth(), getHeight());
+                canvas.drawBitmap(cachedBlurredBitmap, null, blurDstRect, blurPaint);
             }
             if (effect != null) {
                 effect.draw(canvas, this, getWidth(), getHeight());

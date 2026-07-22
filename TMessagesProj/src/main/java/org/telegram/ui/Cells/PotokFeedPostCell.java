@@ -3184,7 +3184,7 @@ public class PotokFeedPostCell extends LinearLayout {
         }
 
         private void updateBlurredBitmap() {
-            if (boundMessage == null || boundMessage.strippedThumb == null) {
+            if (boundMessage == null) {
                 cachedBlurredBitmap = null;
                 cachedBlurredSource = null;
                 return;
@@ -3193,20 +3193,54 @@ public class PotokFeedPostCell extends LinearLayout {
                 return;
             }
             try {
-                Bitmap sourceBitmap = boundMessage.strippedThumb.getBitmap();
+                Bitmap sourceBitmap = null;
+                // Быстрый путь: если MessageObject.strippedThumb уже создан (бывает
+                // не всегда, см. ниже) — используем его как есть.
+                if (boundMessage.strippedThumb != null) {
+                    sourceBitmap = boundMessage.strippedThumb.getBitmap();
+                }
+                // ФИКС (найдено по логу [BLUR]: strippedThumb=false АБСОЛЮТНО на
+                // всех постах, и фото, и видео, без исключений): mo.strippedThumb
+                // заполняется MessageObject.createStrippedThumb(), а тот метод
+                // целиком пропускает свою работу, если
+                // SharedConfig.getDevicePerformanceClass() != PERFORMANCE_CLASS_HIGH
+                // (см. MessageObject.canCreateStripedThubms()) — то есть на
+                // среднем/слабом устройстве (как у пользователя при тесте)
+                // mo.strippedThumb ВСЕГДА null, независимо от спойлера или блюра.
+                // Раньше SpoilerOverlay полагался только на это поле — отсюда и
+                // "блюр не появился вообще", частицы летали поверх голого кадра.
+                // Фикс: если strippedThumb не создан, декодируем те же сырые байты
+                // TL_photoStrippedSize САМИ, напрямую из photoThumbs — в обход
+                // canCreateStripedThubms() целиком. Это тот же самый приём, что уже
+                // применён для sharpStrippedThumb чуть выше в setImage-логике видео
+                // (см. комментарий "ФИКС ImageLoader.CacheOutTask ЖЁСТКО блюрит..."),
+                // с пустым фильтром "" — сырое, без запечённого блюра, потому что
+                // блюрим сами через stackBlurBitmapMax() ниже.
+                if (sourceBitmap == null && boundMessage.photoThumbs != null) {
+                    for (int i = 0; i < boundMessage.photoThumbs.size(); i++) {
+                        TLRPC.PhotoSize size = boundMessage.photoThumbs.get(i);
+                        if (size instanceof TLRPC.TL_photoStrippedSize) {
+                            sourceBitmap = org.telegram.messenger.ImageLoader.getStrippedPhotoBitmap(
+                                ((TLRPC.TL_photoStrippedSize) size).bytes, "");
+                            break;
+                        }
+                    }
+                }
                 if (sourceBitmap != null && !sourceBitmap.isRecycled()) {
                     cachedBlurredBitmap = org.telegram.messenger.Utilities.stackBlurBitmapMax(sourceBitmap);
                     cachedBlurredSource = boundMessage;
                 } else {
                     cachedBlurredBitmap = null;
                     cachedBlurredSource = null;
+                    PotokDebugLog.d("SPOILER_BLUR", "post=" + boundMessage.getId()
+                        + " NO source bitmap available (strippedThumb null AND no TL_photoStrippedSize in photoThumbs) — блюр не будет нарисован");
                 }
             } catch (Throwable e) {
                 // Сильный блюр не должен ронять бинд ячейки — при любой ошибке просто
                 // остаёмся без кэшированного блюра, onDraw ниже это проверяет.
                 cachedBlurredBitmap = null;
                 cachedBlurredSource = null;
-                PotokDebugLog.d("SPOILER_BLUR", "post=" + (boundMessage != null ? boundMessage.getId() : -1)
+                PotokDebugLog.d("SPOILER_BLUR", "post=" + boundMessage.getId()
                     + " stackBlurBitmapMax failed: " + e);
             }
         }

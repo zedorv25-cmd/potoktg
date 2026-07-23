@@ -19,6 +19,7 @@ import android.graphics.RectF;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.ViewParent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
@@ -1591,7 +1592,6 @@ public class PotokFeedPostCell extends LinearLayout {
             //    диске, а не полагается на старое состояние.
             VideoDownloadPlate downloadPlate = new VideoDownloadPlate(parent.getContext());
             downloadPlate.setVisibility(GONE);
-            wrapper.addView(downloadPlate, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP, 6, 6, 0, 0));
 
             // Оверлей притемнения + кнопки загрузки для фото (аналог downloadPlate,
             // но для фото, а не видео) — во весь размер карточки, поверх фото.
@@ -1599,11 +1599,26 @@ public class PotokFeedPostCell extends LinearLayout {
             photoOverlay.setVisibility(GONE);
             wrapper.addView(photoOverlay, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
 
-            // Спойлер — последним, поверх ВСЕГО (в т.ч. поверх плашки загрузки),
-            // как в оригинале: спойлер скрывает даже сам факт "надо скачивать".
+            // Спойлер — поверх фото/видео и play-кнопки, НО не поверх плашки
+            // загрузки (см. ниже). Раньше здесь стоял комментарий "спойлер скрывает
+            // даже сам факт что надо качать" — это было ОШИБОЧНОЕ решение прошлой
+            // сессии, никогда не сверенное с оригиналом и напрямую противоречащее
+            // жалобе пользователя: "если фото-видео под спойлером, то кнопка
+            // загрузки вообще не появляется". В оригинальном Telegram индикатор
+            // загрузки/прогресса виден И под спойлером — пользователю нужно знать,
+            // что там видео, сколько весит и что оно (не) скачивается, независимо
+            // от того, снят спойлер или нет.
             SpoilerOverlay spoilerOverlay = new SpoilerOverlay(parent.getContext());
             spoilerOverlay.setVisibility(GONE);
             wrapper.addView(spoilerOverlay, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+            // ФИКС "под спойлером не видно кнопки загрузки": downloadPlate теперь
+            // добавляется ПОСЛЕДНИМ (после spoilerOverlay) — в Android более поздний
+            // addView() рисуется ПОВЕРХ более раннего. Раньше порядок был обратный
+            // (downloadPlate добавлялся до spoilerOverlay), поэтому спойлер полностью
+            // перекрывал плашку — она технически была VISIBLE и bind() отрабатывал
+            // правильно, просто визуально пряталась под непрозрачным блюром/частицами.
+            wrapper.addView(downloadPlate, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.LEFT | Gravity.TOP, 6, 6, 0, 0));
 
             return new MediaHolder(wrapper, img, playIndicator, downloadPlate, photoOverlay, spoilerOverlay);
         }
@@ -2089,6 +2104,7 @@ public class PotokFeedPostCell extends LinearLayout {
                     + " canDecodeFromVideo=" + canDecodeFromVideo
                     + " fileExists=" + fileExists
                     + " videoAutoload=" + videoAutoload
+                    + " canStreamVideo=" + mo.canStreamVideo()
                     + " currentPhotoObject=" + (currentPhotoObject != null
                         ? (currentPhotoObject.w + "x" + currentPhotoObject.h) : "null")
                     + " currentPhotoObjectThumb=" + (currentPhotoObjectThumb != null
@@ -3356,17 +3372,41 @@ public class PotokFeedPostCell extends LinearLayout {
             if (!downloaded) {
                 // Медиа ещё не в кэше — НЕ перехватываем тап, пропускаем его дальше
                 // (в wrapper это дойдёт до PhotoDownloadOverlay/VideoDownloadPlate,
-                // которые лежат в том же FrameLayout ниже по z-порядку и сами
-                // запустят загрузку). Спойлер при этом остаётся видимым как есть —
-                // мы просто не меняем revealProgress/видимость здесь.
+                // которые теперь лежат ВЫШЕ по z-порядку и сами обработают тап и
+                // запустят загрузку — см. addView() выше). Спойлер при этом остаётся
+                // видимым как есть — мы просто не меняем revealProgress/видимость здесь.
                 return false;
             }
             if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                // ФИКС "спойлер снимается только тапом строго по центру" (Блок H):
+                // раньше здесь не было явного requestDisallowInterceptTouchEvent —
+                // родительские scroll/swipe-контейнеры этой ячейки (горизонтальная
+                // карусель постов + вертикальная лента) МОГЛИ перехватить жест через
+                // свой onInterceptTouchEvent при малейшем сдвиге пальца между DOWN и
+                // UP (стандартный touch slop у Android). Тап строго в центре
+                // статистически почти никогда не даёт горизонтального сдвига (рука
+                // тапает более-менее прямо), поэтому там жест долетал до UP
+                // надёжно, а ближе к краям карточки — даже минимальный дрожащий
+                // сдвиг пальца интерпретировался родителем как начало свайпа
+                // карусели, и spoilerOverlay просто не получал ACTION_UP вообще.
+                // requestDisallowInterceptTouchEvent(true) явно запрещает предкам
+                // перехватывать этот конкретный жест, пока спойлер сам его
+                // обрабатывает — тап срабатывает из любой точки медиа одинаково.
+                ViewParent parent = getParent();
+                if (parent != null) {
+                    parent.requestDisallowInterceptTouchEvent(true);
+                }
                 return true;
             }
             if (event.getAction() == MotionEvent.ACTION_UP && revealProgress == 0f) {
                 startReveal(event.getX(), event.getY());
                 return true;
+            }
+            if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                ViewParent parent = getParent();
+                if (parent != null) {
+                    parent.requestDisallowInterceptTouchEvent(false);
+                }
             }
             return true;
         }

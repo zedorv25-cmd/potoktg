@@ -2298,8 +2298,8 @@ public class PotokFeedPostCell extends LinearLayout {
                     // Автозагрузка выключена — только стрип-thumb/маленькая миниатюра,
                     // без полноразмерного превью. Тап по кадру (openMediaViewer, см. ниже)
                     // всё равно скачает и покажет видео целиком независимо от этой настройки.
-                    // ФИКС "блюр на видео без спойлера": strippedThumb печётся в
-                    // MessageObject.createStrippedThumb() с зашитым на уровне пикселей
+                    // ФИКС "блюр на видео без спойлера" (первая часть, уже была): strippedThumb
+                    // печётся в MessageObject.createStrippedThumb() с зашитым на уровне пикселей
                     // блюром (фильтр "b" применяется прямо при декодировании байтов,
                     // см. ImageLoader.getStrippedPhotoBitmap) — сам этот битмап ВСЕГДА
                     // визуально заблюрен, независимо от currentPhotoFilterThumb (там
@@ -2307,10 +2307,26 @@ public class PotokFeedPostCell extends LinearLayout {
                     // передавался сюда безусловно — поэтому видео выглядело заблюренным
                     // даже без спойлера, просто пока не докачалось полноразмерное превью.
                     // Теперь передаём его только если спойлер реально активен.
-                    img.setImage(
-                        currentPhotoObjectThumb != null ? ImageLocation.getForObject(currentPhotoObjectThumb, document) : null, currentPhotoFilterThumb,
+                    //
+                    // ФИКС "блюр на видео без спойлера" (вторая часть, найдено логом
+                    // [BLUR] на постах 34842/49418): этот же кусок кода ВООБЩЕ НЕ передавал
+                    // currentPhotoObject (нормальный превью-объект, обычно 180x320 или похожий,
+                    // сервер присылает его отдельно от видео-файла и от stripped-миниатюры)
+                    // в setImage() — второй слот (imageLocation) был жёстко захардкожен как
+                    // (ImageLocation) null. То есть реально запрашивался только
+                    // currentPhotoObjectThumb (часто сам по себе null, как в этих постах) и
+                    // strippedThumb-заглушка снизу. Раз currentPhotoObjectThumb==null и
+                    // основной imageLocation тоже null — на экране оставалась только 22x40
+                    // заглушка, растянутая на всю карусель — визуально неотличимо от блюра,
+                    // хотя по факту это была не блюр-фильтрация, а просто нет запроса на
+                    // нормальный превью вообще. Теперь currentPhotoObject передаётся как
+                    // основной imageLocation (currentPhotoFilter — тот же фильтр, что и
+                    // в ветке автовоспроизведения выше, без лишнего блюр-суффикса).
+                    img.getImageReceiver().setImage(
                         (ImageLocation) null, (String) null,
-                        sharpStrippedThumb, (String) null, 0, 0, mo
+                        currentPhotoObject != null ? ImageLocation.getForObject(currentPhotoObject, document) : null, currentPhotoFilter,
+                        currentPhotoObjectThumb != null ? ImageLocation.getForObject(currentPhotoObjectThumb, document) : null, currentPhotoFilterThumb,
+                        sharpStrippedThumb, document.size, (String) null, mo, 0
                     );
                 } else if (currentPhotoObjectThumb != null || strippedThumb != null) {
                     // ФИКС "блюр на видео до сих пор не уходит": эта ветка — САМАЯ

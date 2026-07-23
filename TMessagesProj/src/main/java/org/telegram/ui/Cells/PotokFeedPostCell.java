@@ -149,6 +149,52 @@ public class PotokFeedPostCell extends LinearLayout {
         parentActivity = activity;
     }
 
+    // ДИАГНОСТИКА (не фикс). Сейчас на уровне ВСЕЙ ячейки ленты (не внутренней
+    // карусели, а внешнего RecyclerView в PotokFeedFragment) нет НИ ОДНОГО
+    // отслеживания attach/detach — я проверил PotokFeedFragment.java: адаптер там
+    // не переопределяет onViewAttachedToWindow/onViewDetachedFromWindow вообще.
+    // Раз PotokFeedPostCell — обычная View и одновременно itemView внешнего
+    // RecyclerView.Holder, её собственные onAttachedToWindow/onDetachedFromWindow
+    // штатно вызываются Android'ом при attach/detach окна независимо от адаптера —
+    // это не мои домыслы, а стандартное поведение View, но раньше это никак не
+    // логировалось, и мы не знали, что здесь реально происходит при скролле
+    // внешней ленты. Только логируем состояние текущей карусели, никакого
+    // notifyItemChanged/restart отсюда не вызываем.
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        PotokDebugLog.d("VIDEOPLAY", "OUTER_FEED_CELL ATTACH post="
+            + (currentMessage != null ? currentMessage.getId() : -1)
+            + " cellHash=" + System.identityHashCode(this));
+        logCarouselMediaDiagState("OUTER_ATTACH");
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        PotokDebugLog.d("VIDEOPLAY", "OUTER_FEED_CELL DETACH post="
+            + (currentMessage != null ? currentMessage.getId() : -1)
+            + " cellHash=" + System.identityHashCode(this));
+        logCarouselMediaDiagState("OUTER_DETACH");
+    }
+
+    // Проходит по ВИДИМЫМ сейчас holder'ам внутренней карусели и логирует их
+    // реальное состояние — вызывается из attach/detach внешней ячейки выше.
+    private void logCarouselMediaDiagState(String moment) {
+        if (carouselAdapter == null || carouselView == null) return;
+        int count = carouselView.getChildCount();
+        for (int i = 0; i < count; i++) {
+            android.view.View child = carouselView.getChildAt(i);
+            RecyclerView.ViewHolder vh = carouselView.getChildViewHolder(child);
+            if (vh instanceof CarouselAdapter.MediaHolder) {
+                CarouselAdapter.MediaHolder mh = (CarouselAdapter.MediaHolder) vh;
+                PotokDebugLog.d("VIDEOPLAY", moment + " childIdx=" + i
+                    + " lastAutoplayDocumentId=" + mh.lastAutoplayDocumentId
+                    + " " + mediaDiagSnapshot(mh.img));
+            }
+        }
+    }
+
     public PotokFeedPostCell(Context context, Theme.ResourcesProvider resourcesProvider) {
         super(context);
         setOrientation(VERTICAL);
@@ -1495,6 +1541,41 @@ public class PotokFeedPostCell extends LinearLayout {
         return top;
     }
 
+    // ------------------------------------------------------------------ MEDIA_DIAG
+    // ТОЛЬКО ДИАГНОСТИКА, ничего не чинит и ни на что не влияет — по прямому
+    // требованию пользователя: не патчить блюр/зависание видео вслепую ещё раз,
+    // а сначала собрать логи, которых хватит понять причину БЕЗ гаданий.
+    // Единая точка снэпшота реального состояния ImageReceiver/AnimatedFileDrawable,
+    // используется из нескольких мест ниже (bind, отложенные проверки, attach/detach,
+    // докачка, снятие спойлера), чтобы не разъезжались форматы логов между собой.
+    private static String mediaDiagSnapshot(BackupImageView img) {
+        if (img == null) return "img=null";
+        org.telegram.messenger.ImageReceiver ir = img.getImageReceiver();
+        if (ir == null) return "imageReceiver=null";
+        StringBuilder sb = new StringBuilder();
+        sb.append("hasImageSet=").append(ir.hasImageSet())
+          .append(" hasBitmapImage=").append(ir.hasBitmapImage())
+          .append(" hasImageLoaded=").append(ir.hasImageLoaded())
+          .append(" hasNotThumb=").append(ir.hasNotThumb())
+          .append(" hasStaticThumb=").append(ir.hasStaticThumb())
+          .append(" isAnimationRunning=").append(ir.isAnimationRunning())
+          .append(" bitmapWxH=").append(ir.getBitmapWidth()).append("x").append(ir.getBitmapHeight())
+          .append(" viewWxH=").append(img.getWidth()).append("x").append(img.getHeight())
+          .append(" currentAlpha=").append(ir.getCurrentAlpha());
+        org.telegram.ui.Components.AnimatedFileDrawable anim = ir.getAnimation();
+        if (anim != null) {
+            sb.append(" | ANIM isRunning=").append(anim.isRunning())
+              .append(" hasBitmap=").append(anim.hasBitmap())
+              .append(" isLoadingStream=").append(anim.isLoadingStream())
+              .append(" durationMs=").append(anim.getDurationMs())
+              .append(" renderWxH=").append(anim.getRenderingWidth()).append("x").append(anim.getRenderingHeight());
+        } else {
+            sb.append(" | ANIM=null(нет объекта анимации — значит ImageReceiver вообще");
+            sb.append(" не создал AnimatedFileDrawable для текущего currentImageDrawable)");
+        }
+        return sb.toString();
+    }
+
     // ------------------------------------------------------------------ CarouselAdapter
 
     private class CarouselAdapter extends RecyclerView.Adapter<CarouselAdapter.MediaHolder> {
@@ -2114,6 +2195,25 @@ public class PotokFeedPostCell extends LinearLayout {
                         : (!videoAutoload && !fileExists) ? "THUMB_ONLY_NO_AUTOLOAD"
                         : (currentPhotoObjectThumb != null || strippedThumb != null) ? "THUMB_PLUS_FULL"
                         : "FULL_ONLY"));
+                // ДИАГНОСТИКА (не фикс): что РЕАЛЬНО оказалось на экране через
+                // 800мс и 2500мс после bind — независимо от того, какая ветка
+                // сработала выше. Решает вопрос "это правда блюр из-за маленького
+                // источника, или главный кадр всё-таки загрузился, а размытым
+                // выглядит что-то другое (растяжение, альфа, недогруженный слой)".
+                {
+                    final long diagPostId = mo.getId();
+                    final java.lang.ref.WeakReference<BackupImageView> imgRef = new java.lang.ref.WeakReference<>(img);
+                    img.postDelayed(() -> {
+                        BackupImageView i = imgRef.get();
+                        if (i == null) return;
+                        PotokDebugLog.d("BLUR", "post=" + diagPostId + " +800ms " + mediaDiagSnapshot(i));
+                    }, 800);
+                    img.postDelayed(() -> {
+                        BackupImageView i = imgRef.get();
+                        if (i == null) return;
+                        PotokDebugLog.d("BLUR", "post=" + diagPostId + " +2500ms " + mediaDiagSnapshot(i));
+                    }, 2500);
+                }
                 if (canDecodeFromVideo) {
                     // Бесшумное инлайн-автовоспроизведение кэшированного видео — как GIF,
                     // точная копия ветки DOCUMENT_ATTACH_TYPE_VIDEO из оригинального
@@ -2145,6 +2245,31 @@ public class PotokFeedPostCell extends LinearLayout {
                             sharpStrippedThumb, document.size, (String) null, mo, 0
                         );
                         img.getImageReceiver().startAnimation();
+                        // ДИАГНОСТИКА (не фикс) — четыре снэпшота после старта
+                        // анимации, а не один (было 300мс) — чтобы отличить "не
+                        // стартовало вообще" от "стартовало и заглохло позже"
+                        // (в т.ч. дольше, чем через 300мс, что раньше физически
+                        // не могли увидеть).
+                        final long diagPostId2 = mo.getId();
+                        final java.lang.ref.WeakReference<BackupImageView> imgRef2 = new java.lang.ref.WeakReference<>(img);
+                        int[] delays = {0, 500, 1500, 4000};
+                        for (int d : delays) {
+                            img.postDelayed(() -> {
+                                BackupImageView i = imgRef2.get();
+                                if (i == null) return;
+                                PotokDebugLog.d("VIDEOPLAY", "post=" + diagPostId2 + " +" + d + "ms "
+                                    + mediaDiagSnapshot(i));
+                            }, d);
+                        }
+                    } else {
+                        // РАНЬШЕ ЭТОТ СЛУЧАЙ ВООБЩЕ НЕ ЛОГИРОВАЛСЯ — то есть если
+                        // именно guard "тот же document.id" маскировал зависший
+                        // кадр (реальная анимация уже мертва, а мы думаем, что
+                        // она играет, и поэтому ничего не делаем), мы бы этого
+                        // никогда не увидели ни в одном логе. Теперь видно явно.
+                        PotokDebugLog.d("VIDEOPLAY", "post=" + mo.getId() + " pos=" + position
+                            + " GUARD_SKIP (тот же document.id=" + document.id
+                            + ", setImage/startAnimation НЕ вызывались) " + mediaDiagSnapshot(img));
                     }
                 } else if (!videoAutoload && !fileExists) {
                     // Автозагрузка выключена — только стрип-thumb/маленькая миниатюра,
@@ -2214,6 +2339,8 @@ public class PotokFeedPostCell extends LinearLayout {
                 // скачан/качается) — bind() пересчитывает fileExists и duration/size
                 // текст заново на каждый вызов.
                 final int bindPosition = position;
+                final long downloadDiagDocId = document.id;
+                final long downloadDiagPostId = mo.getId();
                 holder.downloadPlate.bind(document, mo.currentAccount, () -> {
                     // Файл докачался — перепривязываем ячейку: canDecodeFromVideo теперь
                     // увидит fileExists=true и покажет уже настоящий декодированный кадр.
@@ -2226,7 +2353,30 @@ public class PotokFeedPostCell extends LinearLayout {
                     // была "in layout or scroll" на момент выполнения). Теперь используем
                     // safeNotifyItemChanged(), которая сама проверяет isComputingLayout()
                     // и при необходимости переоткладывает себя ещё раз.
+                    // ДИАГНОСТИКА (не фикс): раньше здесь не было НИ ОДНОЙ строки лога —
+                    // если именно этот путь (докачка кнопкой) и есть источник Блока E
+                    // (зависший кадр после 100% докачки), мы бы этого никогда не увидели.
+                    // bindPosition захвачен в момент bind() — если к моменту колбэка
+                    // getAdapterPosition() у holder'а разошёлся с bindPosition, это тоже
+                    // будет видно и станет отдельной подсказкой.
+                    int liveAdapterPos = holder.getAdapterPosition();
+                    PotokDebugLog.d("VIDEOPLAY", "post=" + downloadDiagPostId + " docId=" + downloadDiagDocId
+                        + " ЗАВЕРШЕНА ДОКАЧКА callback, bindPosition=" + bindPosition
+                        + " liveAdapterPosition=" + liveAdapterPos
+                        + " lastAutoplayDocumentId(до safeNotifyItemChanged)=" + holder.lastAutoplayDocumentId
+                        + " " + mediaDiagSnapshot(holder.img));
                     safeNotifyItemChanged(bindPosition);
+                    // Ещё один снэпшот через 1000мс ПОСЛЕ safeNotifyItemChanged — если
+                    // rebind прошёл, тут должно быть видно новое состояние; если нет —
+                    // значит либо rebind не случился, либо случился, но декодер всё
+                    // равно не ожил.
+                    final java.lang.ref.WeakReference<BackupImageView> imgRef3 = new java.lang.ref.WeakReference<>(holder.img);
+                    holder.img.postDelayed(() -> {
+                        BackupImageView i = imgRef3.get();
+                        if (i == null) return;
+                        PotokDebugLog.d("VIDEOPLAY", "post=" + downloadDiagPostId + " docId=" + downloadDiagDocId
+                            + " +1000ms ПОСЛЕ докачки/rebind " + mediaDiagSnapshot(i));
+                    }, 1000);
                 });
 
                 // СПОЙЛЕР + ВИДЕО/GIF, снятие: раньше единственным способом "ожить"
@@ -2266,6 +2416,13 @@ public class PotokFeedPostCell extends LinearLayout {
                     boolean freshCanDecode = !mo.isRepostPreview
                         && !(document instanceof TLRPC.TL_documentEncrypted)
                         && (freshFileExists || (mo.canStreamVideo() && videoAutoload));
+                    // ДИАГНОСТИКА (не фикс): раньше здесь лога не было вообще — не видно
+                    // было, какое именно решение принято в момент тапа по спойлеру.
+                    PotokDebugLog.d("SPOILER_BLUR", "post=" + mo.getId()
+                        + " onRevealed freshCanDecode=" + freshCanDecode
+                        + " freshFileExists=" + freshFileExists
+                        + " canStreamVideo=" + mo.canStreamVideo()
+                        + " videoAutoload=" + videoAutoload);
                     if (freshCanDecode) {
                         img.getImageReceiver().setAllowDecodeSingleFrame(true);
                         img.getImageReceiver().setAllowStartAnimation(true);
@@ -2279,6 +2436,19 @@ public class PotokFeedPostCell extends LinearLayout {
                         img.getImageReceiver().startAnimation();
                         holder.playIndicator.setVisibility(GONE);
                         holder.downloadPlate.setVisibility(GONE);
+                        {
+                            final long diagPostId4 = mo.getId();
+                            final java.lang.ref.WeakReference<BackupImageView> imgRef4 = new java.lang.ref.WeakReference<>(img);
+                            int[] delays4 = {0, 500, 1500, 4000};
+                            for (int d : delays4) {
+                                img.postDelayed(() -> {
+                                    BackupImageView i = imgRef4.get();
+                                    if (i == null) return;
+                                    PotokDebugLog.d("VIDEOPLAY", "post=" + diagPostId4 + " ПОСЛЕ СНЯТИЯ СПОЙЛЕРА +" + d + "ms "
+                                        + mediaDiagSnapshot(i));
+                                }, d);
+                            }
+                        }
                     } else {
                         img.setImage(
                             ImageLocation.getForObject(sharpPhotoObj, document), sharpMainFilter,

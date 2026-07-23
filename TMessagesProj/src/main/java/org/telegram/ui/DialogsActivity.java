@@ -275,6 +275,13 @@ import me.vkryl.android.animator.BoolAnimator;
 import me.vkryl.android.animator.FactorAnimator;
 
 public class DialogsActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate, FloatingDebugProvider, FactorAnimator.Target, MainTabsActivity.TabFragmentDelegate {
+    // ДИАГНОСТИКА "шрифт заголовка typefeed при раскрытии сторис-хедера" (см.
+    // updateStoriesViewAlpha ниже и комментарий у applyTypefeedFont). Эталонный
+    // объект Typeface, применённый один раз при создании actionBar — сравнивается
+    // по ССЫЛКЕ (==), не по содержимому, потому что нас интересует именно факт
+    // подмены объекта, а не визуальное сходство.
+    private android.graphics.Typeface typefeedExpectedTypeface;
+    private boolean typefeedTypefaceMismatchLogged;
     private final int ADDITIONAL_LIST_HEIGHT_DP = Build.VERSION.SDK_INT >= 31 ? 48 : 0;
 
     private static final boolean TMP_DISABLE_TOPICS_TWO_COLUMNS = false;
@@ -1588,6 +1595,29 @@ public boolean onTouchEvent(MotionEvent ev) {
     }
 
     private void updateStoriesViewAlpha(float alpha) {
+        // ДИАГНОСТИКА "шрифт заголовка typefeed при раскрытии сторис-хедера":
+        // эта функция вызывается на каждый скролл/изменение прогресса раскрытия —
+        // то есть ровно в моменты перехода между свёрнутым и развёрнутым видом
+        // (скрин 1 vs скрин 2 из отчёта пользователя). Сравниваем ЖИВОЙ typeface
+        // с эталонным объектом, сохранённым в момент применения — если они вдруг
+        // разошлись (кто-то extends подменил typeface на titleTextView уже ПОСЛЕ
+        // исходного applyTypefeedFont), логируем ОДИН раз (не на каждый кадр
+        // скролла, иначе буфер в 4000 строк переполнится за секунды) сам факт и
+        // новый typeface — это покажет, что именно происходит: подмена объекта,
+        // либо titleTextView[0] вообще стал другим инстансом (пересоздание).
+        if (!typefeedTypefaceMismatchLogged && typefeedExpectedTypeface != null
+                && actionBar != null && actionBar.getTitleTextView() != null) {
+            android.graphics.Typeface liveTypeface = actionBar.getTitleTextView().getPaint() != null
+                    ? actionBar.getTitleTextView().getPaint().getTypeface() : null;
+            if (liveTypeface != typefeedExpectedTypeface) {
+                typefeedTypefaceMismatchLogged = true;
+                PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: РАСХОЖДЕНИЕ обнаружено в updateStoriesViewAlpha,"
+                        + " ожидался typeface=" + typefeedExpectedTypeface
+                        + ", реально на titleTextView=" + liveTypeface
+                        + ", titleTextView instance=" + System.identityHashCode(actionBar.getTitleTextView())
+                        + ", storyAlpha=" + alpha);
+            }
+        }
         final float factorSearch = Utilities.clamp(searchAnimationProgress * 2, 1f, 0f);
         dialogStoriesCell.setAlpha((1f - progressToActionMode) * alpha * progressToDialogStoriesCell * (1f - factorSearch));
         float containersAlpha;
@@ -3471,6 +3501,17 @@ public boolean onTouchEvent(MotionEvent ev) {
                         // блок кода в реальности не выполняется на устройстве, и
                         // проблема на уровне "какая сборка реально установлена".
                         PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: avenir_black.ttf успешно применён на titleTextView, typeface=" + typefeedFont);
+                        // ФАЗА 2 ДИАГНОСТИКИ (эта сессия): предыдущий лог подтвердил, что
+                        // шрифт применяется успешно — значит проблема не "код не
+                        // выполняется", а что-то СБРАСЫВАЕТ typeface обратно уже ПОСЛЕ.
+                        // Запоминаем этот конкретный объект Typeface как эталон, чтобы
+                        // сравнивать с ним при каждом изменении прогресса раскрытия
+                        // сторис-хедера (см. updateStoriesViewAlpha ниже) — если объект
+                        // вдруг перестанет совпадать (по ссылке ==), залогируем ОДИН раз
+                        // сам факт подмены плюс новый typeface, чтобы понять, кто и когда
+                        // его меняет.
+                        typefeedExpectedTypeface = typefeedFont;
+                        typefeedTypefaceMismatchLogged = false;
                     } else {
                         PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: actionBar.getTitleTextView() == null, применить typeface некуда");
                     }

@@ -1719,11 +1719,15 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         public void onViewAttachedToWindow(MediaHolder holder) {
             super.onViewAttachedToWindow(holder);
-            PotokDebugLog.d("GHOST", "carousel ATTACH holder=" + System.identityHashCode(holder)
-                + " img=" + System.identityHashCode(holder.img)
-                + " hasBitmap=" + holder.img.getImageReceiver().hasBitmapImage()
-                + " isAnimation=" + (holder.img.getImageReceiver().getAnimation() != null));
-            // ФИКС "видео зависает/не воспроизводится после скролла туда-обратно":
+            // ДИАГНОСТИКА: раньше здесь логировались только hasBitmap/isAnimation
+            // (куцый формат) — теперь полный mediaDiagSnapshot, потому что именно
+            // это место — главный подозреваемый (скролл карусели туда-обратно).
+            PotokDebugLog.d("VIDEOPLAY", "carousel ATTACH holder=" + System.identityHashCode(holder)
+                + " lastAutoplayDocumentId=" + holder.lastAutoplayDocumentId
+                + " " + mediaDiagSnapshot(holder.img));
+            // ФИКС "видео зависает/не воспроизводится после скролла туда-обратно"
+            // (уже существовал ДО этой сессии, не трогаю поведение — только лог
+            // выше добавлен):
             // ImageReceiver освобождает decoded-анимацию при onDetachedFromWindow
             // (экономия памяти), а guard lastAutoplayDocumentId (см. onBindViewHolder,
             // ветка canDecodeFromVideo) намеренно НЕ вызывает повторно setImage+
@@ -1735,6 +1739,9 @@ public class PotokFeedPostCell extends LinearLayout {
             // может вообще не случиться. Если видим именно такое рассогласование —
             // сбрасываем guard и форсируем настоящий re-bind этой позиции.
             if (holder.lastAutoplayDocumentId != 0 && holder.img.getImageReceiver().getAnimation() == null) {
+                PotokDebugLog.d("VIDEOPLAY", "carousel ATTACH holder=" + System.identityHashCode(holder)
+                    + " ОБНАРУЖЕНО РАССОГЛАСОВАНИЕ: lastAutoplayDocumentId != 0, но getAnimation()==null"
+                    + " -> сбрасываю guard и форсирую safeNotifyItemChanged (существующий фикс, не новый)");
                 holder.lastAutoplayDocumentId = 0;
                 int pos = holder.getAdapterPosition();
                 if (pos != RecyclerView.NO_POSITION) {
@@ -1746,9 +1753,9 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         public void onViewDetachedFromWindow(MediaHolder holder) {
             super.onViewDetachedFromWindow(holder);
-            PotokDebugLog.d("GHOST", "carousel DETACH holder=" + System.identityHashCode(holder)
-                + " img=" + System.identityHashCode(holder.img)
-                + " isAnimation=" + (holder.img.getImageReceiver().getAnimation() != null));
+            PotokDebugLog.d("VIDEOPLAY", "carousel DETACH holder=" + System.identityHashCode(holder)
+                + " lastAutoplayDocumentId=" + holder.lastAutoplayDocumentId
+                + " " + mediaDiagSnapshot(holder.img));
         }
 
         // ФИКС КРАША "IllegalStateException: Cannot call this method while
@@ -1788,6 +1795,10 @@ public class PotokFeedPostCell extends LinearLayout {
         public void onBindViewHolder(MediaHolder holder, int position) {
             MessageObject mo = items.get(position);
             BackupImageView img = holder.img;
+            // См. комментарий у поля MediaHolder.bindGeneration — новое поколение
+            // на каждый bind, используется ниже отложенными diag-снэпшотами, чтобы
+            // не подписать состояние чужого видео чужим post_id при быстром скролле.
+            final long myBindGeneration = ++holder.bindGeneration;
 
             // ВРЕМЕННАЯ диагностика двоения кадров: ловим реальный стек вызова
             // onBindViewHolder, троттлированно (раз в секунду на пост), чтобы
@@ -2206,11 +2217,19 @@ public class PotokFeedPostCell extends LinearLayout {
                     img.postDelayed(() -> {
                         BackupImageView i = imgRef.get();
                         if (i == null) return;
+                        if (holder.bindGeneration != myBindGeneration) {
+                            PotokDebugLog.d("BLUR", "post=" + diagPostId + " +800ms STALE (holder уже переиспользован под другой пост, снэпшот пропущен)");
+                            return;
+                        }
                         PotokDebugLog.d("BLUR", "post=" + diagPostId + " +800ms " + mediaDiagSnapshot(i));
                     }, 800);
                     img.postDelayed(() -> {
                         BackupImageView i = imgRef.get();
                         if (i == null) return;
+                        if (holder.bindGeneration != myBindGeneration) {
+                            PotokDebugLog.d("BLUR", "post=" + diagPostId + " +2500ms STALE (holder уже переиспользован под другой пост, снэпшот пропущен)");
+                            return;
+                        }
                         PotokDebugLog.d("BLUR", "post=" + diagPostId + " +2500ms " + mediaDiagSnapshot(i));
                     }, 2500);
                 }
@@ -2257,6 +2276,10 @@ public class PotokFeedPostCell extends LinearLayout {
                             img.postDelayed(() -> {
                                 BackupImageView i = imgRef2.get();
                                 if (i == null) return;
+                                if (holder.bindGeneration != myBindGeneration) {
+                                    PotokDebugLog.d("VIDEOPLAY", "post=" + diagPostId2 + " +" + d + "ms STALE (holder уже переиспользован под другой пост, снэпшот пропущен)");
+                                    return;
+                                }
                                 PotokDebugLog.d("VIDEOPLAY", "post=" + diagPostId2 + " +" + d + "ms "
                                     + mediaDiagSnapshot(i));
                             }, d);
@@ -2360,9 +2383,11 @@ public class PotokFeedPostCell extends LinearLayout {
                     // getAdapterPosition() у holder'а разошёлся с bindPosition, это тоже
                     // будет видно и станет отдельной подсказкой.
                     int liveAdapterPos = holder.getAdapterPosition();
+                    boolean staleDownloadCallback = holder.bindGeneration != myBindGeneration;
                     PotokDebugLog.d("VIDEOPLAY", "post=" + downloadDiagPostId + " docId=" + downloadDiagDocId
                         + " ЗАВЕРШЕНА ДОКАЧКА callback, bindPosition=" + bindPosition
                         + " liveAdapterPosition=" + liveAdapterPos
+                        + (staleDownloadCallback ? " STALE_CALLBACK (holder уже перебинден на другой пост/поколение, следующие данные могут относиться к ДРУГОМУ документу)" : "")
                         + " lastAutoplayDocumentId(до safeNotifyItemChanged)=" + holder.lastAutoplayDocumentId
                         + " " + mediaDiagSnapshot(holder.img));
                     safeNotifyItemChanged(bindPosition);
@@ -2374,6 +2399,11 @@ public class PotokFeedPostCell extends LinearLayout {
                     holder.img.postDelayed(() -> {
                         BackupImageView i = imgRef3.get();
                         if (i == null) return;
+                        if (holder.bindGeneration != myBindGeneration) {
+                            PotokDebugLog.d("VIDEOPLAY", "post=" + downloadDiagPostId + " docId=" + downloadDiagDocId
+                                + " +1000ms STALE (holder уже переиспользован под другой пост, снэпшот пропущен)");
+                            return;
+                        }
                         PotokDebugLog.d("VIDEOPLAY", "post=" + downloadDiagPostId + " docId=" + downloadDiagDocId
                             + " +1000ms ПОСЛЕ докачки/rebind " + mediaDiagSnapshot(i));
                     }, 1000);
@@ -2444,6 +2474,10 @@ public class PotokFeedPostCell extends LinearLayout {
                                 img.postDelayed(() -> {
                                     BackupImageView i = imgRef4.get();
                                     if (i == null) return;
+                                    if (holder.bindGeneration != myBindGeneration) {
+                                        PotokDebugLog.d("VIDEOPLAY", "post=" + diagPostId4 + " ПОСЛЕ СНЯТИЯ СПОЙЛЕРА +" + d + "ms STALE (holder уже переиспользован под другой пост, снэпшот пропущен)");
+                                        return;
+                                    }
                                     PotokDebugLog.d("VIDEOPLAY", "post=" + diagPostId4 + " ПОСЛЕ СНЯТИЯ СПОЙЛЕРА +" + d + "ms "
                                         + mediaDiagSnapshot(i));
                                 }, d);
@@ -2675,6 +2709,14 @@ public class PotokFeedPostCell extends LinearLayout {
             // если при повторном bind() это тот же документ, setImage/startAnimation
             // просто пропускаем, декодер продолжает играть как играл.
             long lastAutoplayDocumentId = 0;
+            // Счётчик поколений bind'а — растёт на каждый onBindViewHolder этого
+            // holder'а. Нужен ТОЛЬКО чтобы отложенные (postDelayed) диагностические
+            // снэпшоты ниже могли проверить "а не переехал ли этот holder за время
+            // ожидания на СОВСЕМ ДРУГОЙ пост" (типичный сценарий быстрого скролла) —
+            // без этой проверки лог мог бы подписать состояние чужого видео чужим
+            // post_id, что сделало бы диагностику недостоверной именно в сценарии
+            // "быстрый скролл", который нас и интересует больше всего.
+            long bindGeneration = 0;
             MediaHolder(View wrapper, BackupImageView img, PlayIndicatorView playIndicator, VideoDownloadPlate downloadPlate, PhotoDownloadOverlay photoOverlay, SpoilerOverlay spoilerOverlay) {
                 super(wrapper);
                 this.img = img;

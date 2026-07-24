@@ -1738,15 +1738,59 @@ public class PotokFeedPostCell extends LinearLayout {
             // потеряна, а guard всё ещё думает, что видео "играет", и новый bind
             // может вообще не случиться. Если видим именно такое рассогласование —
             // сбрасываем guard и форсируем настоящий re-bind этой позиции.
+            // ФИКС "двойная загрузка видео" (подтверждено логом [VIDEOPLAY]:
+            // carousel bind+startAnimation дважды подряд для ОДНОГО и того же
+            // holder+img+document). Причина: эта проверка раньше форсировала
+            // safeNotifyItemChanged МГНОВЕННО, синхронно на первом же ATTACH,
+            // если lastAutoplayDocumentId уже стоит, а getAnimation()==null.
+            // Условие верно распознаёт "скролл туда-обратно БЕЗ нового bind"
+            // (для чего изначально и писалось — тут менять логику не стал), но
+            // ТАК ЖЕ ложно срабатывает на обычном prefetch-биндинге: GapWorker
+            // может вызвать onBindViewHolder ДО того, как ячейка реально попадёт
+            // на экран — setImage()+startAnimation() уже вызваны в bind(), но
+            // AnimatedFileDrawable ещё физически не успел создаться (реальная
+            // загрузка стартует только после onAttachedToWindow), и
+            // getAnimation()==null в этот момент — это НЕ баг, просто "ещё не
+            // готово". Мгновенный форс-ребинд здесь запускал setImage()+
+            // startAnimation() ВТОРОЙ раз поверх ещё не завершившегося первого
+            // запроса — отсюда двойная докачка/декодирование одного и того же
+            // видео, которое было видно в логе (два "carousel bind+startAnimation"
+            // с одинаковым holder/img в течение ~10-15мс).
+            // Даём ImageReceiver'у 600мс на то, чтобы реально начать загрузку
+            // после attach, и проверяем ЕЩЁ РАЗ — форсируем ребинд, только если
+            // рассинхрон НЕ исчез сам (то есть это действительно "скролл туда-
+            // обратно без нового bind", а не "просто ещё не успело").
             if (holder.lastAutoplayDocumentId != 0 && holder.img.getImageReceiver().getAnimation() == null) {
+                final long myBindGenerationForAttachCheck = holder.bindGeneration;
+                final long checkedDocumentId = holder.lastAutoplayDocumentId;
                 PotokDebugLog.d("VIDEOPLAY", "carousel ATTACH holder=" + System.identityHashCode(holder)
-                    + " ОБНАРУЖЕНО РАССОГЛАСОВАНИЕ: lastAutoplayDocumentId != 0, но getAnimation()==null"
-                    + " -> сбрасываю guard и форсирую safeNotifyItemChanged (существующий фикс, не новый)");
-                holder.lastAutoplayDocumentId = 0;
-                int pos = holder.getAdapterPosition();
-                if (pos != RecyclerView.NO_POSITION) {
-                    safeNotifyItemChanged(pos);
-                }
+                    + " ВОЗМОЖНОЕ РАССОГЛАСОВАНИЕ: lastAutoplayDocumentId=" + checkedDocumentId
+                    + " != 0, но getAnimation()==null -> откладываю решение на 600мс"
+                    + " (не форсирую ребинд мгновенно, чтобы не задваивать загрузку)");
+                holder.img.postDelayed(() -> {
+                    if (holder.bindGeneration != myBindGenerationForAttachCheck) {
+                        PotokDebugLog.d("VIDEOPLAY", "carousel ATTACH holder=" + System.identityHashCode(holder)
+                            + " отложенная проверка рассогласования: holder уже переиспользован под другой bind,"
+                            + " проверка отменена (STALE)");
+                        return;
+                    }
+                    if (holder.lastAutoplayDocumentId == checkedDocumentId
+                            && holder.img.getImageReceiver().getAnimation() == null) {
+                        PotokDebugLog.d("VIDEOPLAY", "carousel ATTACH holder=" + System.identityHashCode(holder)
+                            + " ОБНАРУЖЕНО РАССОГЛАСОВАНИЕ (после 600мс grace-периода, не сразу):"
+                            + " lastAutoplayDocumentId != 0, но getAnimation()==null"
+                            + " -> сбрасываю guard и форсирую safeNotifyItemChanged");
+                        holder.lastAutoplayDocumentId = 0;
+                        int pos = holder.getAdapterPosition();
+                        if (pos != RecyclerView.NO_POSITION) {
+                            safeNotifyItemChanged(pos);
+                        }
+                    } else {
+                        PotokDebugLog.d("VIDEOPLAY", "carousel ATTACH holder=" + System.identityHashCode(holder)
+                            + " рассогласование исчезло само за 600мс (это был обычный prefetch-бинд,"
+                            + " не баг) -> форс-ребинд НЕ нужен, повторной загрузки не будет");
+                    }
+                }, 600);
             }
         }
 

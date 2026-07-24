@@ -2303,6 +2303,25 @@ public class PotokFeedPostCell extends LinearLayout {
                         boolean coldStreamStart = !fileExists;
                         long bindStartRealtime = android.os.SystemClock.elapsedRealtime();
                         String diagFileName = FileLoader.getAttachFileName(document);
+                        // НОВАЯ ДИАГНОСТИКА (гипотеза причины задержки 3-4с из лога поста
+                        // 34877): fileExists=true подтверждён через getPathToAttach(document,
+                        // false), НО AnimatedFileDrawable создаётся с streamFileSize=document.size
+                        // (см. setImage ниже, параметр size) — нативный декодер сравнивает
+                        // РЕАЛЬНЫЙ размер файла на диске с этим ожидаемым размером; если они не
+                        // совпадают (например, document — другой TLRPC.Document-инстанс с тем же
+                        // физическим файлом dc_id_id, но другим полем size, из-за merge/repost
+                        // логики ленты), декодер считает файл неполным и запускает докачку
+                        // "недостающих" байт через тот же FileLoader-стрим, даже если файл на
+                        // самом деле уже целиком на диске. Логируем оба числа прямо здесь, ДО
+                        // setImage, чтобы точно увидеть, совпадают они или нет.
+                        long realOnDiskLength = cacheFile != null ? cacheFile.length() : -1;
+                        PotokDebugLog.d("VIDEOPLAY", "post=" + mo.getId() + " pos=" + position
+                            + " ДИАГ_РАЗМЕР_ФАЙЛА document.id=" + document.id
+                            + " document.dc_id=" + document.dc_id
+                            + " document.size(ожидается декодером)=" + document.size
+                            + " realOnDiskLength(реально на диске)=" + realOnDiskLength
+                            + " SIZE_MISMATCH=" + (realOnDiskLength >= 0 && realOnDiskLength != document.size)
+                            + " documentIdentity=" + System.identityHashCode(document));
                         PotokDebugLog.d("GHOST", "carousel bind+startAnimation post=" + mo.getId()
                             + " pos=" + position + " holder=" + System.identityHashCode(holder)
                             + " img=" + System.identityHashCode(img)

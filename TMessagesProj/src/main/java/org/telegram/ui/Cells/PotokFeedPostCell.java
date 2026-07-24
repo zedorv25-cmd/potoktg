@@ -2233,6 +2233,38 @@ public class PotokFeedPostCell extends LinearLayout {
                         PotokDebugLog.d("BLUR", "post=" + diagPostId + " +2500ms " + mediaDiagSnapshot(i));
                     }, 2500);
                 }
+                // ФИКС "видео продолжает играть после удаления из кэша" (Блок E,
+                // сценарий в, согласовано с пользователем): раньше остановка
+                // анимации целиком полагалась на побочный эффект setImage() ниже —
+                // но в ImageReceiver.setImage() (см. ~строку 679 в
+                // ImageReceiver.java, оригинал Telegram) есть ранний return: если
+                // новый imageKey (статичный currentPhotoObject) СОВПАДАЕТ с уже
+                // закэшированным currentImageKey (а он совпадает — currentPhotoObject
+                // один и тот же что во время "видео играет", что после удаления
+                // файла), метод выходит ДО того места, где вызывается
+                // recycleBitmap(mediaKey, TYPE_MEDIA) — именно этот вызов должен был
+                // остановить/освободить AnimatedFileDrawable. То есть смена ветки
+                // canDecodeFromVideo: true -> false сама по себе НИЧЕГО не
+                // останавливала, анимация продолжала играть на уже раньше
+                // декодированных/закэшированных кадрах, хотя plate и play-кнопка уже
+                // корректно показывались (они зависят только от fileExists, не от
+                // состояния анимации). В оригинальном Telegram
+                // (ChatMessageCell.checkVideoPlayback()) на этот побочный эффект
+                // никогда не полагаются — там всегда явный photoImage.stopAnimation().
+                // Делаем то же самое явно, до входа в ветки ниже.
+                if (!canDecodeFromVideo && holder.lastAutoplayDocumentId != 0) {
+                    PotokDebugLog.d("VIDEOPLAY", "post=" + mo.getId() + " pos=" + position
+                        + " ФИКС zombie-playback: canDecodeFromVideo стало false, но"
+                        + " lastAutoplayDocumentId=" + holder.lastAutoplayDocumentId
+                        + " (видео уже играло в этом holder'е) -> явный stopAnimation()."
+                        + " ДО: " + mediaDiagSnapshot(img));
+                    img.getImageReceiver().setAllowStartAnimation(false);
+                    img.getImageReceiver().stopAnimation();
+                    holder.lastAutoplayDocumentId = 0;
+                    PotokDebugLog.d("VIDEOPLAY", "post=" + mo.getId() + " pos=" + position
+                        + " ПОСЛЕ явного stopAnimation(): " + mediaDiagSnapshot(img));
+                }
+
                 if (canDecodeFromVideo) {
                     // Бесшумное инлайн-автовоспроизведение кэшированного видео — как GIF,
                     // точная копия ветки DOCUMENT_ATTACH_TYPE_VIDEO из оригинального
@@ -2252,9 +2284,29 @@ public class PotokFeedPostCell extends LinearLayout {
                     // позицию без реальной смены видео).
                     if (holder.lastAutoplayDocumentId != document.id) {
                         holder.lastAutoplayDocumentId = document.id;
+                        // ДИАГНОСТИКА "задержка 3-4 сек перед стартом видео" (Блок E,
+                        // не фикс): coldStreamStart=true — файла ещё НЕТ целиком на
+                        // диске, canDecodeFromVideo пустил сюда через
+                        // mo.canStreamVideo() && videoAutoload — AnimatedFileDrawable
+                        // декодирует кадры ПРЯМО ИЗ ПОТОКА байт по мере докачки.
+                        // Гипотеза: сама задержка может быть просто временем сетевой
+                        // докачки первого играбельного куска (не бага) — особенно
+                        // если одновременно докачивается несколько видео сразу
+                        // (карусель/лента может забиндить соседние посты заранее,
+                        // см. OUTER_FEED_CELL ATTACH/DETACH лог). Снэпшоты чаще в
+                        // первые секунды (было всего 4 точки 0/500/1500/4000мс без
+                        // данных о сети) + прогресс докачки/isLoadingFile на каждой
+                        // точке — покажет, тратится ли время на сеть (isLoadingFile=
+                        // true, progress растёт) или байты уже все на месте, а
+                        // декодер/анимация всё равно не стартует (isLoadingFile=
+                        // false, но hasBitmap/isAnimationRunning всё ещё false).
+                        boolean coldStreamStart = !fileExists;
+                        long bindStartRealtime = android.os.SystemClock.elapsedRealtime();
+                        String diagFileName = FileLoader.getAttachFileName(document);
                         PotokDebugLog.d("GHOST", "carousel bind+startAnimation post=" + mo.getId()
                             + " pos=" + position + " holder=" + System.identityHashCode(holder)
-                            + " img=" + System.identityHashCode(img));
+                            + " img=" + System.identityHashCode(img)
+                            + " coldStreamStart=" + coldStreamStart);
                         img.getImageReceiver().setImage(
                             ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER,
                             ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,
@@ -2264,14 +2316,9 @@ public class PotokFeedPostCell extends LinearLayout {
                             sharpStrippedThumb, document.size, (String) null, mo, 0
                         );
                         img.getImageReceiver().startAnimation();
-                        // ДИАГНОСТИКА (не фикс) — четыре снэпшота после старта
-                        // анимации, а не один (было 300мс) — чтобы отличить "не
-                        // стартовало вообще" от "стартовало и заглохло позже"
-                        // (в т.ч. дольше, чем через 300мс, что раньше физически
-                        // не могли увидеть).
                         final long diagPostId2 = mo.getId();
                         final java.lang.ref.WeakReference<BackupImageView> imgRef2 = new java.lang.ref.WeakReference<>(img);
-                        int[] delays = {0, 500, 1500, 4000};
+                        int[] delays = {0, 100, 250, 500, 1000, 1500, 2000, 3000, 4000, 6000};
                         for (int d : delays) {
                             img.postDelayed(() -> {
                                 BackupImageView i = imgRef2.get();
@@ -2280,8 +2327,14 @@ public class PotokFeedPostCell extends LinearLayout {
                                     PotokDebugLog.d("VIDEOPLAY", "post=" + diagPostId2 + " +" + d + "ms STALE (holder уже переиспользован под другой пост, снэпшот пропущен)");
                                     return;
                                 }
-                                PotokDebugLog.d("VIDEOPLAY", "post=" + diagPostId2 + " +" + d + "ms "
-                                    + mediaDiagSnapshot(i));
+                                long realElapsed = android.os.SystemClock.elapsedRealtime() - bindStartRealtime;
+                                boolean isLoadingNow = FileLoader.getInstance(mo.currentAccount).isLoadingFile(diagFileName);
+                                Float progressNow = org.telegram.messenger.ImageLoader.getInstance().getFileProgress(diagFileName);
+                                PotokDebugLog.d("VIDEOPLAY", "post=" + diagPostId2 + " +" + d + "ms(план)/" + realElapsed + "ms(факт) "
+                                    + "coldStreamStart=" + coldStreamStart
+                                    + " isLoadingFile=" + isLoadingNow
+                                    + " downloadProgress=" + (progressNow != null ? String.format(java.util.Locale.US, "%.0f%%", progressNow * 100) : "null")
+                                    + " " + mediaDiagSnapshot(i));
                             }, d);
                         }
                     } else {

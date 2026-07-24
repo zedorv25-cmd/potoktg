@@ -3072,6 +3072,18 @@ public boolean onTouchEvent(MotionEvent ev) {
 
     @Override
     public ActionBar createActionBar(Context context) {
+        // НОВАЯ ДИАГНОСТИКА (источник подмены шрифта "typefeed" при повторном открытии
+        // приложения): раньше здесь не логировался сам факт вызова этого метода. Если
+        // после повторного открытия приложения в логе появится ВТОРАЯ строка
+        // "createActionBar ВЫЗВАН" — значит ActionBar/titleTextView пересоздаются заново
+        // (и тогда искать причину неправильного шрифта нужно именно в момент повторного
+        // создания — например, context.getAssets() на этот раз ведёт себя иначе). Если
+        // строка появится только ОДИН раз за всю "холодную" сессию, а шрифт всё равно
+        // меняется при повторном открытии — значит ActionBar НЕ пересоздаётся, объект
+        // titleTextView тот же самый, и что-то меняет typeface у уже существующего
+        // View извне (см. новый лог в onResume() ниже).
+        PotokDebugLog.log("PotokFeedLogo", "DialogsActivity createActionBar ВЫЗВАН, fragment="
+                + System.identityHashCode(this) + " folderId=" + folderId);
         ActionBar actionBar = new ActionBar(context, resourceProvider) {
 
             @Override
@@ -7003,6 +7015,26 @@ public boolean onTouchEvent(MotionEvent ev) {
     @Override
     public void onResume() {
         super.onResume();
+        // НОВАЯ ДИАГНОСТИКА (источник подмены шрифта "typefeed"): фиксируем состояние
+        // typeface на titleTextView В МОМЕНТ onResume, ДО любых других действий этого
+        // метода. Сравниваем с typefeedExpectedTypeface (эталон, сохранённый при
+        // применении шрифта в createActionBar). Если здесь УЖЕ расхождение — значит
+        // шрифт был испорчен ДО onResume (либо между сессиями, либо при пересоздании
+        // View до этой строки) — ищем в createActionBar/getAssets. Если здесь ВСЁ ЕЩЁ
+        // совпадает, а позже (см. лог в updateStoriesViewAlpha) расхождение появляется —
+        // значит подмена происходит уже ПОСЛЕ onResume, во время использования экрана
+        // (скролл/раскрытие сторис-хедера и т.п.).
+        if (actionBar != null && actionBar.getTitleTextView() != null) {
+            android.graphics.Typeface liveTypefaceAtResume = actionBar.getTitleTextView().getPaint() != null
+                    ? actionBar.getTitleTextView().getPaint().getTypeface() : null;
+            PotokDebugLog.log("PotokFeedLogo", "DialogsActivity onResume: typeface на titleTextView="
+                    + liveTypefaceAtResume + " typefeedExpectedTypeface(эталон)=" + typefeedExpectedTypeface
+                    + " СОВПАДАЕТ=" + (liveTypefaceAtResume == typefeedExpectedTypeface)
+                    + " titleTextView instance=" + System.identityHashCode(actionBar.getTitleTextView()));
+        } else {
+            PotokDebugLog.log("PotokFeedLogo", "DialogsActivity onResume: actionBar или titleTextView == null,"
+                    + " сравнить шрифт невозможно");
+        }
         if (dialogStoriesCell != null) {
             dialogStoriesCell.onResume();
         }

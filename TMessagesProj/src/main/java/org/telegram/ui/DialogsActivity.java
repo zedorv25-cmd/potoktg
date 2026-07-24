@@ -1605,17 +1605,34 @@ public boolean onTouchEvent(MotionEvent ev) {
         // скролла, иначе буфер в 4000 строк переполнится за секунды) сам факт и
         // новый typeface — это покажет, что именно происходит: подмена объекта,
         // либо titleTextView[0] вообще стал другим инстансом (пересоздание).
-        if (!typefeedTypefaceMismatchLogged && typefeedExpectedTypeface != null
-                && actionBar != null && actionBar.getTitleTextView() != null) {
+        if (typefeedExpectedTypeface != null && actionBar != null && actionBar.getTitleTextView() != null) {
             android.graphics.Typeface liveTypeface = actionBar.getTitleTextView().getPaint() != null
                     ? actionBar.getTitleTextView().getPaint().getTypeface() : null;
             if (liveTypeface != typefeedExpectedTypeface) {
-                typefeedTypefaceMismatchLogged = true;
-                PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: РАСХОЖДЕНИЕ обнаружено в updateStoriesViewAlpha,"
-                        + " ожидался typeface=" + typefeedExpectedTypeface
-                        + ", реально на titleTextView=" + liveTypeface
-                        + ", titleTextView instance=" + System.identityHashCode(actionBar.getTitleTextView())
-                        + ", storyAlpha=" + alpha);
+                // ФИКС (не только диагностика, как было раньше): причина найдена
+                // чтением ActionBar.java — titleTextView[0] пересоздаётся заново
+                // (createTitleTextView(0), новый инстанс ВСЕГДА с дефолтным
+                // AndroidUtilities.bold()) в нескольких местах общего класса
+                // ActionBar, не только в нашем createActionBar() — например в
+                // setTitleOverlayText() при getMeasuredWidth()==0 или пока
+                // titleTextView[0] ещё невидим (типичный сценарий первых ~300мс
+                // холодного старта, пока меняется статус подключения к сети).
+                // Трогать сам ActionBar.java рискованно — это общий класс на
+                // всё приложение. Вместо этого самовосстанавливаемся здесь: эта
+                // функция вызывается на КАЖДОЕ изменение прогресса раскрытия
+                // сторис-хедера (то есть очень часто, почти на каждый кадр
+                // скролла) — переприменяем эталонный шрифт сразу, как только
+                // видим расхождение, а не только логируем его.
+                actionBar.getTitleTextView().setTypeface(typefeedExpectedTypeface);
+                if (!typefeedTypefaceMismatchLogged) {
+                    typefeedTypefaceMismatchLogged = true;
+                    PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: РАСХОЖДЕНИЕ обнаружено в updateStoriesViewAlpha,"
+                            + " ожидался typeface=" + typefeedExpectedTypeface
+                            + ", реально БЫЛО на titleTextView=" + liveTypeface
+                            + ", titleTextView instance=" + System.identityHashCode(actionBar.getTitleTextView())
+                            + ", storyAlpha=" + alpha
+                            + " -> ФИКС: шрифт переприменён");
+                }
             }
         }
         final float factorSearch = Utilities.clamp(searchAnimationProgress * 2, 1f, 0f);
@@ -7027,10 +7044,28 @@ public boolean onTouchEvent(MotionEvent ev) {
         if (actionBar != null && actionBar.getTitleTextView() != null) {
             android.graphics.Typeface liveTypefaceAtResume = actionBar.getTitleTextView().getPaint() != null
                     ? actionBar.getTitleTextView().getPaint().getTypeface() : null;
+            boolean matchesAtResume = liveTypefaceAtResume == typefeedExpectedTypeface;
             PotokDebugLog.log("PotokFeedLogo", "DialogsActivity onResume: typeface на titleTextView="
                     + liveTypefaceAtResume + " typefeedExpectedTypeface(эталон)=" + typefeedExpectedTypeface
-                    + " СОВПАДАЕТ=" + (liveTypefaceAtResume == typefeedExpectedTypeface)
+                    + " СОВПАДАЕТ=" + matchesAtResume
                     + " titleTextView instance=" + System.identityHashCode(actionBar.getTitleTextView()));
+            // ФИКС "шрифт typefeed слетает на дефолтный" (не только диагностика).
+            // Причина найдена чтением ActionBar.java: titleTextView[0] пересоздаётся
+            // заново (createTitleTextView(0), новый инстанс всегда с дефолтным
+            // AndroidUtilities.bold()) в НЕСКОЛЬКИХ местах общего класса ActionBar —
+            // не только в нашем createActionBar(), но и, например, в
+            // setTitleOverlayText() при getMeasuredWidth()==0 или когда
+            // titleTextView[0] на тот момент невидим — это НЕ баг ActionBar как
+            // такового (он общий для всего приложения и трогать его рискованно),
+            // а просто мы не переприменяли свой кастомный шрифт после каждого
+            // такого пересоздания. Раз эталонный typefeedExpectedTypeface уже
+            // загружен и лежит в памяти — просто переприменяем его тут же, если
+            // видим расхождение.
+            if (!matchesAtResume && typefeedExpectedTypeface != null) {
+                actionBar.getTitleTextView().setTypeface(typefeedExpectedTypeface);
+                PotokDebugLog.log("PotokFeedLogo", "DialogsActivity onResume: ФИКС — Avenir Black переприменён"
+                        + " на titleTextView instance=" + System.identityHashCode(actionBar.getTitleTextView()));
+            }
         } else {
             PotokDebugLog.log("PotokFeedLogo", "DialogsActivity onResume: actionBar или titleTextView == null,"
                     + " сравнить шрифт невозможно");

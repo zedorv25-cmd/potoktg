@@ -993,9 +993,18 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             FeedItem b = result.get(i + 1);
             boolean aIsPollOnly = isPollOnlyItem(a);
             boolean bIsPollOnly = isPollOnlyItem(b);
-            if (aIsPollOnly == bIsPollOnly) continue; // нужен ровно один опрос из пары
-            FeedItem pollItem = aIsPollOnly ? a : b;
-            FeedItem mediaItem = aIsPollOnly ? b : a;
+            // СТРОГОЕ направление: a (индекс i, "новее" — getHistory отдаёт от новых
+            // к старым) должен быть опросом, а b (индекс i+1, "старше") — медиа-соседом,
+            // отправленным РАНЬШЕ опроса в реальном времени. Раньше здесь принималась
+            // пара в ЛЮБОМ порядке (aIsPollOnly==bIsPollOnly пропускался, но обратный
+            // случай — медиа новее опроса — считался валидным наравне с правильным).
+            // Из-за этого опрос мог склеиться с сообщением, отправленным ПОЗЖЕ него
+            // (баг, воспроизведённый пользователем: файл, отправленный в канал уже
+            // ПОСЛЕ опроса, "перехватывал" склейку вместо настоящего фото-соседа,
+            // отправленного непосредственно перед опросом).
+            if (!aIsPollOnly || bIsPollOnly) continue;
+            FeedItem pollItem = a;
+            FeedItem mediaItem = b;
             // НОВАЯ ДИАГНОСТИКА: раньше здесь не логировалось вообще ничего — по
             // словам пользователя опрос иногда появляется в ленте БЕЗ фото, хотя
             // рядом в канале фото есть. Логируем каждую найденную пару опрос+сосед,
@@ -1031,13 +1040,26 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         return mo.messageOwner != null && mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll;
     }
 
-    /** Пост НЕ содержит опроса и реально содержит хотя бы одно фото/видео (не просто текст). */
+    /**
+     * Пост НЕ содержит опроса и реально содержит хотя бы одно фото/видео (не просто
+     * текст) — ИМЕННО как медиа, а не как файл.
+     *
+     * Раньше проверка была только "photoThumbs не пуст" — но у документа, отправленного
+     * специально КАК ФАЙЛ (см. MessageObject.TYPE_FILE), тоже есть превью-thumb (значит
+     * и photoThumbs непустой), и он проходил эту проверку наравне с настоящим фото. Из-за
+     * этого сосед-опроса мог ошибочно "переключиться" на посторонний файл, отправленный
+     * в канал позже (пользователь специально это воспроизвёл: тот же файл картинки,
+     * отправленный как файл, встал вместо реального фото-соседа опроса). MessageObject
+     * сам считает type==TYPE_FILE именно для "отправлено как файл" (в отличие от
+     * TYPE_PHOTO/TYPE_VIDEO/TYPE_GIF) — используем этот же готовый признак.
+     */
     private static boolean isMediaOnlyItem(FeedItem item) {
         if (item.messages.isEmpty()) return false;
         boolean hasMedia = false;
         for (MessageObject mo : item.messages) {
             if (mo.messageOwner == null) continue;
             if (mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll) return false;
+            if (mo.type == MessageObject.TYPE_FILE) continue;
             if (mo.photoThumbs != null && !mo.photoThumbs.isEmpty()) hasMedia = true;
         }
         return hasMedia;

@@ -703,10 +703,18 @@ public class PotokFeedPostCell extends LinearLayout {
         // поэтому findPostCaption() выше его не находит и textView для опроса
         // всегда пуст; весь контент опроса рисует отдельный pollView (см. ниже).
         // Опрос ищем по ВСЕЙ группе, а не только в messages.get(0) — пост-альбом
-        // может состоять из сообщения с опросом + отдельных сообщений с фото/видео
-        // (у одного TL-сообщения media — это ЛИБО опрос, ЛИБО фото, никогда оба
-        // сразу; поэтому медиа поста с опросом физически лежит в соседних
-        // сообщениях той же группы, а не в самом опросе).
+        // может состоять из сообщения с опросом + отдельных сообщений с фото/видео.
+        //
+        // ВАЖНО (исправлено — прошлое предположение здесь было неверным): у
+        // TL_messageMediaPoll ЕСТЬ собственное поле attached_media (см.
+        // TLRPC.TL_messageMediaPoll) — это официальный Telegram-функционал
+        // "прикрепить фото/видео к вопросу опроса", и в этом случае фото лежит
+        // ВНУТРИ того же самого TL-сообщения с опросом, а не в соседнем. Раньше
+        // считалось, что медиа опроса всегда физически лежит в соседнем
+        // TL-сообщении той же группы — это верно ТОЛЬКО для случая, когда фото
+        // отправлено отдельным постом рядом с опросом (см. buildChannelItems
+        // склейку в PotokFeedFragment); случай attached_media обрабатывается
+        // отдельно ниже.
         MessageObject pollMessage = null;
         for (MessageObject mo : messages) {
             if (mo.messageOwner != null && mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll) {
@@ -733,6 +741,36 @@ public class PotokFeedPostCell extends LinearLayout {
                 fileMessages.add(mo);
             } else if (mo.photoThumbs != null && !mo.photoThumbs.isEmpty()) {
                 mediaMessages.add(mo);
+            }
+        }
+        // Фото/видео, прикреплённое ПРЯМО К ОПРОСУ (TL_messageMediaPoll.attached_media,
+        // см. комментарий выше про pollMessage) — это НЕ отдельное сообщение-сосед,
+        // а поле на media самого опроса. Заворачиваем в облегчённый клон
+        // TLRPC.Message (id/dialog/from — как у исходного поста, media подменена на
+        // attached_media) и переиспользуем ТУ ЖЕ карусель, что и для обычных
+        // фото/видео постов — так бесплатно достаются blur/spoiler и открытие по
+        // тапу, уже реализованные там. Ставим ПЕРВЫМ в mediaMessages, т.к. в
+        // реальном Telegram (ChatMessageCell/PollContentDrawable) это медиа рисуется
+        // НАД текстом вопроса, а не после соседних постов группы.
+        if (isPoll && postMedia instanceof TLRPC.TL_messageMediaPoll) {
+            TLRPC.MessageMedia attachedMedia = ((TLRPC.TL_messageMediaPoll) postMedia).attached_media;
+            if (attachedMedia instanceof TLRPC.TL_messageMediaPhoto
+                    || attachedMedia instanceof TLRPC.TL_messageMediaDocument) {
+                TLRPC.Message src = pollMessage.messageOwner;
+                TLRPC.Message clone = new TLRPC.TL_message();
+                clone.id = src.id;
+                clone.date = src.date;
+                clone.dialog_id = src.dialog_id;
+                clone.peer_id = src.peer_id;
+                clone.from_id = src.from_id;
+                clone.out = src.out;
+                clone.post = src.post;
+                clone.flags = src.flags;
+                clone.media = attachedMedia;
+                MessageObject attachedMo = new MessageObject(UserConfig.selectedAccount, clone, true, true);
+                if (attachedMo.photoThumbs != null && !attachedMo.photoThumbs.isEmpty()) {
+                    mediaMessages.add(0, attachedMo);
+                }
             }
         }
         // НОВАЯ ДИАГНОСТИКА: подтверждаем на стороне отрисовки то, что уже

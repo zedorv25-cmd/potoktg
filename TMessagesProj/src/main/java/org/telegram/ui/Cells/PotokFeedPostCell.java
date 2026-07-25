@@ -712,6 +712,19 @@ public class PotokFeedPostCell extends LinearLayout {
                 mediaMessages.add(mo);
             }
         }
+        // НОВАЯ ДИАГНОСТИКА: подтверждаем на стороне отрисовки то, что уже
+        // залогировано на стороне склейки (PotokFeedFragment.POLL_MERGE) — если
+        // здесь messages.size()==1 для поста-опроса, значит склейка либо не
+        // произошла (см. POLL_MERGE лог), либо произошла, но до setPost дошёл
+        // только один из двух messages (баг где-то между buildChannelItems и
+        // сюда, например при пересборке FeedItem->cellData).
+        if (isPoll) {
+            PotokDebugLog.d("PotokFeedLogo", "POLL_RENDER post=" + pollMessage.getId()
+                + " messages.size()=" + messages.size()
+                + " mediaMessages.size()=" + mediaMessages.size()
+                + " всеIds=" + java.util.Arrays.toString(
+                    messages.stream().map(MessageObject::getId).toArray()));
+        }
 
         if (isPoll) {
             hideAudio();
@@ -4383,16 +4396,20 @@ public class PotokFeedPostCell extends LinearLayout {
             this.resourcesProvider = resourcesProvider;
             setOrientation(VERTICAL);
 
-            typeLabel = new TextView(context);
-            typeLabel.setTextSize(13);
-            typeLabel.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
-            addView(typeLabel, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT));
-
+            // ВАЖНО: вопрос — ПЕРВАЯ строка (жирным), тип опроса ("Анонимный опрос" и
+            // т.п.) — строка ПОД ним, мельче и серым. Раньше порядок addView был
+            // обратным (типа опроса сверху, вопрос снизу) — не совпадало со
+            // скриншотом реального канала, где "Test" (вопрос) идёт первым.
             questionView = new TextView(context);
             questionView.setTextSize(16);
             questionView.setTypeface(AndroidUtilities.bold());
             questionView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider));
-            addView(questionView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
+            addView(questionView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+
+            typeLabel = new TextView(context);
+            typeLabel.setTextSize(13);
+            typeLabel.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider));
+            addView(typeLabel, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
 
             answersContainer = new LinearLayout(context);
             answersContainer.setOrientation(VERTICAL);
@@ -4404,9 +4421,9 @@ public class PotokFeedPostCell extends LinearLayout {
             voteButton = new TextView(context);
             voteButton.setTextSize(14);
             voteButton.setTypeface(AndroidUtilities.bold());
-            voteButton.setGravity(Gravity.CENTER);
+            voteButton.setGravity(Gravity.START);
             voteButton.setText("Проголосовать");
-            voteButton.setPadding(0, dp(10), 0, dp(10));
+            voteButton.setPadding(0, dp(10), 0, dp(4));
             voteButton.setVisibility(GONE);
             voteButton.setOnClickListener(v -> {
                 if (!selectedAnswers.isEmpty()) {
@@ -4420,7 +4437,7 @@ public class PotokFeedPostCell extends LinearLayout {
                 }
                 return false;
             });
-            addView(voteButton, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
+            addView(voteButton, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
 
             votersView = new TextView(context);
             votersView.setTextSize(13);
@@ -4794,7 +4811,7 @@ public class PotokFeedPostCell extends LinearLayout {
             int width = MeasureSpec.getSize(widthMeasureSpec);
             buildTextLayoutIfNeeded(width);
             int textHeight = textLayout != null ? textLayout.getHeight() : dp(18);
-            int height = (int) (textHeight + (percent >= 0 && !votingMode ? LINE_TOP_GAP + LINE_HEIGHT + dp(6) : dp(4)) + ROW_BOTTOM_PADDING);
+            int height = (int) (textHeight + LINE_TOP_GAP + LINE_HEIGHT + dp(6) + ROW_BOTTOM_PADDING);
             setMeasuredDimension(width, height);
         }
 
@@ -4841,6 +4858,17 @@ public class PotokFeedPostCell extends LinearLayout {
                     // Одиночный выбор — голос уходит сразу по тапу, поэтому это просто
                     // пустой индикатор варианта (кружок), не переключаемый чекбокс.
                     canvas.drawCircle(CHECKBOX_CX, firstLineCenterY, CHECKBOX_R_CIRCLE, checkboxOutlinePaint);
+                }
+                // Тонкая линия-разделитель ПОД текстом — в оригинале рисуется ВСЕГДА,
+                // независимо от того, голосовал пользователь или нет (chat_replyLinePaint
+                // под каждым вариантом ответа) — раньше в режиме голосования линии не
+                // было вообще, только после появления процентов.
+                {
+                    float lineTop = textLayout.getHeight() + LINE_TOP_GAP;
+                    float lineWidth = getWidth() - TEXT_START_X - dp(4);
+                    lineTrackPaint.setColor(androidx.core.graphics.ColorUtils.setAlphaComponent(normalTextColor, 16));
+                    rect.set(TEXT_START_X, lineTop, TEXT_START_X + lineWidth, lineTop + LINE_HEIGHT);
+                    canvas.drawRoundRect(rect, LINE_HEIGHT / 2f, LINE_HEIGHT / 2f, lineTrackPaint);
                 }
             } else if (percent >= 0) {
                 // --- результаты: линия-шкала под текстом (2 скруглённых прямоугольника,

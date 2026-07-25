@@ -996,11 +996,28 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             if (aIsPollOnly == bIsPollOnly) continue; // нужен ровно один опрос из пары
             FeedItem pollItem = aIsPollOnly ? a : b;
             FeedItem mediaItem = aIsPollOnly ? b : a;
-            if (!isMediaOnlyItem(mediaItem)) continue;
+            // НОВАЯ ДИАГНОСТИКА: раньше здесь не логировалось вообще ничего — по
+            // словам пользователя опрос иногда появляется в ленте БЕЗ фото, хотя
+            // рядом в канале фото есть. Логируем каждую найденную пару опрос+сосед,
+            // прошла она проверку isMediaOnlyItem или нет, и итоговый состав
+            // messages после склейки — чтобы увидеть, где именно теряется фото:
+            // сама склейка не сработала (mediaItem не прошёл isMediaOnlyItem) или
+            // склейка сработала, но фото потерялось уже в PotokFeedPostCell.setPost.
+            boolean mediaOk = isMediaOnlyItem(mediaItem);
+            PotokDebugLog.log("PotokFeedLogo", "POLL_MERGE найдена пара poll(id="
+                + (pollItem.messages.isEmpty() ? -1 : pollItem.messages.get(0).getId())
+                + ")+сосед(id=" + (mediaItem.messages.isEmpty() ? -1 : mediaItem.messages.get(0).getId())
+                + ", photoThumbs=" + (!mediaItem.messages.isEmpty() && mediaItem.messages.get(0).photoThumbs != null
+                    ? mediaItem.messages.get(0).photoThumbs.size() : -1)
+                + ") isMediaOnlyItem=" + mediaOk + " -> " + (mediaOk ? "СКЛЕИВАЕМ" : "ПРОПУСКАЕМ (не media-only)"));
+            if (!mediaOk) continue;
             FeedItem merged = new FeedItem();
             merged.channel = channel;
             merged.messages.addAll(mediaItem.messages);
             merged.messages.addAll(pollItem.messages);
+            PotokDebugLog.log("PotokFeedLogo", "POLL_MERGE результат: merged.messages.size()="
+                + merged.messages.size() + " ids=" + java.util.Arrays.toString(
+                    merged.messages.stream().map(MessageObject::getId).toArray()));
             result.set(i, merged);
             result.remove(i + 1);
         }

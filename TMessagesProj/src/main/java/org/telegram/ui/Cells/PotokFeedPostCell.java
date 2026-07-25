@@ -1738,59 +1738,15 @@ public class PotokFeedPostCell extends LinearLayout {
             // потеряна, а guard всё ещё думает, что видео "играет", и новый bind
             // может вообще не случиться. Если видим именно такое рассогласование —
             // сбрасываем guard и форсируем настоящий re-bind этой позиции.
-            // ФИКС "двойная загрузка видео" (подтверждено логом [VIDEOPLAY]:
-            // carousel bind+startAnimation дважды подряд для ОДНОГО и того же
-            // holder+img+document). Причина: эта проверка раньше форсировала
-            // safeNotifyItemChanged МГНОВЕННО, синхронно на первом же ATTACH,
-            // если lastAutoplayDocumentId уже стоит, а getAnimation()==null.
-            // Условие верно распознаёт "скролл туда-обратно БЕЗ нового bind"
-            // (для чего изначально и писалось — тут менять логику не стал), но
-            // ТАК ЖЕ ложно срабатывает на обычном prefetch-биндинге: GapWorker
-            // может вызвать onBindViewHolder ДО того, как ячейка реально попадёт
-            // на экран — setImage()+startAnimation() уже вызваны в bind(), но
-            // AnimatedFileDrawable ещё физически не успел создаться (реальная
-            // загрузка стартует только после onAttachedToWindow), и
-            // getAnimation()==null в этот момент — это НЕ баг, просто "ещё не
-            // готово". Мгновенный форс-ребинд здесь запускал setImage()+
-            // startAnimation() ВТОРОЙ раз поверх ещё не завершившегося первого
-            // запроса — отсюда двойная докачка/декодирование одного и того же
-            // видео, которое было видно в логе (два "carousel bind+startAnimation"
-            // с одинаковым holder/img в течение ~10-15мс).
-            // Даём ImageReceiver'у 600мс на то, чтобы реально начать загрузку
-            // после attach, и проверяем ЕЩЁ РАЗ — форсируем ребинд, только если
-            // рассинхрон НЕ исчез сам (то есть это действительно "скролл туда-
-            // обратно без нового bind", а не "просто ещё не успело").
             if (holder.lastAutoplayDocumentId != 0 && holder.img.getImageReceiver().getAnimation() == null) {
-                final long myBindGenerationForAttachCheck = holder.bindGeneration;
-                final long checkedDocumentId = holder.lastAutoplayDocumentId;
                 PotokDebugLog.d("VIDEOPLAY", "carousel ATTACH holder=" + System.identityHashCode(holder)
-                    + " ВОЗМОЖНОЕ РАССОГЛАСОВАНИЕ: lastAutoplayDocumentId=" + checkedDocumentId
-                    + " != 0, но getAnimation()==null -> откладываю решение на 600мс"
-                    + " (не форсирую ребинд мгновенно, чтобы не задваивать загрузку)");
-                holder.img.postDelayed(() -> {
-                    if (holder.bindGeneration != myBindGenerationForAttachCheck) {
-                        PotokDebugLog.d("VIDEOPLAY", "carousel ATTACH holder=" + System.identityHashCode(holder)
-                            + " отложенная проверка рассогласования: holder уже переиспользован под другой bind,"
-                            + " проверка отменена (STALE)");
-                        return;
-                    }
-                    if (holder.lastAutoplayDocumentId == checkedDocumentId
-                            && holder.img.getImageReceiver().getAnimation() == null) {
-                        PotokDebugLog.d("VIDEOPLAY", "carousel ATTACH holder=" + System.identityHashCode(holder)
-                            + " ОБНАРУЖЕНО РАССОГЛАСОВАНИЕ (после 600мс grace-периода, не сразу):"
-                            + " lastAutoplayDocumentId != 0, но getAnimation()==null"
-                            + " -> сбрасываю guard и форсирую safeNotifyItemChanged");
-                        holder.lastAutoplayDocumentId = 0;
-                        int pos = holder.getAdapterPosition();
-                        if (pos != RecyclerView.NO_POSITION) {
-                            safeNotifyItemChanged(pos);
-                        }
-                    } else {
-                        PotokDebugLog.d("VIDEOPLAY", "carousel ATTACH holder=" + System.identityHashCode(holder)
-                            + " рассогласование исчезло само за 600мс (это был обычный prefetch-бинд,"
-                            + " не баг) -> форс-ребинд НЕ нужен, повторной загрузки не будет");
-                    }
-                }, 600);
+                    + " ОБНАРУЖЕНО РАССОГЛАСОВАНИЕ: lastAutoplayDocumentId != 0, но getAnimation()==null"
+                    + " -> сбрасываю guard и форсирую safeNotifyItemChanged (существующий фикс, не новый)");
+                holder.lastAutoplayDocumentId = 0;
+                int pos = holder.getAdapterPosition();
+                if (pos != RecyclerView.NO_POSITION) {
+                    safeNotifyItemChanged(pos);
+                }
             }
         }
 
@@ -4631,28 +4587,33 @@ public class PotokFeedPostCell extends LinearLayout {
      * вариант — акцентным цветом, как в оригинале.
      */
     private static class PollAnswerRow extends View {
-        // Все константы ниже — из реального PollButton в ChatMessageCell.java
-        // (метод отрисовки вариантов ответа), адаптированные под наш формат строки:
-        // никакой рамки-"таблетки" вокруг всей строки в оригинале НЕТ — только текст
-        // (многострочный), чекбокс слева от него, а результат — ТОНКАЯ линия под
-        // текстом (5dp там, у нас 4dp — чуть компактнее из-за в целом меньшего шрифта
-        // в ленте), а не заливка на всю высоту строки, как было в прошлой версии.
+        // Константы геометрии — сверены построчно с оригинальным PollButton-блоком
+        // отрисовки в ChatMessageCell.java (метод drawContent, секция поллов):
+        // высота линии результата 5dp (не 4, как было раньше), радиус скругления
+        // линии = высота/2 (как canvas.drawRoundRect(..., dp(2), dp(2), ...) с
+        // высотой линии 5dp в оригинале), альфа трека ровно 16/255 от цвета заливки
+        // (Color.alpha(lineColor)*16/255 в оригинале, у нас lineColor непрозрачный,
+        // поэтому множитель ровно 16/255), длительность анимации процента 300ms с
+        // decelerate-интерполятором (AndroidUtilities.decelerateInterpolator,
+        // pollAnimationProgressTime/300.0f в оригинале).
         private static final float CHECKBOX_CX = dp(9);
         private static final float CHECKBOX_R_CIRCLE = dp(8.5f);
         private static final float CHECKBOX_R_SQUARE = dp(8f);
         private static final float CHECKBOX_SQUARE_CORNER = dp(4f);
         private static final float TEXT_START_X = dp(26);
         private static final float LINE_TOP_GAP = dp(8);
-        private static final float LINE_HEIGHT = dp(4);
+        private static final float LINE_HEIGHT = dp(5);
         private static final float CHOSEN_ICON_R = dp(7);
         private static final float ROW_BOTTOM_PADDING = dp(6);
+        private static final long PERCENT_ANIM_DURATION = 300L;
 
         private final Paint checkboxOutlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint checkboxFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint checkMarkPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint lineTrackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint lineFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint chosenIconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint chosenCirclePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private Paint srcOutPaint;
         private final Paint voteArcPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final android.text.TextPaint textPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
         private final android.text.TextPaint percentPaint = new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
@@ -4660,8 +4621,12 @@ public class PotokFeedPostCell extends LinearLayout {
         private final int accentColor;
         private final int wrongColor;
         private final int neutralBorderColor;
+        private final int cardBackgroundColor;
         private String optionText = "";
         private int percent = -1; // -1 = результаты ещё не видны — только текст+чекбокс, без линии
+        private int prevPercent = -1;
+        private long percentAnimStart = 0L;
+        private boolean percentAnimating = false;
         private boolean chosen = false;
         private boolean correctQuizAnswer = false;
         private boolean wrongQuizAnswer = false;
@@ -4682,6 +4647,18 @@ public class PotokFeedPostCell extends LinearLayout {
                 postDelayed(this, 16);
             }
         };
+        private final Runnable percentAnimTick = new Runnable() {
+            @Override
+            public void run() {
+                if (!percentAnimating) return;
+                invalidate();
+                if (getDisplayedPercentProgress() < 1f) {
+                    postDelayed(this, 16);
+                } else {
+                    percentAnimating = false;
+                }
+            }
+        };
 
         PollAnswerRow(Context context, Theme.ResourcesProvider resourcesProvider) {
             super(context);
@@ -4689,6 +4666,7 @@ public class PotokFeedPostCell extends LinearLayout {
             accentColor = Theme.getColor(Theme.key_windowBackgroundWhiteBlueText, resourcesProvider);
             wrongColor = Theme.getColor(Theme.key_text_RedRegular, resourcesProvider);
             neutralBorderColor = Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourcesProvider);
+            cardBackgroundColor = Theme.getColor(Theme.key_windowBackgroundWhite, resourcesProvider);
 
             checkboxOutlinePaint.setStyle(Paint.Style.STROKE);
             checkboxOutlinePaint.setStrokeWidth(dp(1.5f));
@@ -4704,7 +4682,7 @@ public class PotokFeedPostCell extends LinearLayout {
 
             lineTrackPaint.setStyle(Paint.Style.FILL);
             lineFillPaint.setStyle(Paint.Style.FILL);
-            chosenIconPaint.setStyle(Paint.Style.FILL);
+            chosenCirclePaint.setStyle(Paint.Style.FILL);
 
             voteArcPaint.setStyle(Paint.Style.STROKE);
             voteArcPaint.setStrokeWidth(dp(1.5f));
@@ -4715,10 +4693,40 @@ public class PotokFeedPostCell extends LinearLayout {
             textPaint.setColor(normalTextColor);
             percentPaint.setTextSize(dp(13));
             percentPaint.setTypeface(AndroidUtilities.bold());
+
+            // Реальный ripple-selector вместо полного отсутствия тактильного отклика —
+            // в оригинале у каждого PollButton есть Theme.selectorDrawable с подсветкой
+            // по нажатию; здесь — стандартный Android RippleDrawable той же смысловой
+            // роли. foreground (не background), чтобы подсветка была ПОВЕРХ нарисованных
+            // текста/шкалы, а не перекрывалась ими — доступно с API 23, minSdk проекта 21,
+            // поэтому с проверкой версии (на 21-22 будет просто без ripple-подсветки).
+            android.graphics.drawable.RippleDrawable ripple = new android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(Theme.multAlpha(accentColor, 0.12f)), null, null);
+            if (android.os.Build.VERSION.SDK_INT >= 23) {
+                setForeground(ripple);
+            } else {
+                setBackground(ripple);
+            }
         }
 
         void bind(String text, int percentValue, boolean chosen, boolean correctQuizAnswer, boolean wrongQuizAnswer, boolean votingMode, boolean multipleChoice) {
             optionText = text != null ? text : "";
+            // Запускаем плавную анимацию процента (300ms, decelerate) ТОЛЬКО когда это
+            // реальное изменение уже показанного значения (голос/новые результаты), а
+            // не первичная привязка строки при скролле — иначе при переиспользовании
+            // ViewHolder'а в RecyclerView анимация будет ложно запускаться на каждый bind.
+            if (this.percent != percentValue) {
+                if (this.percent >= 0 && percentValue >= 0) {
+                    prevPercent = this.percent;
+                    percentAnimStart = android.os.SystemClock.elapsedRealtime();
+                    percentAnimating = true;
+                    removeCallbacks(percentAnimTick);
+                    post(percentAnimTick);
+                } else {
+                    prevPercent = percentValue;
+                    percentAnimating = false;
+                }
+            }
             percent = percentValue;
             this.chosen = chosen;
             this.correctQuizAnswer = correctQuizAnswer;
@@ -4756,6 +4764,20 @@ public class PotokFeedPostCell extends LinearLayout {
             invalidate();
         }
 
+        /** 0..1 — доля пройденного пути 300мс-анимации процента, БЕЗ интерполятора. */
+        private float getDisplayedPercentProgress() {
+            if (!percentAnimating) return 1f;
+            long elapsed = android.os.SystemClock.elapsedRealtime() - percentAnimStart;
+            return Math.min(1f, elapsed / (float) PERCENT_ANIM_DURATION);
+        }
+
+        /** Текущий отображаемый (интерполированный) процент — как button.prevPercent + (percent-prevPercent)*pollAnimationProgress в оригинале. */
+        private int getDisplayedPercent() {
+            if (!percentAnimating || percent < 0) return percent;
+            float t = AndroidUtilities.decelerateInterpolator.getInterpolation(getDisplayedPercentProgress());
+            return (int) Math.ceil(prevPercent + (percent - prevPercent) * t);
+        }
+
         private void buildTextLayoutIfNeeded(int rowWidth) {
             if (textLayoutWidth == rowWidth && textLayout != null) return;
             textLayoutWidth = rowWidth;
@@ -4780,6 +4802,7 @@ public class PotokFeedPostCell extends LinearLayout {
         protected void onDetachedFromWindow() {
             super.onDetachedFromWindow();
             removeCallbacks(voteArcTick);
+            removeCallbacks(percentAnimTick);
         }
 
         @Override
@@ -4820,20 +4843,27 @@ public class PotokFeedPostCell extends LinearLayout {
                     canvas.drawCircle(CHECKBOX_CX, firstLineCenterY, CHECKBOX_R_CIRCLE, checkboxOutlinePaint);
                 }
             } else if (percent >= 0) {
-                // --- результаты: тонкая линия-шкала под текстом + процент + галочка ---
+                // --- результаты: линия-шкала под текстом (2 скруглённых прямоугольника,
+                // ровно как в оригинале: трек с альфой 16/255 + заливка поверх, радиус
+                // скругления = высота/2) + плавно анимированный процент + иконка ---
+                int displayedPercent = getDisplayedPercent();
                 float lineTop = textLayout.getHeight() + LINE_TOP_GAP;
                 float lineWidth = getWidth() - TEXT_START_X - dp(4);
-                rect.set(TEXT_START_X, lineTop, TEXT_START_X + lineWidth, lineTop + LINE_HEIGHT);
                 int lineColor = (correctQuizAnswer || chosen) ? accentColor : (wrongQuizAnswer ? wrongColor : normalTextColor);
-                lineTrackPaint.setColor((lineColor & 0x00FFFFFF) | 0x22000000);
-                canvas.drawRoundRect(rect, LINE_HEIGHT / 2f, LINE_HEIGHT / 2f, lineTrackPaint);
-                float filled = lineWidth * (percent / 100f);
+                float radius = LINE_HEIGHT / 2f;
+
+                // Трек — на всю ширину, альфа ровно 16/255 (как Color.alpha(lineColor)*16/255 в оригинале для непрозрачного цвета).
+                lineTrackPaint.setColor(androidx.core.graphics.ColorUtils.setAlphaComponent(lineColor, 16));
+                rect.set(TEXT_START_X, lineTop, TEXT_START_X + lineWidth, lineTop + LINE_HEIGHT);
+                canvas.drawRoundRect(rect, radius, radius, lineTrackPaint);
+
+                float filled = lineWidth * (displayedPercent / 100f);
                 if (filled > 0) {
-                    rect.set(TEXT_START_X, lineTop, TEXT_START_X + filled, lineTop + LINE_HEIGHT);
                     lineFillPaint.setColor(lineColor);
-                    canvas.drawRoundRect(rect, LINE_HEIGHT / 2f, LINE_HEIGHT / 2f, lineFillPaint);
+                    rect.set(TEXT_START_X, lineTop, TEXT_START_X + filled, lineTop + LINE_HEIGHT);
+                    canvas.drawRoundRect(rect, radius, radius, lineFillPaint);
                 }
-                String percentStr = percent + "%";
+                String percentStr = displayedPercent + "%";
                 percentPaint.setColor(lineColor);
                 float percentW = percentPaint.measureText(percentStr);
                 canvas.drawText(percentStr, getWidth() - dp(4) - percentW, lineTop - dp(3), percentPaint);
@@ -4841,20 +4871,40 @@ public class PotokFeedPostCell extends LinearLayout {
                 if (chosen || correctQuizAnswer || wrongQuizAnswer) {
                     float cx = TEXT_START_X - CHOSEN_ICON_R - dp(4);
                     float cy = lineTop + LINE_HEIGHT / 2f;
-                    chosenIconPaint.setColor(wrongQuizAnswer ? wrongColor : accentColor);
-                    canvas.drawCircle(cx, cy, CHOSEN_ICON_R, chosenIconPaint);
-                    if (wrongQuizAnswer) {
-                        float m = CHOSEN_ICON_R * 0.5f;
-                        canvas.drawLine(cx - m, cy - m, cx + m, cy + m, checkMarkPaint);
-                        canvas.drawLine(cx + m, cy - m, cx - m, cy + m, checkMarkPaint);
+                    // Реальные ассеты Theme.chat_pollCheckDrawable/chat_pollCrossDrawable —
+                    // те же самые, что рисует оригинальный ChatMessageCell. Это уже готовый
+                    // цветной диск с вырезанной галочкой/крестиком (тонированный самой
+                    // темой один раз при инициализации, тем же путём, что и в чате) —
+                    // рисуем его как есть, затем, как в оригинале, "дозаливаем" вырез
+                    // цветом реального фона карточки через SRC_OUT (иначе вырез был бы
+                    // прозрачным окном в буфер saveLayer, а не в реальный фон карточки).
+                    Drawable iconDrawable = wrongQuizAnswer ? Theme.chat_pollCrossDrawable[0] : Theme.chat_pollCheckDrawable[0];
+                    if (iconDrawable != null) {
+                        canvas.saveLayerAlpha(cx - CHOSEN_ICON_R, cy - CHOSEN_ICON_R, cx + CHOSEN_ICON_R, cy + CHOSEN_ICON_R, 255);
+                        int iw = iconDrawable.getIntrinsicWidth() > 0 ? iconDrawable.getIntrinsicWidth() : (int) (CHOSEN_ICON_R * 2);
+                        int ih = iconDrawable.getIntrinsicHeight() > 0 ? iconDrawable.getIntrinsicHeight() : (int) (CHOSEN_ICON_R * 2);
+                        iconDrawable.setBounds((int) (cx - iw / 2f), (int) (cy - ih / 2f), (int) (cx + iw / 2f), (int) (cy + ih / 2f));
+                        iconDrawable.draw(canvas);
+                        if (srcOutPaint == null) {
+                            srcOutPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+                            srcOutPaint.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_OUT));
+                        }
+                        srcOutPaint.setColor(cardBackgroundColor);
+                        rect.set(cx - CHOSEN_ICON_R, cy - CHOSEN_ICON_R, cx + CHOSEN_ICON_R, cy + CHOSEN_ICON_R);
+                        canvas.drawRoundRect(rect, CHOSEN_ICON_R, CHOSEN_ICON_R, srcOutPaint);
+                        canvas.restore();
                     } else {
+                        // Ассет ещё не проинициализирован темой (не должно происходить
+                        // в норме) — подстраховка тем же приёмом, что был раньше.
+                        chosenCirclePaint.setColor(wrongQuizAnswer ? wrongColor : accentColor);
+                        canvas.drawCircle(cx, cy, CHOSEN_ICON_R, chosenCirclePaint);
                         drawCheckMark(canvas, cx, cy, CHOSEN_ICON_R * 0.6f);
                     }
                 }
             }
         }
 
-        /** Галочка "V" в квадратике/кружке — одна и та же геометрия для обоих случаев. */
+        /** Галочка "V" в квадратике — используется только для чекбокса множественного выбора ДО голосования. */
         private void drawCheckMark(Canvas canvas, float cx, float cy, float r) {
             canvas.drawLine(cx - r, cy, cx - r * 0.2f, cy + r * 0.7f, checkMarkPaint);
             canvas.drawLine(cx - r * 0.2f, cy + r * 0.7f, cx + r, cy - r * 0.6f, checkMarkPaint);

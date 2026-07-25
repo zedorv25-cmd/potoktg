@@ -93,6 +93,14 @@ public class PotokFeedPostCell extends LinearLayout {
     private final DotsIndicator dotsIndicator;
     private CarouselAdapter carouselAdapter;
 
+    // --- Медиа, отправленные КАК ФАЙЛ (MessageObject.TYPE_FILE) ---
+    // 1:1 переносим реальный SharedDocumentCell (тот же компонент, которым Telegram
+    // рисует строки "Общих файлов"/загрузок) — он сам умеет иконку по расширению,
+    // имя, размер, прогресс/кнопку скачивания. Не карусель: файлы рисуются
+    // отдельными строками друг под другом, как документы в чате, а не как
+    // разворачиваемое инлайн-превью.
+    private final LinearLayout documentsContainer;
+
     // --- Аудио ---
     private final AudioPlayButton audioPlayButton;
     private final TextView audioTitleView;
@@ -406,6 +414,12 @@ public class PotokFeedPostCell extends LinearLayout {
             }
         });
 
+        // --- Файлы (медиа, отправленное в канале КАК ФАЙЛ) ---
+        documentsContainer = new LinearLayout(context);
+        documentsContainer.setOrientation(VERTICAL);
+        documentsContainer.setVisibility(GONE);
+        addView(documentsContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
+
         // --- Аудио ---
         // Раньше здесь стоял SharedAudioCell — это компонент из ДРУГОГО контекста
         // оригинала (список "Общие медиа/музыка" в профиле — маленькая иконка+строка),
@@ -704,11 +718,20 @@ public class PotokFeedPostCell extends LinearLayout {
         TLRPC.MessageMedia postMedia = isPoll ? pollMessage.messageOwner.media : null;
         this.pollMessageObject = pollMessage;
 
-        // Собираем медиа-сообщения из группы (только с фото/видео)
+        // Собираем медиа-сообщения из группы (только с фото/видео, БЕЗ файлов —
+        // см. fileMessages ниже). Раньше TYPE_FILE не исключался, из-за чего медиа,
+        // отправленное в канале специально КАК ФАЙЛ, разворачивалось в карусели как
+        // обычное фото/видео — пользователь явно требует показывать его как файл,
+        // как в оригинальном канале.
         ArrayList<MessageObject> mediaMessages = new ArrayList<>();
+        // Медиа, отправленные КАК ФАЙЛ — рисуются отдельными строками через
+        // documentsContainer/SharedDocumentCell (см. ниже), не в карусели.
+        ArrayList<MessageObject> fileMessages = new ArrayList<>();
         for (MessageObject mo : messages) {
-            if (!mo.isVoice() && !mo.isMusic()
-                    && mo.photoThumbs != null && !mo.photoThumbs.isEmpty()) {
+            if (mo.isVoice() || mo.isMusic()) continue;
+            if (mo.type == MessageObject.TYPE_FILE) {
+                fileMessages.add(mo);
+            } else if (mo.photoThumbs != null && !mo.photoThumbs.isEmpty()) {
                 mediaMessages.add(mo);
             }
         }
@@ -815,6 +838,23 @@ public class PotokFeedPostCell extends LinearLayout {
         } else {
             hideCarousel();
             hideAudio();
+        }
+
+        // --- Файлы (медиа, отправленное в канале КАК ФАЙЛ) ---
+        // Независимо от ветки выше (voice/media/none) — файл может стоять рядом с
+        // чем угодно (например, у поста-опроса caption пуст и медиа нет, но файл
+        // всё равно должен показаться). Пересобираем строки заново на каждый bind —
+        // самих файлов у одного поста обычно 0-1, так что пул не нужен.
+        documentsContainer.removeAllViews();
+        if (fileMessages.isEmpty()) {
+            documentsContainer.setVisibility(GONE);
+        } else {
+            documentsContainer.setVisibility(VISIBLE);
+            for (int i = 0; i < fileMessages.size(); i++) {
+                SharedDocumentCell documentCell = new SharedDocumentCell(getContext());
+                documentCell.setDocument(fileMessages.get(i), i < fileMessages.size() - 1);
+                documentsContainer.addView(documentCell, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+            }
         }
 
         // Футер

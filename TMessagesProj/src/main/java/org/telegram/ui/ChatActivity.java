@@ -4193,6 +4193,16 @@ public class ChatActivity extends BaseFragment implements
             headerItem = menu.addItem(chat_menu_options, otherIcon);
             otherIcon.addView(headerItem.getIconView());
             headerItem.setContentDescription(LocaleController.getString(R.string.AccDescrMoreOptions));
+            // По требованию дизайна — та же круглая подложка, что и у кнопки "назад"
+            // (см. ActionBar.createBackButtonImage): иконка сидит в постоянно видимом
+            // кружке, а не просто на фоне шапки. Заменяет стандартный createSelectorDrawable,
+            // который ставит ActionBarMenuItem сам себе в конструкторе (виден только
+            // при нажатии) — не трогаем ActionBarMenuItem глобально, чтобы не задеть
+            // остальные меню приложения, где иконки стоят плотно друг к другу.
+            headerItem.setBackground(Theme.createSimpleSelectorCircleDrawable(
+                AndroidUtilities.dp(40),
+                ColorUtils.setAlphaComponent(getThemedColor(Theme.key_actionBarDefaultSelector), 40),
+                getThemedColor(Theme.key_actionBarDefaultSelector)));
 
             if (currentUser != null && currentUser.self && chatMode != MODE_SAVED) {
                 savedChatsItem = headerItem.lazilyAddSubItem(view_as_topics, R.drawable.msg_topics, LocaleController.getString(R.string.SavedViewAsChats));
@@ -4368,6 +4378,10 @@ public class ChatActivity extends BaseFragment implements
             headerItem = menu.addItem(chat_menu_options, otherIcon);
             otherIcon.addView(headerItem.getIconView());
             headerItem.setContentDescription(LocaleController.getString(R.string.AccDescrMoreOptions));
+            headerItem.setBackground(Theme.createSimpleSelectorCircleDrawable(
+                AndroidUtilities.dp(40),
+                ColorUtils.setAlphaComponent(getThemedColor(Theme.key_actionBarDefaultSelector), 40),
+                getThemedColor(Theme.key_actionBarDefaultSelector)));
 
             headerItem.lazilyAddSubItem(copy_business_link, R.drawable.msg_copy, getString(R.string.Copy));
             headerItem.lazilyAddSubItem(share_business_link, R.drawable.msg_share, getString(R.string.LinkActionShare));

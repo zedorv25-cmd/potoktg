@@ -549,10 +549,13 @@ public class PotokFeedPostCell extends LinearLayout {
         // видны), пометка "Анонимный опрос"/"Опрос" и число проголосовавших внизу.
         pollView = new PollView(context, resourcesProvider);
         pollView.setVisibility(GONE);
-        // Строки вариантов ответа кликабельны до голосования и перехватывают touch —
-        // без этого долгое нажатие на пост с опросом не открывало канал (в отличие
-        // от обычных постов с медиа/текстом), см. PollView.setOnLongPressListener.
-        pollView.setOnLongPressListener(this::openPostInChannel);
+        // Варианты ответа и кнопка "Проголосовать" — ИСКЛЮЧЕНИЕ из общего правила
+        // "долгое нажатие на пост открывает канал": по ним канал не открывается ни
+        // тапом, ни удержанием (см. bind() — там же меню "Отменить голос" вместо
+        // проброса long-press). Вопрос/тип опроса — обычные некликабельные
+        // TextView, поэтому долгое нажатие по ним само по себе доходит до
+        // корневого setOnLongClickListener() (см. конструктор выше), ничего
+        // прокидывать вручную не нужно.
         addView(pollView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 10, 12, 0));
 
         // --- Футер ---
@@ -4463,20 +4466,6 @@ public class PotokFeedPostCell extends LinearLayout {
         private MessageObject messageObject;
         private TLRPC.TL_messageMediaPoll media;
         private boolean sendingVote = false;
-        /**
-         * Долгое нажатие по карточке поста должно открывать канал (как у обычных
-         * постов) — но строки вариантов ответа (PollAnswerRow) кликабельны ДО
-         * голосования (обрабатывают обычный тап на выбор варианта), и Android не
-         * даёт долгому нажатию всплыть до родительской карточки, если дочерний
-         * View сам кликабелен — touch-последовательность перехватывается там, где
-         * начался палец. Поэтому пробрасываем длинное нажатие с каждой строки
-         * (и с кнопки "Проголосовать") наружу вручную через этот callback.
-         */
-        private Runnable onLongPress;
-
-        void setOnLongPressListener(Runnable listener) {
-            onLongPress = listener;
-        }
 
         PollView(Context context, Theme.ResourcesProvider resourcesProvider) {
             super(context);
@@ -4516,13 +4505,6 @@ public class PotokFeedPostCell extends LinearLayout {
                 if (!selectedAnswers.isEmpty()) {
                     submitVote(new ArrayList<>(selectedAnswers));
                 }
-            });
-            voteButton.setOnLongClickListener(v -> {
-                if (onLongPress != null) {
-                    onLongPress.run();
-                    return true;
-                }
-                return false;
             });
             addView(voteButton, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
 
@@ -4592,20 +4574,20 @@ public class PotokFeedPostCell extends LinearLayout {
                     row.bind(answer.text != null ? answer.text.text : "", percent, chosen, correct && poll.quiz, wrong, votingMode, poll.multiple_choice);
                     if (votingMode) {
                         row.setOnClickListener(v -> onRowTapped(answer, poll, row));
+                        row.setClickable(true);
                     } else {
-                        row.setOnClickListener(null);
-                        row.setClickable(false);
+                        // После голосования — 1:1 с оригиналом (ChatActivity.
+                        // didLongPressPollOption, реально вызывается из ОБЫЧНОГО тапа,
+                        // а не долгого нажатия): тап по варианту открывает меню, где
+                        // единственное реально нужное здесь действие — "Отменить
+                        // голос" (PollItemMenu.canChangeVote). Полную вкладочную
+                        // копию меню оригинала не переносим — избыточно для ленты,
+                        // но сама функция (отмена голоса тем же sendVote(null))
+                        // работает идентично.
+                        boolean canChangeVote = !poll.closed && !poll.revoting_disabled;
+                        row.setOnClickListener(canChangeVote ? v -> showUnvoteMenu(row) : null);
+                        row.setClickable(canChangeVote);
                     }
-                    // См. комментарий у поля onLongPress выше: строка кликабельна в
-                    // votingMode и перехватывает touch-последовательность, из-за чего
-                    // долгое нажатие не всплывает до карточки поста — форвардим вручную.
-                    row.setOnLongClickListener(v -> {
-                        if (onLongPress != null) {
-                            onLongPress.run();
-                            return true;
-                        }
-                        return false;
-                    });
                     answersContainer.addView(row, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 0, 0, 6));
                     rows.add(row);
                 }
@@ -4674,6 +4656,56 @@ public class PotokFeedPostCell extends LinearLayout {
                     sendingVote = false;
                     updateVoteButtonState();
                 });
+        }
+
+        private ActionBarPopupWindow unvoteMenuWindow;
+
+        /**
+         * Меню после голосования — 1:1 функционально с оригиналом (PollItemMenu.
+         * canChangeVote -> пункт "Отменить голос", R.string.Unvote), но компактное:
+         * один пункт вместо вкладок "Вариант"/"Опрос" оригинала — вкладки там нужны
+         * для полноценного экрана управления опросом, для ленты это избыточно, а
+         * единственное реально нужное действие (отменить голос, чтобы затем можно
+         * было проголосовать за другой вариант) сохранено полностью.
+         */
+        private void showUnvoteMenu(View anchor) {
+            if (sendingVote || messageObject == null || anchor.getContext() == null) return;
+            if (unvoteMenuWindow != null) {
+                unvoteMenuWindow.dismiss();
+                unvoteMenuWindow = null;
+            }
+            Context context = anchor.getContext();
+            ActionBarPopupWindow.ActionBarPopupWindowLayout layout =
+                new ActionBarPopupWindow.ActionBarPopupWindowLayout(context, org.telegram.messenger.R.drawable.popup_fixed_alert4, null);
+            layout.setMinimumWidth(AndroidUtilities.dp(200));
+            layout.setBackgroundColor(Theme.getColor(Theme.key_actionBarDefaultSubmenuBackground, resourcesProvider));
+
+            ActionBarMenuSubItem unvote = new ActionBarMenuSubItem(context, true, true, resourcesProvider);
+            unvote.setMinimumWidth(AndroidUtilities.dp(200));
+            unvote.setTextAndIcon(org.telegram.messenger.LocaleController.getString(org.telegram.messenger.R.string.Unvote), org.telegram.messenger.R.drawable.msg_unvote);
+            layout.addView(unvote);
+            unvote.setOnClickListener(v -> {
+                if (unvoteMenuWindow != null) unvoteMenuWindow.dismiss();
+                submitVote(null);
+            });
+
+            unvoteMenuWindow = new ActionBarPopupWindow(layout, LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT);
+            unvoteMenuWindow.setFocusable(true);
+            unvoteMenuWindow.setOutsideTouchable(true);
+            unvoteMenuWindow.setClippingEnabled(true);
+            unvoteMenuWindow.setAnimationStyle(org.telegram.messenger.R.style.PopupAnimation);
+            unvoteMenuWindow.setOnDismissListener(() -> unvoteMenuWindow = null);
+
+            layout.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED),
+                android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED)
+            );
+            int[] location = new int[2];
+            anchor.getLocationInWindow(location);
+            int x = location[0];
+            int y = location[1] + anchor.getHeight();
+            unvoteMenuWindow.showAtLocation(anchor, android.view.Gravity.LEFT | android.view.Gravity.TOP, x, y);
+            ActionBarPopupWindow.startAnimation(layout);
         }
 
         /** byte[] нельзя использовать как ключ HashMap напрямую (сравнение по ссылке) — переводим в строку. */

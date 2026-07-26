@@ -1037,7 +1037,21 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private static boolean isPollOnlyItem(FeedItem item) {
         if (item.messages.size() != 1) return false;
         MessageObject mo = item.messages.get(0);
-        return mo.messageOwner != null && mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll;
+        if (mo.messageOwner == null || !(mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll)) {
+            return false;
+        }
+        // Если у опроса уже есть attached_media (фото/видео прикреплено ПРЯМО к
+        // вопросу, см. подробный комментарий про TL_messageMediaPoll.attached_media
+        // в PotokFeedPostCell.setPost()) — своё медиа у него уже есть, склейка с
+        // соседним TL-сообщением ему не нужна. Без этой проверки склейка ошибочно
+        // цепляла посторонний соседний пост (например, ничем не связанное видео)
+        // к опросу, у которого уже было собственное прикреплённое фото.
+        TLRPC.TL_messageMediaPoll pollMedia = (TLRPC.TL_messageMediaPoll) mo.messageOwner.media;
+        if (pollMedia.attached_media instanceof TLRPC.TL_messageMediaPhoto
+                || pollMedia.attached_media instanceof TLRPC.TL_messageMediaDocument) {
+            return false;
+        }
+        return true;
     }
 
     /**

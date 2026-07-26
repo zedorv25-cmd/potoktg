@@ -139,7 +139,10 @@ public class BackDrawable extends Drawable {
             canvas.rotate(135 + currentRotation * (reverseAngle ? -180 : 180));
             rotation = 1.0f;
         }
-        canvas.drawLine(AndroidUtilities.dp(AndroidUtilities.lerp(-6.75f, -8f, rotation)), 0, AndroidUtilities.dp(8) - (paint.getStrokeWidth() / 2f) * (1f - rotation), 0, paint);
+        // Убран горизонтальный "хвост" стрелки (третья линия, которая раньше
+        // рисовалась здесь через canvas.drawLine на всю ширину) — по требованию
+        // дизайна нужен простой шеврон из ДВУХ диагональных штрихов под 45°, а не
+        // составная стрелка "хвост + галочка". Две диагонали ниже остаются как были.
         float startYDiff = AndroidUtilities.dp(-0.25f);
         float endYDiff = AndroidUtilities.dp(AndroidUtilities.lerp(7f, 8f, rotation)) - (paint.getStrokeWidth() / 4f) * (1f - rotation);
         float startXDiff = AndroidUtilities.dp(AndroidUtilities.lerp(-7f - 0.25f, 0f, rotation));

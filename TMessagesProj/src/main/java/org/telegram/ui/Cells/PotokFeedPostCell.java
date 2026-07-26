@@ -699,6 +699,10 @@ public class PotokFeedPostCell extends LinearLayout {
 
         // Медиа
         boolean isVoiceOrMusic = messageObject.isVoice() || messageObject.isMusic();
+        // MessageObject, реально используемый аудио-веткой ниже — по умолчанию
+        // внешнее сообщение поста, но если аудио прикреплено ПРЯМО К ОПРОСУ через
+        // attached_media (см. ниже), подменяется на обёрнутый attachedMo.
+        MessageObject audioMessageObject = messageObject;
         // Опрос — media.poll.question лежит отдельно от messageOwner.message,
         // поэтому findPostCaption() выше его не находит и textView для опроса
         // всегда пуст; весь контент опроса рисует отдельный pollView (см. ниже).
@@ -708,13 +712,15 @@ public class PotokFeedPostCell extends LinearLayout {
         // ВАЖНО (исправлено — прошлое предположение здесь было неверным): у
         // TL_messageMediaPoll ЕСТЬ собственное поле attached_media (см.
         // TLRPC.TL_messageMediaPoll) — это официальный Telegram-функционал
-        // "прикрепить фото/видео к вопросу опроса", и в этом случае фото лежит
-        // ВНУТРИ того же самого TL-сообщения с опросом, а не в соседнем. Раньше
-        // считалось, что медиа опроса всегда физически лежит в соседнем
-        // TL-сообщении той же группы — это верно ТОЛЬКО для случая, когда фото
-        // отправлено отдельным постом рядом с опросом (см. buildChannelItems
-        // склейку в PotokFeedFragment); случай attached_media обрабатывается
-        // отдельно ниже.
+        // "прикрепить фото/видео/аудио к вопросу опроса" (в опросе может быть
+        // ровно ОДНО медиа — фото, ИЛИ видео, ИЛИ аудио, никогда несколько), и в
+        // этом случае медиа лежит ВНУТРИ того же самого TL-сообщения с опросом, а
+        // не в соседнем. Раньше считалось, что медиа опроса всегда физически
+        // лежит в соседнем TL-сообщении той же группы — это верно ТОЛЬКО для
+        // случая, когда медиа отправлено отдельным постом рядом с опросом (см.
+        // buildChannelItems склейку в PotokFeedFragment, которая теперь сама
+        // пропускает опрос с непустым attached_media — см. isPollOnlyItem); случай
+        // attached_media обрабатывается отдельно ниже.
         MessageObject pollMessage = null;
         for (MessageObject mo : messages) {
             if (mo.messageOwner != null && mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll) {
@@ -743,15 +749,15 @@ public class PotokFeedPostCell extends LinearLayout {
                 mediaMessages.add(mo);
             }
         }
-        // Фото/видео, прикреплённое ПРЯМО К ОПРОСУ (TL_messageMediaPoll.attached_media,
+        // Медиа, прикреплённое ПРЯМО К ОПРОСУ (TL_messageMediaPoll.attached_media,
         // см. комментарий выше про pollMessage) — это НЕ отдельное сообщение-сосед,
         // а поле на media самого опроса. Заворачиваем в облегчённый клон
         // TLRPC.Message (id/dialog/from — как у исходного поста, media подменена на
-        // attached_media) и переиспользуем ТУ ЖЕ карусель, что и для обычных
-        // фото/видео постов — так бесплатно достаются blur/spoiler и открытие по
-        // тапу, уже реализованные там. Ставим ПЕРВЫМ в mediaMessages, т.к. в
-        // реальном Telegram (ChatMessageCell/PollContentDrawable) это медиа рисуется
-        // НАД текстом вопроса, а не после соседних постов группы.
+        // attached_media) и MessageObject. Дальше — по типу:
+        //  - фото/видео -> добавляется ПЕРВЫМ в mediaMessages, переиспользует ТУ ЖЕ
+        //    карусель, что и для обычных постов (бесплатно blur/spoiler/тап-открытие);
+        //  - voice/music -> роутится в audioContainer (см. isVoiceOrMusic ниже) через
+        //    audioMessageObject, т.к. это отдельный, несовместимый с каруселью UI.
         if (isPoll && postMedia instanceof TLRPC.TL_messageMediaPoll) {
             TLRPC.MessageMedia attachedMedia = ((TLRPC.TL_messageMediaPoll) postMedia).attached_media;
             if (attachedMedia instanceof TLRPC.TL_messageMediaPhoto
@@ -768,7 +774,10 @@ public class PotokFeedPostCell extends LinearLayout {
                 clone.flags = src.flags;
                 clone.media = attachedMedia;
                 MessageObject attachedMo = new MessageObject(UserConfig.selectedAccount, clone, true, true);
-                if (attachedMo.photoThumbs != null && !attachedMo.photoThumbs.isEmpty()) {
+                if (attachedMo.isVoice() || attachedMo.isMusic()) {
+                    isVoiceOrMusic = true;
+                    audioMessageObject = attachedMo;
+                } else if (attachedMo.photoThumbs != null && !attachedMo.photoThumbs.isEmpty()) {
                     mediaMessages.add(0, attachedMo);
                 }
             }
@@ -803,22 +812,22 @@ public class PotokFeedPostCell extends LinearLayout {
         if (isVoiceOrMusic) {
             hideCarousel();
             audioContainer.setVisibility(VISIBLE);
-            boolean voice = messageObject.isVoice();
+            boolean voice = audioMessageObject.isVoice();
             audioWaveformView.setVisibility(voice ? VISIBLE : GONE);
             audioSeekBarView.setVisibility(voice ? GONE : VISIBLE);
             if (voice) {
                 audioTitleView.setText("Голосовое сообщение");
-                audioWaveformView.setMessageObject(messageObject);
+                audioWaveformView.setMessageObject(audioMessageObject);
                 audioSeekBarView.setMessageObject(null);
             } else {
-                String title = messageObject.getMusicTitle();
-                String performer = messageObject.getMusicAuthor();
+                String title = audioMessageObject.getMusicTitle();
+                String performer = audioMessageObject.getMusicAuthor();
                 audioTitleView.setText(!TextUtils.isEmpty(title) ? title : "Аудио");
                 // Текст выставляем всегда (даже если сейчас будет скрыт) — итоговую
                 // видимость/кроссфейд строки 2 авторитетно решает
                 // updateAudioSeekRowVisibility() ниже.
                 audioPerformerView.setText(performer);
-                audioSeekBarView.setMessageObject(messageObject);
+                audioSeekBarView.setMessageObject(audioMessageObject);
                 audioWaveformView.setMessageObject(null);
             }
             // Строка 2 (исполнитель <-> полоса перемотки) переключается строго по
@@ -827,9 +836,9 @@ public class PotokFeedPostCell extends LinearLayout {
             // во время активного воспроизведения (см. updateAudioSeekRowVisibility).
             // animated=false — это свежий bind ячейки, а не живой переход на глазах
             // у пользователя.
-            messageObject.checkMediaExistance(false);
-            audioPlayButton.bind(messageObject);
-            updateAudioSeekRowVisibility(messageObject, false);
+            audioMessageObject.checkMediaExistance(false);
+            audioPlayButton.bind(audioMessageObject);
+            updateAudioSeekRowVisibility(audioMessageObject, false);
 
             // Автозагрузка аудио в кэш — настройка из меню трёх точек + потолок
             // размера (1 МБ моб. / 3 МБ Wi-Fi, те же цифры, что у видео, см.
@@ -838,10 +847,10 @@ public class PotokFeedPostCell extends LinearLayout {
             // по своей внутренней логике "Общих медиа", не связанной с нашим
             // переключателем в ленте.
             boolean audioAutoload = PotokFeedFragment.isAutoloadAudioEnabled(getContext())
-                && PotokFeedFragment.isSizeOkForAudioAutoload(messageObject.getDocument() != null ? messageObject.getDocument().size : 0);
-            if (audioAutoload && !messageObject.mediaExists) {
-                messageObject.putInDownloadsStore = true;
-                FileLoader.getInstance(messageObject.currentAccount).loadFile(messageObject.getDocument(), messageObject, FileLoader.PRIORITY_LOW, 0);
+                && PotokFeedFragment.isSizeOkForAudioAutoload(audioMessageObject.getDocument() != null ? audioMessageObject.getDocument().size : 0);
+            if (audioAutoload && !audioMessageObject.mediaExists) {
+                audioMessageObject.putInDownloadsStore = true;
+                FileLoader.getInstance(audioMessageObject.currentAccount).loadFile(audioMessageObject.getDocument(), audioMessageObject, FileLoader.PRIORITY_LOW, 0);
             }
         } else if (!mediaMessages.isEmpty()) {
             hideAudio();

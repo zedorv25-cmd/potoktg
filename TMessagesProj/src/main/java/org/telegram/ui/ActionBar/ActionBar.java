@@ -198,7 +198,17 @@ public class ActionBar extends FrameLayout implements Theme.Colorable {
         }
         backButtonImageView = new ImageView(getContext());
         backButtonImageView.setScaleType(ImageView.ScaleType.CENTER);
-        backButtonImageView.setBackgroundDrawable(Theme.createSelectorDrawable(itemsBackgroundColor));
+        // Раньше здесь был createSelectorDrawable — кружок-подложка появлялся ТОЛЬКО
+        // при нажатии (обычный риппл-эффект). По требованию дизайна стрелка теперь
+        // всегда сидит в кружке, а не просто висит на фоне шапки — используем
+        // createSimpleSelectorCircleDrawable (тот же компонент, которым в других
+        // местах приложения уже рисуются круглые кнопки, например TextDetailCell/
+        // SendLocationCell): постоянный полупрозрачный круг + тот же цвет риппла
+        // на тап, что был у прежнего селектора.
+        backButtonImageView.setBackgroundDrawable(Theme.createSimpleSelectorCircleDrawable(
+            dp(54),
+            ColorUtils.setAlphaComponent(itemsBackgroundColor, 40),
+            itemsBackgroundColor));
         backButtonImageView.setPadding(dp(1), 0, 0, 0);
         addView(backButtonImageView, LayoutHelper.createFrame(54, 54, Gravity.LEFT | Gravity.TOP));
 
@@ -1680,7 +1690,10 @@ public class ActionBar extends FrameLayout implements Theme.Colorable {
         } else {
             itemsBackgroundColor = color;
             if (backButtonImageView != null) {
-                backButtonImageView.setBackgroundDrawable(Theme.createSelectorDrawable(itemsBackgroundColor));
+                backButtonImageView.setBackgroundDrawable(Theme.createSimpleSelectorCircleDrawable(
+                    dp(54),
+                    ColorUtils.setAlphaComponent(itemsBackgroundColor, 40),
+                    itemsBackgroundColor));
             }
             if (menu != null) {
                 menu.updateItemsBackgroundColor();

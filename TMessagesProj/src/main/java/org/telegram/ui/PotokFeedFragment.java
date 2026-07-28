@@ -976,107 +976,16 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             }
         }
 
-        // Склейка опроса с соседним медиа-постом в один визуальный "пост" ленты.
-        // Опрос физически не может иметь grouped_id с фото/видео (разные типы
-        // media одного сообщения несовместимы в принципе) — то, что в канале
-        // выглядит как "один пост" (медиа сверху, опрос снизу), на самом деле два
-        // ОТДЕЛЬНЫХ сообщения одного автора, отправленных подряд без ничего между
-        // ними (подтверждено скриншотом канала). Поэтому здесь — не группировка по
-        // общему id, а склейка по чистой ПОСЛЕДОВАТЕЛЬНОЙ смежности в `result`
-        // (`result` уже отражает порядок исходных messageObjects, так что соседние
-        // элементы здесь гарантированно значат "между ними в истории канала не было
-        // никакого другого сообщения"). Порядок отображения — всегда медиа сверху,
-        // опрос снизу, независимо от того, в каком порядке они реально пришли в
-        // history (getHistory обычно отдаёт сообщения от новых к старым).
-        for (int i = 0; i < result.size() - 1; i++) {
-            FeedItem a = result.get(i);
-            FeedItem b = result.get(i + 1);
-            boolean aIsPollOnly = isPollOnlyItem(a);
-            boolean bIsPollOnly = isPollOnlyItem(b);
-            // СТРОГОЕ направление: a (индекс i, "новее" — getHistory отдаёт от новых
-            // к старым) должен быть опросом, а b (индекс i+1, "старше") — медиа-соседом,
-            // отправленным РАНЬШЕ опроса в реальном времени. Раньше здесь принималась
-            // пара в ЛЮБОМ порядке (aIsPollOnly==bIsPollOnly пропускался, но обратный
-            // случай — медиа новее опроса — считался валидным наравне с правильным).
-            // Из-за этого опрос мог склеиться с сообщением, отправленным ПОЗЖЕ него
-            // (баг, воспроизведённый пользователем: файл, отправленный в канал уже
-            // ПОСЛЕ опроса, "перехватывал" склейку вместо настоящего фото-соседа,
-            // отправленного непосредственно перед опросом).
-            if (!aIsPollOnly || bIsPollOnly) continue;
-            FeedItem pollItem = a;
-            FeedItem mediaItem = b;
-            // НОВАЯ ДИАГНОСТИКА: раньше здесь не логировалось вообще ничего — по
-            // словам пользователя опрос иногда появляется в ленте БЕЗ фото, хотя
-            // рядом в канале фото есть. Логируем каждую найденную пару опрос+сосед,
-            // прошла она проверку isMediaOnlyItem или нет, и итоговый состав
-            // messages после склейки — чтобы увидеть, где именно теряется фото:
-            // сама склейка не сработала (mediaItem не прошёл isMediaOnlyItem) или
-            // склейка сработала, но фото потерялось уже в PotokFeedPostCell.setPost.
-            boolean mediaOk = isMediaOnlyItem(mediaItem);
-            PotokDebugLog.log("PotokFeedLogo", "POLL_MERGE найдена пара poll(id="
-                + (pollItem.messages.isEmpty() ? -1 : pollItem.messages.get(0).getId())
-                + ")+сосед(id=" + (mediaItem.messages.isEmpty() ? -1 : mediaItem.messages.get(0).getId())
-                + ", photoThumbs=" + (!mediaItem.messages.isEmpty() && mediaItem.messages.get(0).photoThumbs != null
-                    ? mediaItem.messages.get(0).photoThumbs.size() : -1)
-                + ") isMediaOnlyItem=" + mediaOk + " -> " + (mediaOk ? "СКЛЕИВАЕМ" : "ПРОПУСКАЕМ (не media-only)"));
-            if (!mediaOk) continue;
-            FeedItem merged = new FeedItem();
-            merged.channel = channel;
-            merged.messages.addAll(mediaItem.messages);
-            merged.messages.addAll(pollItem.messages);
-            PotokDebugLog.log("PotokFeedLogo", "POLL_MERGE результат: merged.messages.size()="
-                + merged.messages.size() + " ids=" + java.util.Arrays.toString(
-                    merged.messages.stream().map(MessageObject::getId).toArray()));
-            result.set(i, merged);
-            result.remove(i + 1);
-        }
+        // РЕШЕНИЕ (по прямому подтверждению пользователя со скриншотами настоящего
+        // канала): опрос и медиа-пост, идущие подряд без ничего между ними, в самом
+        // Telegram-канале — это ДВА полностью независимых сообщения со своими
+        // отдельными шапками, реакциями и просмотрами (не один "альбом"). Склейка их
+        // в одну визуальную карточку ленты (была здесь раньше — см. историю коммитов
+        // ec111ce4c и позже, POLL_MERGE) визуально выглядела как один слипшийся пост
+        // без отступа между медиа и опросом, что не соответствует реальному виду в
+        // канале. Склейка полностью убрана — opros-only и media-only FeedItem теперь
+        // остаются двумя отдельными элементами result, как и обычные посты.
         return result;
-    }
-
-    /** Пост состоит ровно из одного сообщения, и это сообщение — опрос. */
-    private static boolean isPollOnlyItem(FeedItem item) {
-        if (item.messages.size() != 1) return false;
-        MessageObject mo = item.messages.get(0);
-        if (mo.messageOwner == null || !(mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll)) {
-            return false;
-        }
-        // Если у опроса уже есть attached_media (фото/видео прикреплено ПРЯМО к
-        // вопросу, см. подробный комментарий про TL_messageMediaPoll.attached_media
-        // в PotokFeedPostCell.setPost()) — своё медиа у него уже есть, склейка с
-        // соседним TL-сообщением ему не нужна. Без этой проверки склейка ошибочно
-        // цепляла посторонний соседний пост (например, ничем не связанное видео)
-        // к опросу, у которого уже было собственное прикреплённое фото.
-        TLRPC.TL_messageMediaPoll pollMedia = (TLRPC.TL_messageMediaPoll) mo.messageOwner.media;
-        if (pollMedia.attached_media instanceof TLRPC.TL_messageMediaPhoto
-                || pollMedia.attached_media instanceof TLRPC.TL_messageMediaDocument) {
-            return false;
-        }
-        return true;
-    }
-
-    /**
-     * Пост НЕ содержит опроса и реально содержит хотя бы одно фото/видео (не просто
-     * текст) — ИМЕННО как медиа, а не как файл.
-     *
-     * Раньше проверка была только "photoThumbs не пуст" — но у документа, отправленного
-     * специально КАК ФАЙЛ (см. MessageObject.TYPE_FILE), тоже есть превью-thumb (значит
-     * и photoThumbs непустой), и он проходил эту проверку наравне с настоящим фото. Из-за
-     * этого сосед-опроса мог ошибочно "переключиться" на посторонний файл, отправленный
-     * в канал позже (пользователь специально это воспроизвёл: тот же файл картинки,
-     * отправленный как файл, встал вместо реального фото-соседа опроса). MessageObject
-     * сам считает type==TYPE_FILE именно для "отправлено как файл" (в отличие от
-     * TYPE_PHOTO/TYPE_VIDEO/TYPE_GIF) — используем этот же готовый признак.
-     */
-    private static boolean isMediaOnlyItem(FeedItem item) {
-        if (item.messages.isEmpty()) return false;
-        boolean hasMedia = false;
-        for (MessageObject mo : item.messages) {
-            if (mo.messageOwner == null) continue;
-            if (mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll) return false;
-            if (mo.type == MessageObject.TYPE_FILE) continue;
-            if (mo.photoThumbs != null && !mo.photoThumbs.isEmpty()) hasMedia = true;
-        }
-        return hasMedia;
     }
 
     /** Дата поста для сортировки общей ленты — берём дату первого сообщения в группе. */

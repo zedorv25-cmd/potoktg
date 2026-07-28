@@ -718,12 +718,14 @@ public class PotokFeedPostCell extends LinearLayout {
         // "прикрепить фото/видео/аудио к вопросу опроса" (в опросе может быть
         // ровно ОДНО медиа — фото, ИЛИ видео, ИЛИ аудио, никогда несколько), и в
         // этом случае медиа лежит ВНУТРИ того же самого TL-сообщения с опросом, а
-        // не в соседнем. Раньше считалось, что медиа опроса всегда физически
-        // лежит в соседнем TL-сообщении той же группы — это верно ТОЛЬКО для
-        // случая, когда медиа отправлено отдельным постом рядом с опросом (см.
-        // buildChannelItems склейку в PotokFeedFragment, которая теперь сама
-        // пропускает опрос с непустым attached_media — см. isPollOnlyItem); случай
-        // attached_media обрабатывается отдельно ниже.
+        // не в соседнем. Раньше считалось, что медиа опроса всегда физически лежит
+        // в соседнем TL-сообщении той же группы — это была ошибка: медиа, отправленное
+        // отдельным постом рядом с опросом, это ДВА независимых сообщения/поста в
+        // ленте (склейку их в одну карточку в PotokFeedFragment.buildChannelItems
+        // убрали по подтверждённой просьбе пользователя), а не общая группа с опросом.
+        // Случай attached_media (медиа, прикреплённое прямо к самому опросу
+        // официальным полем Telegram) обрабатывается отдельно ниже и с той механикой
+        // никак не связан.
         MessageObject pollMessage = null;
         for (MessageObject mo : messages) {
             if (mo.messageOwner != null && mo.messageOwner.media instanceof TLRPC.TL_messageMediaPoll) {
@@ -1644,6 +1646,73 @@ public class PotokFeedPostCell extends LinearLayout {
         return top;
     }
 
+    // ------------------------------------------------------------------ AUTOPLAY_CACHE_FIX
+    // РЕАЛЬНЫЙ ФИКС (не диагностика) — "двойное скачивание"/задержка старта видео.
+    // Причина найдена чтением кода (ImageLoader.createLoadOperationForImageReceiver +
+    // FileLoader.getPathToAttach), см. подробный комментарий у места вызова ниже:
+    // "докачка по кнопке" и автоплей через AUTOPLAY_FILTER ищут документ в ДВУХ разных
+    // папках (MEDIA_DIR_VIDEO vs MEDIA_DIR_IMAGE) — из-за этого уже скачанное видео
+    // всё равно стримится заново при старте автоплея. Подкладываем уже скачанный файл
+    // туда, где его ожидает найти автоплей, ДО вызова setImage. Не подтверждено на
+    // экране пользователем — только чтением кода и проверкой баланса скобок.
+    private static void warmAutoplayCacheFromRealFile(TLRPC.Document document, java.io.File realFile) {
+        if (document == null || realFile == null || !realFile.exists()) {
+            return;
+        }
+        try {
+            String key = document.dc_id + "_" + document.id;
+            String name = FileLoader.getDocumentFileName(document);
+            String docExt = "";
+            int idx = name != null ? name.lastIndexOf('.') : -1;
+            if (idx != -1) {
+                docExt = name.substring(idx);
+            }
+            if (docExt.length() <= 1) {
+                if ("video/mp4".equals(document.mime_type)) {
+                    docExt = ".mp4";
+                } else if ("video/x-matroska".equals(document.mime_type)) {
+                    docExt = ".mkv";
+                } else {
+                    docExt = "";
+                }
+            }
+            java.io.File expected = new java.io.File(
+                FileLoader.getDirectory(FileLoader.MEDIA_DIR_IMAGE), key + docExt);
+            if (expected.exists() && expected.length() == realFile.length()) {
+                // Уже на месте (например, подложили в прошлый бинд этого же поста) —
+                // трогать не нужно.
+                return;
+            }
+            java.io.File parent = expected.getParentFile();
+            if (parent != null) {
+                parent.mkdirs();
+            }
+            boolean linked = false;
+            try {
+                java.nio.file.Files.createLink(expected.toPath(), realFile.toPath());
+                linked = true;
+            } catch (Exception linkFailed) {
+                // Разные файловые системы/нет прав на hardlink — откатываемся на
+                // обычное копирование байт (дороже по I/O, но так же надёжно).
+                try (java.io.FileInputStream in = new java.io.FileInputStream(realFile);
+                     java.io.FileOutputStream out = new java.io.FileOutputStream(expected)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int r;
+                    while ((r = in.read(buf)) > 0) {
+                        out.write(buf, 0, r);
+                    }
+                }
+            }
+            PotokDebugLog.log("VIDEOPLAY", "warmAutoplayCacheFromRealFile document.id=" + document.id
+                + " " + (linked ? "hardlink" : "copy") + " -> " + expected.getAbsolutePath()
+                + " (" + (expected.exists() ? expected.length() : -1) + " байт, реальный файл "
+                + realFile.length() + " байт)");
+        } catch (Exception e) {
+            PotokDebugLog.log("VIDEOPLAY", "warmAutoplayCacheFromRealFile ОШИБКА document.id="
+                + document.id + ": " + e);
+        }
+    }
+
     // ------------------------------------------------------------------ MEDIA_DIAG
     // ТОЛЬКО ДИАГНОСТИКА, ничего не чинит и ни на что не влияет — по прямому
     // требованию пользователя: не патчить блюр/зависание видео вслепую ещё раз,
@@ -2429,6 +2498,30 @@ public class PotokFeedPostCell extends LinearLayout {
                             + " pos=" + position + " holder=" + System.identityHashCode(holder)
                             + " img=" + System.identityHashCode(img)
                             + " coldStreamStart=" + coldStreamStart);
+                        // ФИКС "двойного скачивания" видео (задержка старта 3-4с после
+                        // докачки, гипотеза пользователя подтвердилась чтением кода):
+                        // проверка "докачано ли видео" выше (fileExists, cacheFile) идёт
+                        // через getPathToAttach(document, false) — для видео это
+                        // ОТДЕЛЬНАЯ папка MEDIA_DIR_VIDEO (см. комментарий у строки
+                        // объявления cacheFile выше). НО setImage() ниже передаёт
+                        // AUTOPLAY_FILTER в общий ImageReceiver/ImageLoader — а тот
+                        // ВНУТРИ СЕБЯ (ImageLoader.createLoadOperationForImageReceiver,
+                        // ветка cacheType==1 ? MEDIA_DIR_CACHE : MEDIA_DIR_IMAGE; здесь
+                        // cacheType=0, последний параметр setImage ниже) ищет файл СОВСЕМ
+                        // в другой папке — MEDIA_DIR_IMAGE. Это два разных физических
+                        // файла на диске для одного document. Поэтому даже когда файл уже
+                        // полностью скачан (fileExists=true), setImage его не находит и
+                        // стримит видео заново с нуля — то самое "двойное скачивание"
+                        // (докачка по кнопке в MEDIA_DIR_VIDEO, и отдельная докачка при
+                        // автоплее в MEDIA_DIR_IMAGE). Фикс: заранее подкладываем уже
+                        // скачанный файл туда, где его будет искать автоплей (hardlink,
+                        // при неудаче — копия), ДО setImage. Если он там уже есть —
+                        // ничего не делаем. НЕ ТРОГАЕМ ImageLoader.java/FileLoader.java
+                        // (общий движок, используется всем приложением) — фикс целиком
+                        // локальный, только в этом файле.
+                        if (fileExists) {
+                            warmAutoplayCacheFromRealFile(document, cacheFile);
+                        }
                         img.getImageReceiver().setImage(
                             ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER,
                             ImageLocation.getForObject(currentPhotoObject, document), currentPhotoFilter,

@@ -9377,15 +9377,23 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                 if (!swipeTracking && !touchStartedOnStories && dx > AndroidUtilities.dp(30) && Math.abs(dy) < AndroidUtilities.dp(40)) {
                     swipeTracking = true;
                     boolean isOnChatsTab = false;
+                    boolean isOnFeedTab = false;
                     if (isOnMainScreen()) {
                         BaseFragment top = mainFragmentsStack.get(mainFragmentsStack.size() - 1);
                         if (top instanceof MainTabsActivity) {
-                            isOnChatsTab = ((MainTabsActivity) top).getCurrentPosition() == MainTabsActivity.POSITION_CHATS;
+                            int currentTabPosition = ((MainTabsActivity) top).getCurrentPosition();
+                            isOnChatsTab = currentTabPosition == MainTabsActivity.POSITION_CHATS;
+                            isOnFeedTab = currentTabPosition == MainTabsActivity.POSITION_FEED;
                         } else if (top instanceof DialogsActivity && !((DialogsActivity) top).isArchive()) {
                             isOnChatsTab = true;
                         }
                     }
-                    if (isOnChatsTab) {
+                    // На "Чатах" общий свайп вправо теперь переключает на "Ленту" (через нижний
+                    // таббар/canParentTabsSlide) — шторку тут открываем, только если жест начался
+                    // у самого левого края экрана. На "Ленте" она ничем больше не занята — свайп
+                    // вправо откуда угодно, как раньше было на "Чатах".
+                    boolean shouldOpenDrawer = isOnFeedTab || (isOnChatsTab && swipeStartX <= AndroidUtilities.dp(24));
+                    if (shouldOpenDrawer) {
                         openPotokDrawer();
                         event.setAction(MotionEvent.ACTION_CANCEL);
                         super.dispatchTouchEvent(event);

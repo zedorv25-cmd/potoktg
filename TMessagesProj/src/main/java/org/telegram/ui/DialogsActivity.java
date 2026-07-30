@@ -13506,7 +13506,18 @@ public boolean onTouchEvent(MotionEvent ev) {
             return false;
         }
        if (hasMainTabs) {
-    return ev == null || forward;
+    if (ev == null) {
+        return forward;
+    }
+    // Каскад: сначала долистать верхний таббар фильтров (Чаты→Непрочитанные→Группы→Траф)
+    // и только когда он упёрся в границу — отдать свайп нижнему таббару (Лента/Настройки).
+    final boolean isFirstTabMainTabs = filterTabsView == null || filterTabsView.getTabsCount() < 2 || filterTabsView.getCurrentTabId() == filterTabsView.getFirstTabId();
+    final boolean isLastTabMainTabs = filterTabsView == null || filterTabsView.getTabsCount() < 2 || filterTabsView.getCurrentTabId() == filterTabsView.getLastTabId();
+    if (forward) {
+        return isLastTabMainTabs && !isFirstTabMainTabs;
+    } else {
+        return isFirstTabMainTabs;
+    }
 }
 
         final boolean isActionBarTouch = ev.getY() < actionBar.getMeasuredHeight();

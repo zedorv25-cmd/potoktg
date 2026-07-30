@@ -81,14 +81,14 @@ import me.vkryl.android.animator.FactorAnimator;
 
 public class MainTabsActivity extends ViewPagerActivity implements NotificationCenter.NotificationCenterDelegate, FactorAnimator.Target {
     public static final int TABS_COUNT = 4;
-public static final int POSITION_CHATS = 0;
-private static final int POSITION_FEED = 1;
-private static final int POSITION_TRAF = 2;
+public static final int POSITION_FEED = 0;
+public static final int POSITION_CHATS = 1;
+private static final int POSITION_SETTINGS = 2;
 private static final int POSITION_CONTACTS = 3;
 
-private static final int INDEX_CHATS = 0;
-private static final int INDEX_FEED = 1;
-private static final int INDEX_TRAF = 2;
+private static final int INDEX_FEED = 0;
+private static final int INDEX_CHATS = 1;
+private static final int INDEX_SETTINGS = 2;
 private static final int INDEX_CONTACTS = 3;
 private NotificationCenter.ObserversGroup observersGroup;
 private NotificationCenter.ObserversGroup globalObserversGroup;
@@ -251,9 +251,9 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         tabsView.setPadding(dp(DialogsActivity.MAIN_TABS_MARGIN + 4), dp(DialogsActivity.MAIN_TABS_MARGIN + 4), dp(DialogsActivity.MAIN_TABS_MARGIN + 4), dp(DialogsActivity.MAIN_TABS_MARGIN + 4));
 
         tabs = new GlassTabView[4];
-        tabs[INDEX_CHATS] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_chats, R.string.PotokTabChats);
         tabs[INDEX_FEED] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_feed, R.string.PotokTabFeed);
-        tabs[INDEX_TRAF] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_traf, R.string.PotokTabTraf);
+        tabs[INDEX_CHATS] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_chats, R.string.PotokTabChats);
+        tabs[INDEX_SETTINGS] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_settings, R.string.PotokTabSettings);
         tabs[INDEX_CONTACTS] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_contacts, R.string.PotokTabContacts);
         tabs[INDEX_CHATS].setOnLongClickListener(this::openFoldersSelector);
         tabs[INDEX_CONTACTS].setOnLongClickListener(v -> {
@@ -636,10 +636,12 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
             PotokFeedFragment feedFragment = new PotokFeedFragment();
             feedFragment.setMainTabsActivityController(new MainTabsActivityControllerImpl());
             return feedFragment;
-        } else if (position == POSITION_TRAF) {
-            FiltersSetupActivity filtersSetupActivity = new FiltersSetupActivity();
-            filtersSetupActivity.setMainTabsActivityController(new MainTabsActivityControllerImpl());
-            return filtersSetupActivity;
+        } else if (position == POSITION_SETTINGS) {
+            Bundle args = new Bundle();
+            args.putBoolean("hasMainTabs", true);
+            SettingsActivity settingsActivity = new SettingsActivity(args);
+            settingsActivity.setMainTabsActivityController(new MainTabsActivityControllerImpl());
+            return settingsActivity;
         } else if (position == POSITION_CHATS) {
             Bundle args = new Bundle();
             args.putBoolean("hasMainTabs", true);

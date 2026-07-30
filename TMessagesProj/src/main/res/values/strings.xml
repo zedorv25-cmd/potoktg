@@ -10822,4 +10822,5 @@
 <string name="PotokTabFeed">Лента</string>
 <string name="PotokTabTraf">Траф</string>
 <string name="PotokTabContacts">Контакты</string>
+<string name="PotokTabSettings">Настройки</string>
 </resources>

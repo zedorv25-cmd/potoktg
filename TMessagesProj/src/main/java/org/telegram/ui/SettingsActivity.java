@@ -177,6 +177,11 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
     private TextView subtitleView;
     private TextView versionView;
     public boolean hasMainTabs;
+    private MainTabsActivityController mainTabsActivityController;
+
+    public void setMainTabsActivityController(MainTabsActivityController controller) {
+        mainTabsActivityController = controller;
+    }
 
     private View navigationBar;
 
@@ -358,6 +363,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 }
             }
         });
+        if (mainTabsActivityController != null) {
+            listView.addOnScrollListener(new TabBarScrollHider(mainTabsActivityController));
+        }
         iBlur3Capture = new ViewGroupPartRenderer(listView, contentView, listView::drawChild);
         listView.addEdgeEffectListener(() -> listView.postOnAnimation(this::blur3_InvalidateBlur));
         contentView.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.FILL));

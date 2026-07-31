@@ -124,6 +124,10 @@ public class FilterTabsView extends FrameLayout {
         public boolean isDefault;
         public boolean isLocked;
         public boolean noanimate;
+        // Иконка вместо текста (используется только для 4 пресетных вкладок Потока в режиме
+        // hasMainTabs — Чаты/Непрочитанные/Группы/Траф). Для настоящих папок остаётся 0, и весь
+        // текстовый путь отрисовки/анимации ниже работает как раньше, без изменений.
+        public int iconRes;
 
         public Tab(int i, CharSequence title, boolean noanimate) {
             this.id = i;
@@ -132,7 +136,7 @@ public class FilterTabsView extends FrameLayout {
         }
 
         public int getWidth(boolean store) {
-            int width = titleWidth = (int) Math.ceil(HintView2.measureCorrectly(title, textPaint));
+            int width = titleWidth = iconRes != 0 ? dp(20) : (int) Math.ceil(HintView2.measureCorrectly(title, textPaint));
             int c;
             if (store) {
                 c = delegate.getTabCounter(id);
@@ -191,6 +195,8 @@ public class FilterTabsView extends FrameLayout {
         private AnimatedEmojiSpan.EmojiGroupedSpans textLayoutEmojis;
         private StaticLayout textLayout;
         private int textOffsetX;
+        private android.graphics.drawable.Drawable iconDrawable;
+        private int iconDrawableRes;
 
         public boolean animateChange;
         public float changeProgress;
@@ -392,6 +398,22 @@ public class FilterTabsView extends FrameLayout {
                 textX = textX * changeProgress + animateFromTextX * (1f - changeProgress);
             }
 
+            if (currentTab.iconRes != 0) {
+                // Пресетная вкладка Потока — рисуем иконку по центру вместо StaticLayout с текстом.
+                // Ветка ниже (else) с анимацией смены заголовка/эмодзи-спанами не задействуется:
+                // title у пресетов не меняется, поэтому весь сложный путь анимации текста здесь
+                // не нужен и намеренно не трогается, чтобы не влиять на настоящие папки.
+                if (iconDrawable == null || iconDrawableRes != currentTab.iconRes) {
+                    iconDrawableRes = currentTab.iconRes;
+                    iconDrawable = getContext().getResources().getDrawable(iconDrawableRes).mutate();
+                }
+                iconDrawable.setColorFilter(new PorterDuffColorFilter(textPaint.getColor(), PorterDuff.Mode.SRC_IN));
+                final int iconSize = dp(20);
+                final int iconLeft = (int) (textX + (tabWidth - iconSize) / 2f);
+                final int iconTop = (getMeasuredHeight() - iconSize) / 2;
+                iconDrawable.setBounds(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize);
+                iconDrawable.draw(canvas);
+            } else {
             if (!TextUtils.equals(currentTab.title, currentText)) {
                 currentText = currentTab.title;
                 textLayout = new StaticLayout(currentText, textPaint, dp(400), Layout.Alignment.ALIGN_NORMAL, 1.0f, 0, false);
@@ -439,6 +461,7 @@ public class FilterTabsView extends FrameLayout {
                     AnimatedEmojiSpan.drawAnimatedEmojis(canvas, textLayout, textLayoutEmojis, 0, null, computeVerticalScrollOffset() - dp(6), computeVerticalScrollOffset() + computeVerticalScrollExtent(), 0, 1.0f, emojiColorFilter);
                     canvas.restore();
                 }
+            }
             }
 
             if (animateCounterEnter || counterText != null || showRemove && (isEditing || editingStartAnimationProgress != 0)) {
@@ -1260,6 +1283,13 @@ public class FilterTabsView extends FrameLayout {
     }
 
     public void addTab(int id, int stableId, String text, ArrayList<TLRPC.MessageEntity> entities, boolean noanimate, boolean isDefault, boolean isLocked) {
+        addTab(id, stableId, text, entities, noanimate, isDefault, isLocked, 0);
+    }
+
+    // Перегрузка с iconRes: используется только для 4 пресетных вкладок Потока (hasMainTabs).
+    // Обычный addTab(...) без iconRes выше по-прежнему вызывает эту же реализацию с iconRes=0,
+    // поведение для настоящих папок не меняется.
+    public void addTab(int id, int stableId, String text, ArrayList<TLRPC.MessageEntity> entities, boolean noanimate, boolean isDefault, boolean isLocked, int iconRes) {
         int position = tabs.size();
         if (position == 0 && selectedTabId == -1) {
             selectedTabId = id;
@@ -1274,6 +1304,7 @@ public class FilterTabsView extends FrameLayout {
         Tab tab = new Tab(id, text(text, entities), noanimate);
         tab.isDefault = isDefault;
         tab.isLocked = isLocked;
+        tab.iconRes = iconRes;
         allTabsWidth += tab.getWidth(true) + dp(TAB_PADDING_WIDTH);
         tabs.add(tab);
     }

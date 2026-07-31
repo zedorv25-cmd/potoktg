@@ -6880,6 +6880,7 @@ public boolean onTouchEvent(MotionEvent ev) {
                 // false — полоска вкладок физически не могла появиться независимо от числа фильтров.
                 // Именно в этой ветке (filters.size() > 1) она обязана быть true.
                 canShowFilterTabsView = true;
+                boolean updateCurrentTab = filterTabsView.isEmpty();
                 updateFilterTabsVisibility(animated);
                 int id = filterTabsView.getCurrentTabId();
                 int stableId = filterTabsView.getCurrentTabStableId();

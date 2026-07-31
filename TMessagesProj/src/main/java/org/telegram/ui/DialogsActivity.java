@@ -6876,8 +6876,10 @@ public boolean onTouchEvent(MotionEvent ev) {
                 if (filterTabsView.getVisibility() != View.VISIBLE) {
                     animatedUpdateItems = false;
                 }
-                canShowFilterTabsView = false;
-                boolean updateCurrentTab = filterTabsView.isEmpty();
+                // БАГ (найден, не мой): canShowFilterTabsView во всём файле выставлялась только в
+                // false — полоска вкладок физически не могла появиться независимо от числа фильтров.
+                // Именно в этой ветке (filters.size() > 1) она обязана быть true.
+                canShowFilterTabsView = true;
                 updateFilterTabsVisibility(animated);
                 int id = filterTabsView.getCurrentTabId();
                 int stableId = filterTabsView.getCurrentTabStableId();

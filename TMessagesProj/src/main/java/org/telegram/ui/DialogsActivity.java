@@ -6900,11 +6900,25 @@ public boolean onTouchEvent(MotionEvent ev) {
                 }
                 filterTabsView.removeTabs();
                 for (int a = 0, N = filters.size(); a < N; a++) {
+                    // Иконки вместо текста — только для 4 пресетных вкладок Потока (hasMainTabs).
+                    // getPotokActiveDialogFilters() в этом режиме всегда возвращает фиксированный
+                    // порядок [Чаты, Непрочитанные, Группы, Траф], поэтому индекс a однозначно
+                    // определяет иконку. Для настоящих папок (не hasMainTabs) iconRes остаётся 0,
+                    // и вкладка рисуется как раньше — обычным текстом.
+                    int presetIconRes = 0;
+                    if (hasMainTabs) {
+                        switch (a) {
+                            case 0: presetIconRes = R.drawable.potok_filter_chats; break;
+                            case 1: presetIconRes = R.drawable.potok_filter_unread; break;
+                            case 2: presetIconRes = R.drawable.potok_filter_groups; break;
+                            case 3: presetIconRes = R.drawable.potok_filter_traf; break;
+                        }
+                    }
                     if (filters.get(a).isDefault()) {
-                        filterTabsView.addTab(a, 0, LocaleController.getString(R.string.FilterAllChats), null, false, true, filters.get(a).locked);
+                        filterTabsView.addTab(a, 0, LocaleController.getString(R.string.FilterAllChats), null, false, true, filters.get(a).locked, presetIconRes);
                     } else {
                         final MessagesController.DialogFilter filter = filters.get(a);
-                        filterTabsView.addTab(a, filter.localId, filter.name, filter.entities, filter.title_noanimate, false, filters.get(a).locked);
+                        filterTabsView.addTab(a, filter.localId, filter.name, filter.entities, filter.title_noanimate, false, filters.get(a).locked, presetIconRes);
                     }
                 }
                 if (stableId >= 0) {

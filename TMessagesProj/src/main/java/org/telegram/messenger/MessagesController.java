@@ -1252,8 +1252,8 @@ public class MessagesController extends BaseController implements NotificationCe
     public static int DIALOG_FILTER_FLAG_CHATLIST_ADMIN = 0x00000400;
 
     // Локальные пресетные вкладки верхнего таббара (Непрочитанные каналы / Группы / Траф-заглушка).
-    // Существуют только в памяти этого приложения, на сервер НЕ синхронизируются (не addFilter(),
-    // а прямое добавление в dialogFilters/dialogFiltersById внутри ensurePotokPresetFilters()).
+    // Существуют только в памяти этого приложения, на сервер НЕ синхронизируются и в общий
+    // dialogFilters/dialogFiltersById НЕ добавляются — см. getPotokMainTabsFilters().
     // id намеренно вне диапазона 2-255, который использует сервер для настоящих папок.
     public static final int POTOK_FILTER_ID_UNREAD_CHANNELS = 9001;
     public static final int POTOK_FILTER_ID_GROUPS = 9002;
@@ -2045,47 +2045,53 @@ public class MessagesController extends BaseController implements NotificationCe
         });
     }
 
-    // Догружает 3 пресетные вкладки верхнего таббара, если их ещё нет в текущей загруженной
-    // сессии dialogFilters (переустанавливаются каждый запуск/каждую перезагрузку папок,
-    // т.к. НЕ пишутся в локальное хранилище/на сервер — это чисто клиентская механика Потока).
-    // "Траф" сделан с пустыми flags/alwaysShow/neverShow: includesDialog() у такого фильтра
-    // всегда возвращает false => список пуст. Это осознанная заглушка (согласовано с пользователем),
-    // а не баг — реальное содержимое вкладки Траф будет решено отдельно позже.
-    private void ensurePotokPresetFilters() {
-        boolean changed = false;
-        if (dialogFiltersById.get(POTOK_FILTER_ID_UNREAD_CHANNELS) == null) {
-            DialogFilter f = new DialogFilter();
-            f.id = POTOK_FILTER_ID_UNREAD_CHANNELS;
-            f.name = "Непрочитанные";
-            f.flags = DIALOG_FILTER_FLAG_CHANNELS | DIALOG_FILTER_FLAG_EXCLUDE_READ;
-            f.order = 1;
-            dialogFilters.add(f);
-            dialogFiltersById.put(f.id, f);
-            changed = true;
+    // Пресетные вкладки верхнего таббара Потока (Непрочитанные каналы / Группы / Траф-заглушка).
+    // ВАЖНО: в отличие от первой версии, эти объекты НЕ добавляются в dialogFilters/dialogFiltersById —
+    // тот список общий на весь аккаунт и туда же грузятся настоящие папки пользователя с сервера;
+    // при смешивании там оказывалось больше 4 вкладок и дублировались имена. Эти 3 объекта существуют
+    // только здесь, полностью в стороне от реального механизма папок Telegram.
+    private DialogFilter potokPresetUnreadChannels;
+    private DialogFilter potokPresetGroups;
+    private DialogFilter potokPresetTraf;
+
+    // Ровно 4 вкладки для верхнего таббара экрана "Чаты" в режиме hasMainTabs: реальный дефолтный
+    // фильтр "Все чаты" (он всегда существует в dialogFilters) + 3 локальных пресета выше.
+    // "Траф" сделан с пустыми flags: includesDialog() у такого фильтра всегда false => список пуст.
+    // Это осознанная заглушка (согласовано с пользователем), реальное содержимое вкладки решим позже.
+    public ArrayList<DialogFilter> getPotokMainTabsFilters() {
+        if (potokPresetUnreadChannels == null) {
+            potokPresetUnreadChannels = new DialogFilter();
+            potokPresetUnreadChannels.id = POTOK_FILTER_ID_UNREAD_CHANNELS;
+            potokPresetUnreadChannels.name = "Непрочитанные";
+            potokPresetUnreadChannels.flags = DIALOG_FILTER_FLAG_CHANNELS | DIALOG_FILTER_FLAG_EXCLUDE_READ;
         }
-        if (dialogFiltersById.get(POTOK_FILTER_ID_GROUPS) == null) {
-            DialogFilter f = new DialogFilter();
-            f.id = POTOK_FILTER_ID_GROUPS;
-            f.name = "Группы";
-            f.flags = DIALOG_FILTER_FLAG_GROUPS;
-            f.order = 2;
-            dialogFilters.add(f);
-            dialogFiltersById.put(f.id, f);
-            changed = true;
+        if (potokPresetGroups == null) {
+            potokPresetGroups = new DialogFilter();
+            potokPresetGroups.id = POTOK_FILTER_ID_GROUPS;
+            potokPresetGroups.name = "Группы";
+            potokPresetGroups.flags = DIALOG_FILTER_FLAG_GROUPS;
         }
-        if (dialogFiltersById.get(POTOK_FILTER_ID_TRAF) == null) {
-            DialogFilter f = new DialogFilter();
-            f.id = POTOK_FILTER_ID_TRAF;
-            f.name = "Траф";
-            f.flags = 0;
-            f.order = 3;
-            dialogFilters.add(f);
-            dialogFiltersById.put(f.id, f);
-            changed = true;
+        if (potokPresetTraf == null) {
+            potokPresetTraf = new DialogFilter();
+            potokPresetTraf.id = POTOK_FILTER_ID_TRAF;
+            potokPresetTraf.name = "Траф";
+            potokPresetTraf.flags = 0;
         }
-        if (changed) {
-            Collections.sort(dialogFilters, (o1, o2) -> Integer.compare(o1.order, o2.order));
+        DialogFilter defaultFilter = null;
+        for (int a = 0, N = dialogFilters.size(); a < N; a++) {
+            if (dialogFilters.get(a).isDefault()) {
+                defaultFilter = dialogFilters.get(a);
+                break;
+            }
         }
+        ArrayList<DialogFilter> result = new ArrayList<>(4);
+        if (defaultFilter != null) {
+            result.add(defaultFilter);
+        }
+        result.add(potokPresetUnreadChannels);
+        result.add(potokPresetGroups);
+        result.add(potokPresetTraf);
+        return result;
     }
 
     protected void processLoadedDialogFilters(ArrayList<DialogFilter> filters, TLRPC.messages_Dialogs pinnedDialogs, TLRPC.messages_Dialogs pinnedRemoteDialogs, ArrayList<TLRPC.User> users, ArrayList<TLRPC.Chat> chats, ArrayList<TLRPC.EncryptedChat> encryptedChats, int remote, Runnable onDone) {
@@ -2247,7 +2253,6 @@ public class MessagesController extends BaseController implements NotificationCe
                     putUsers(users, true);
                     putChats(chats, true);
                     dialogFiltersLoaded = true;
-                    ensurePotokPresetFilters();
                     getNotificationCenter().postNotificationName(NotificationCenter.dialogFiltersUpdated);
                     if (remote == 0) {
                         loadRemoteFilters(false);

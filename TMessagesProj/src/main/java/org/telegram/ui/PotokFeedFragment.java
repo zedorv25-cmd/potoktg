@@ -506,6 +506,14 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
         listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
+            public void onScrollStateChanged(RecyclerView rv, int newState) {
+                PotokDebugLog.d("SCROLL_FEED", "onScrollStateChanged newState="
+                        + (newState == RecyclerView.SCROLL_STATE_IDLE ? "IDLE"
+                        : newState == RecyclerView.SCROLL_STATE_DRAGGING ? "DRAGGING"
+                        : newState == RecyclerView.SCROLL_STATE_SETTLING ? "SETTLING(fling)" : String.valueOf(newState)));
+            }
+
+            @Override
             public void onScrolled(RecyclerView rv, int dx, int dy) {
                 LinearLayoutManager lm = (LinearLayoutManager) rv.getLayoutManager();
                 if (lm == null) return;

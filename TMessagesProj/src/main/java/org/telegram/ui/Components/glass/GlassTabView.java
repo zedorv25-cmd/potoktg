@@ -489,7 +489,7 @@ public class GlassTabView extends FrameLayout implements MainTabsLayout.Tab, Fac
         tab.imageView.setVisibility(GONE);
 
         tab.staticIconView = new androidx.appcompat.widget.AppCompatImageView(context);
-        android.graphics.drawable.Drawable iconDrawable = buildVectorIcon(iconRes);
+        android.graphics.drawable.Drawable iconDrawable = androidx.core.content.ContextCompat.getDrawable(context, iconRes);
         android.util.Log.d("POTOK_ICON", "createStaticTab: iconRes=" + iconRes + " iconDrawable=" + iconDrawable + " isNull=" + (iconDrawable == null));
         tab.staticIconView.setImageDrawable(iconDrawable);
         tab.staticIconView.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);

@@ -39,6 +39,18 @@ public class PotokDebugLog {
     private static final ArrayDeque<String> lines = new ArrayDeque<>();
     private static final SimpleDateFormat fmt = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US);
 
+    // Файл "хвоста" лога для диагностики ЗАВИСАНИЙ (не крашей — на них есть отдельный
+    // CRASH_FILE_NAME/installCrashHandler). При настоящем зависании (бесконечный цикл/deadlock
+    // на главном потоке, без исключения) пользователю придётся убить процесс силой — весь
+    // in-memory буфер lines пропадёт вместе с ним, а экран логов (диалог) открыть будет
+    // невозможно, т.к. он тоже требует главный поток. Поэтому здесь же, синхронно и на каждую
+    // строку (не только на краш), дублируем в файл — переживает kill -9. При следующем запуске
+    // содержимое подставляется в начало буфера (см. loadPendingCrashIfAny), как и для крашей.
+    private static final String HANG_FILE_NAME = "potok_last_session_log_tail.txt";
+    private static final int HANG_FILE_MAX_LINES = 300;
+    private static Context hangFileContext;
+    private static final ArrayDeque<String> hangFileTail = new ArrayDeque<>();
+
     private static boolean crashHandlerInstalled = false;
 
     public static synchronized void d(String tag, String message) {
@@ -48,6 +60,31 @@ public class PotokDebugLog {
             lines.removeFirst();
         }
         FileLog.d("PotokDebug: " + line);
+        appendToHangFile(line);
+    }
+
+    // Держим на диске только "хвост" (последние HANG_FILE_MAX_LINES строк) — интересующая нас
+    // при зависании информация всегда в конце, а перезаписывать весь файл целиком на каждую
+    // строку (чтобы не разрастался бесконечно) дешевле, чем построчный append без ограничения.
+    private static void appendToHangFile(String line) {
+        if (hangFileContext == null) {
+            return;
+        }
+        hangFileTail.addLast(line);
+        while (hangFileTail.size() > HANG_FILE_MAX_LINES) {
+            hangFileTail.removeFirst();
+        }
+        try (java.io.FileOutputStream fos = hangFileContext.openFileOutput(HANG_FILE_NAME, Context.MODE_PRIVATE)) {
+            StringBuilder sb = new StringBuilder();
+            for (String l : hangFileTail) {
+                sb.append(l).append('\n');
+            }
+            fos.write(sb.toString().getBytes("UTF-8"));
+            fos.flush();
+            fos.getFD().sync();
+        } catch (Throwable ignore) {
+            // диагностика не должна мешать работе приложения
+        }
     }
 
     /**
@@ -156,6 +193,7 @@ public class PotokDebugLog {
         }
         crashHandlerInstalled = true;
         final Context appContext = context != null ? context.getApplicationContext() : null;
+        hangFileContext = appContext;
         final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             try {
@@ -174,6 +212,41 @@ public class PotokDebugLog {
         // не остался ли файл краша с прошлого запуска — если да, подгружаем его
         // в буфер первыми строками и удаляем файл, чтобы не показывать повторно.
         loadPendingCrashIfAny(appContext);
+        // Аналогично — хвост лога с прошлого запуска (на случай, если тот запуск
+        // закончился не крашем, а зависанием и убийством процесса вручную).
+        loadPendingHangTailIfAny(appContext);
+    }
+
+    private static synchronized void loadPendingHangTailIfAny(Context context) {
+        if (context == null) {
+            return;
+        }
+        java.io.File f = new java.io.File(context.getFilesDir(), HANG_FILE_NAME);
+        if (!f.exists()) {
+            return;
+        }
+        try {
+            StringBuilder sb = new StringBuilder();
+            try (java.io.BufferedReader br = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    sb.append(line).append('\n');
+                }
+            }
+            String[] tailLines = sb.toString().split("\n");
+            for (int i = tailLines.length - 1; i >= 0; i--) {
+                if (!tailLines[i].isEmpty()) {
+                    lines.addFirst(tailLines[i]);
+                }
+            }
+            lines.addFirst("════════ ХВОСТ ЛОГА С ПРОШЛОГО ЗАПУСКА (ниже, на случай зависания) ════════");
+        } catch (Throwable ignore) {
+            // не даём падению чтения хвоста сломать запуск приложения
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+        }
     }
 
     private static void writeCrashFile(Context context, String text) {

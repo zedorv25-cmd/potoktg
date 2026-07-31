@@ -4505,6 +4505,10 @@ public boolean onTouchEvent(MotionEvent ev) {
 
                 @Override
                 public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
+                    PotokDebugLog.d("SCROLL_CHATS", "onScrollStateChanged newState="
+                            + (newState == RecyclerView.SCROLL_STATE_IDLE ? "IDLE"
+                            : newState == RecyclerView.SCROLL_STATE_DRAGGING ? "DRAGGING"
+                            : newState == RecyclerView.SCROLL_STATE_SETTLING ? "SETTLING(fling)" : String.valueOf(newState)));
                     if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                         wasManualScroll = true;
                         scrollingManually = true;

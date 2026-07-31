@@ -328,7 +328,7 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         final android.graphics.drawable.GradientDrawable tabsFeedStroke = new android.graphics.drawable.GradientDrawable();
         tabsFeedStroke.setShape(android.graphics.drawable.GradientDrawable.OVAL);
         tabsFeedStroke.setColor(android.graphics.Color.TRANSPARENT);
-        tabsFeedStroke.setStroke(dp(1.5f), 0xFFB31408);
+        tabsFeedStroke.setStroke(dp(1.5f), 0xFFC13E34);
 
         tabsFeedContainer.setBackground(new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{tabsFeedBackground, tabsFeedStroke}));
 
@@ -351,7 +351,7 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         tabsRow.setOrientation(LinearLayout.HORIZONTAL);
         tabsRow.setClipChildren(false);
         tabsRow.addView(tabsFeedContainer, LayoutHelper.createLinear(DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS, DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS, Gravity.BOTTOM));
-        tabsRow.addView(new View(context), LayoutHelper.createLinear(12, LayoutHelper.MATCH_PARENT));
+        tabsRow.addView(new View(context), LayoutHelper.createLinear(6, LayoutHelper.MATCH_PARENT));
         tabsRow.addView(tabsView, LayoutHelper.createLinear(246 + DialogsActivity.MAIN_TABS_MARGIN * 2, DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS, Gravity.BOTTOM));
 
         tabsViewWrapper.addView(tabsRow, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
@@ -980,6 +980,9 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
     private final @NonNull BlurredBackgroundSourceColor iBlur3SourceColor;
     private final @Nullable BlurredBackgroundSourceRenderNode iBlur3SourceTabGlass;
 
+    private int blur3_lastWidth = -1;
+    private int blur3_lastHeight = -1;
+
     private final RectF fragmentPosition = new RectF();
     private void blur3_invalidateBlur() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || iBlur3SourceTabGlass == null || fragmentView == null) {
@@ -988,6 +991,21 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
 
         final int width = fragmentView.getMeasuredWidth();
         final int height = fragmentView.getMeasuredHeight();
+
+        // ДИАГНОСТИКА зависания при скролле/флинге на Чатах и Ленте (гипотеза: этот метод
+        // раньше безусловно пересчитывал размер и дисплей-лист RenderNode'а на КАЖДЫЙ кадр
+        // отрисовки (вызывается из dispatchDraw), а теперь на этот же RenderNode подписаны
+        // ДВА потребителя вместо одного — пилюля таббара и новый круглый остров "Лента").
+        // Правка: пропускаем пересчёт, если размер фактически не изменился (при обычном
+        // скролле списка ширина/высота всего фрагмента не меняется вообще). Логи оставлены —
+        // если зависание не в этом методе, по хвосту лога будет видно, что здесь всё быстро
+        // и без повторов, и подозрение уйдёт на ViewPositionWatcher/BlurredBackgroundDrawable.
+        if (width == blur3_lastWidth && height == blur3_lastHeight) {
+            return;
+        }
+        PotokDebugLog.d("BLUR3", "invalidateBlur size changed " + blur3_lastWidth + "x" + blur3_lastHeight + " -> " + width + "x" + height);
+        blur3_lastWidth = width;
+        blur3_lastHeight = height;
 
         iBlur3SourceTabGlass.setSize(width, height);
         iBlur3SourceTabGlass.updateDisplayListIfNeeded();

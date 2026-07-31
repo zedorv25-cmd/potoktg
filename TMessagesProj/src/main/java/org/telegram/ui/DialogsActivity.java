@@ -1334,7 +1334,6 @@ public boolean onTouchEvent(MotionEvent ev) {
     if (
             parentLayout != null &&
                     filterTabsView != null && !filterTabsView.isEditing() &&
-                    !hasMainTabs &&
                     !searching &&
                     !rightSlidingDialogContainer.hasFragment() &&
                     !parentLayout.checkTransitionAnimation() && !parentLayout.isInPreviewMode() && !parentLayout.isPreviewOpenAnimationInProgress() &&
@@ -3651,7 +3650,7 @@ public boolean onTouchEvent(MotionEvent ev) {
                         return;
                     }
 
-                    ArrayList<MessagesController.DialogFilter> dialogFilters = getMessagesController().getDialogFilters();
+                    ArrayList<MessagesController.DialogFilter> dialogFilters = getPotokActiveDialogFilters();
                     if (!tab.isDefault && (tab.id < 0 || tab.id >= dialogFilters.size())) {
                         return;
                     }
@@ -3702,11 +3701,11 @@ public boolean onTouchEvent(MotionEvent ev) {
                     if (tabId == filterTabsView.getDefaultTabId()) {
                         return getMessagesStorage().getMainUnreadCount();
                     }
-                    ArrayList<MessagesController.DialogFilter> dialogFilters = getMessagesController().getDialogFilters();
+                    ArrayList<MessagesController.DialogFilter> dialogFilters = getPotokActiveDialogFilters();
                     if (tabId < 0 || tabId >= dialogFilters.size()) {
                         return 0;
                     }
-                    return getMessagesController().getDialogFilters().get(tabId).unreadCount;
+                    return getPotokActiveDialogFilters().get(tabId).unreadCount;
                 }
 
                 @Override
@@ -3727,7 +3726,7 @@ public boolean onTouchEvent(MotionEvent ev) {
                     if (tabView.getId() == filterTabsView.getDefaultTabId()) {
                         dialogFilter = null;
                     } else {
-                        ArrayList<MessagesController.DialogFilter> dialogFilters = getMessagesController().getDialogFilters();
+                        ArrayList<MessagesController.DialogFilter> dialogFilters = getPotokActiveDialogFilters();
                         final int index = tabView.getId();
                         if (dialogFilters != null && index >= 0 && index < dialogFilters.size()) {
                             dialogFilter = dialogFilters.get(tabView.getId());
@@ -3745,7 +3744,7 @@ public boolean onTouchEvent(MotionEvent ev) {
                     ArrayList<TLRPC.Dialog> dialogs = new ArrayList<>(defaultTab ? getMessagesController().getDialogs(folderId) : getMessagesController().getAllDialogs());
                     MessagesController.DialogFilter filter = null;
                     if (dialogFilter != null) {
-                        filter = getMessagesController().getDialogFilters().get(tabView.getId());
+                        filter = getPotokActiveDialogFilters().get(tabView.getId());
                         if (filter != null) {
                             for (int i = 0; i < dialogs.size(); i++) {
                                 if (!filter.includesDialog(getAccountInstance(), dialogs.get(i).id)) {
@@ -3821,7 +3820,7 @@ public boolean onTouchEvent(MotionEvent ev) {
                                     return PixelFormat.TRANSPARENT;
                                 }
                             })
-                            .addIf(getMessagesController().getDialogFilters().size() > 1, R.drawable.tabs_reorder, LocaleController.getString(R.string.FilterReorder), () -> {
+                            .addIf(getPotokActiveDialogFilters().size() > 1, R.drawable.tabs_reorder, LocaleController.getString(R.string.FilterReorder), () -> {
                                 filterTabsView.setIsEditing(true);
                                 showDoneItem(true);
                             })
@@ -3867,7 +3866,7 @@ public boolean onTouchEvent(MotionEvent ev) {
 
                 @Override
                 public void onDeletePressed(int id) {
-                    showDeleteAlert(getMessagesController().getDialogFilters().get(id));
+                    showDeleteAlert(getPotokActiveDialogFilters().get(id));
                 }
             });
         }
@@ -4005,7 +4004,7 @@ public boolean onTouchEvent(MotionEvent ev) {
                     });
                     showDialog(sheet);
                 } else if (id == remove_from_folder) {
-                    MessagesController.DialogFilter filter = getMessagesController().getDialogFilters().get(viewPages[0].selectedType);
+                    MessagesController.DialogFilter filter = getPotokActiveDialogFilters().get(viewPages[0].selectedType);
                     ArrayList<Long> neverShow = FiltersListBottomSheet.getDialogsCount(DialogsActivity.this, filter, selectedDialogs, false, false);
 
                     int currentCount;
@@ -6796,7 +6795,7 @@ public boolean onTouchEvent(MotionEvent ev) {
             }
         }
         int index = filterTabsView.getTabsCount() - 1;
-        ArrayList<MessagesController.DialogFilter> filters = getMessagesController().getDialogFilters();
+        ArrayList<MessagesController.DialogFilter> filters = getPotokActiveDialogFilters();
         for (int i = 0; i < filters.size(); ++i) {
             if (filters.get(i).id == fid) {
                 index = i;
@@ -6820,10 +6819,10 @@ public boolean onTouchEvent(MotionEvent ev) {
             viewPages[a].listView.stopScroll();
         }
         int a = animated ? 1 : 0;
-        if (viewPages[a].selectedType < 0 || viewPages[a].selectedType >= getMessagesController().getDialogFilters().size()) {
+        if (viewPages[a].selectedType < 0 || viewPages[a].selectedType >= getPotokActiveDialogFilters().size()) {
             return;
         }
-        MessagesController.DialogFilter filter = getMessagesController().getDialogFilters().get(viewPages[a].selectedType);
+        MessagesController.DialogFilter filter = getPotokActiveDialogFilters().get(viewPages[a].selectedType);
         if (filter.isDefault()) {
             viewPages[a].dialogsType = initialDialogsType;
             viewPages[a].listView.updatePullState();
@@ -6861,6 +6860,16 @@ public boolean onTouchEvent(MotionEvent ev) {
         }
     }
 
+    // В режиме hasMainTabs верхний таббар должен показывать РОВНО 4 вкладки (Поток), а не
+    // весь реальный список папок аккаунта (иначе туда подмешиваются настоящие папки пользователя
+    // с сервера и получаются лишние/задвоенные вкладки). Вне hasMainTabs — обычное поведение.
+    private ArrayList<MessagesController.DialogFilter> getPotokActiveDialogFilters() {
+        if (hasMainTabs) {
+            return getMessagesController().getPotokMainTabsFilters();
+        }
+        return getMessagesController().getDialogFilters();
+    }
+
     private void updateFilterTabs(boolean force, boolean animated) {
         if (filterTabsView == null || inPreviewMode || searchIsShowed || (rightSlidingDialogContainer != null && rightSlidingDialogContainer.hasFragment())) {
             return;
@@ -6869,7 +6878,7 @@ public boolean onTouchEvent(MotionEvent ev) {
             filterOptions.dismiss();
             filterOptions = null;
         }
-        final ArrayList<MessagesController.DialogFilter> filters = getMessagesController().getDialogFilters();
+        final ArrayList<MessagesController.DialogFilter> filters = getPotokActiveDialogFilters();
         if (filters.size() > 1) {
             if (force || filterTabsView.getVisibility() != View.VISIBLE) {
                 boolean animatedUpdateItems = animated;
@@ -7862,7 +7871,7 @@ public boolean onTouchEvent(MotionEvent ev) {
         boolean load = false;
         boolean loadFromCache = false;
         if (viewPage.dialogsType == DIALOGS_TYPE_FOLDER1 || viewPage.dialogsType == DIALOGS_TYPE_FOLDER2) {
-            ArrayList<MessagesController.DialogFilter> dialogFilters = getMessagesController().getDialogFilters();
+            ArrayList<MessagesController.DialogFilter> dialogFilters = getPotokActiveDialogFilters();
             if (viewPage.selectedType >= 0 && viewPage.selectedType < dialogFilters.size()) {
                 MessagesController.DialogFilter filter = dialogFilters.get(viewPage.selectedType);
                 if ((filter.flags & MessagesController.DIALOG_FILTER_FLAG_EXCLUDE_ARCHIVED) == 0) {
@@ -10834,7 +10843,7 @@ public boolean onTouchEvent(MotionEvent ev) {
     }
 
     private void showFiltersHint() {
-        if (askingForPermissions || !getMessagesController().dialogFiltersLoaded || !getMessagesController().showFiltersTooltip || filterTabsView == null || !getMessagesController().getDialogFilters().isEmpty() || isPaused || !getUserConfig().filtersLoaded || inPreviewMode) {
+        if (askingForPermissions || !getMessagesController().dialogFiltersLoaded || !getMessagesController().showFiltersTooltip || filterTabsView == null || !getPotokActiveDialogFilters().isEmpty() || isPaused || !getUserConfig().filtersLoaded || inPreviewMode) {
             return;
         }
         SharedPreferences preferences = MessagesController.getGlobalMainSettings();

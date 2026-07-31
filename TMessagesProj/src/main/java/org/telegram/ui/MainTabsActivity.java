@@ -108,6 +108,8 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
     private FrameLayout tabsViewWrapper;
     private MainTabsLayout tabsView;
     private BlurredBackgroundDrawable tabsViewBackground;
+    private FrameLayout tabsFeedContainer;
+    private BlurredBackgroundDrawable tabsFeedBackground;
     private View fadeView;
 
     public MainTabsActivity() {
@@ -288,8 +290,10 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
                 viewPager.scrollToPosition(position);
             });
 
-            tabsView.addView(tabs[index]);
-            tabsView.setViewVisible(view, true, false);
+            if (index != INDEX_FEED) {
+                tabsView.addView(tabs[index]);
+                tabsView.setViewVisible(view, true, false);
+            }
         }
 
         selectTab(viewPager.getCurrentPosition(), false);
@@ -309,6 +313,25 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         tabsViewBackground.setPadding(dp(DialogsActivity.MAIN_TABS_MARGIN - 0.334f));
         tabsView.setBackground(tabsViewBackground);
 
+        // Отдельный круглый остров под «Ленту»: тот же блюр-фон, что и у пилюли,
+        // плюс обводка фирменным красным из логотипа typefeed (сэмплировано с
+        // присланного PNG: ~#B31408).
+        tabsFeedContainer = new FrameLayout(context);
+        tabsFeedContainer.setClipChildren(false);
+        tabsFeedContainer.setPadding(dp(DialogsActivity.MAIN_TABS_MARGIN + 4), dp(DialogsActivity.MAIN_TABS_MARGIN + 4), dp(DialogsActivity.MAIN_TABS_MARGIN + 4), dp(DialogsActivity.MAIN_TABS_MARGIN + 4));
+        tabsFeedContainer.addView(tabs[INDEX_FEED], LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.CENTER));
+
+        tabsFeedBackground = iBlur3FactoryGlass.create(tabsFeedContainer, BlurredBackgroundProviderImpl.mainTabs(resourceProvider));
+        tabsFeedBackground.setRadius(dp(DialogsActivity.MAIN_TABS_HEIGHT / 2f));
+        tabsFeedBackground.setPadding(dp(DialogsActivity.MAIN_TABS_MARGIN - 0.334f));
+
+        final android.graphics.drawable.GradientDrawable tabsFeedStroke = new android.graphics.drawable.GradientDrawable();
+        tabsFeedStroke.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        tabsFeedStroke.setColor(android.graphics.Color.TRANSPARENT);
+        tabsFeedStroke.setStroke(dp(1.5f), 0xFFB31408);
+
+        tabsFeedContainer.setBackground(new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{tabsFeedBackground, tabsFeedStroke}));
+
         BlurredBackgroundDrawableViewFactory iBlur3FactoryFade = new BlurredBackgroundDrawableViewFactory(iBlur3SourceColor);
         iBlur3FactoryFade.setSourceRootView(viewPositionWatcher, contentView);
 
@@ -321,7 +344,17 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
 
         tabsViewWrapper = new FrameLayout(context);
         tabsViewWrapper.setOnClickListener(v -> {});
-        tabsViewWrapper.addView(tabsView, LayoutHelper.createFrame(328 + DialogsActivity.MAIN_TABS_MARGIN * 2, DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
+
+        // Два физически раздельных острова: круг «Лента» + пилюля Чаты/Настройки/Контакты,
+        // с видимым зазором между ними. Общая ширина пилюли уменьшена (3 таба вместо 4).
+        final LinearLayout tabsRow = new LinearLayout(context);
+        tabsRow.setOrientation(LinearLayout.HORIZONTAL);
+        tabsRow.setClipChildren(false);
+        tabsRow.addView(tabsFeedContainer, LayoutHelper.createLinear(DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS, DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS, Gravity.BOTTOM));
+        tabsRow.addView(new View(context), LayoutHelper.createLinear(12, LayoutHelper.MATCH_PARENT));
+        tabsRow.addView(tabsView, LayoutHelper.createLinear(246 + DialogsActivity.MAIN_TABS_MARGIN * 2, DialogsActivity.MAIN_TABS_HEIGHT_WITH_MARGINS, Gravity.BOTTOM));
+
+        tabsViewWrapper.addView(tabsRow, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
         tabsViewWrapper.setClipToPadding(false);
         contentView.addView(tabsViewWrapper, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM));
 
@@ -677,6 +710,9 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
             tabs[index].setGestureSelectedOverride(visibility, allow);
         }
         tabsView.invalidate();
+        if (tabsFeedContainer != null) {
+            tabsFeedContainer.invalidate();
+        }
     }
 
 
@@ -871,6 +907,12 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         tabsView.setEnabled(factor > 1);
         tabsView.setAlpha(factor);
         tabsView.setVisibility(factor > 0 ? View.VISIBLE : View.GONE);
+        if (tabsFeedContainer != null) {
+            tabsFeedContainer.setClickable(factor > 1);
+            tabsFeedContainer.setEnabled(factor > 1);
+            tabsFeedContainer.setAlpha(factor);
+            tabsFeedContainer.setVisibility(factor > 0 ? View.VISIBLE : View.GONE);
+        }
     }
 
     @Override
@@ -956,12 +998,18 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         if (tabsViewBackground != null) {
             tabsViewBackground.updateColors();
         }
+        if (tabsFeedBackground != null) {
+            tabsFeedBackground.updateColors();
+        }
         blur3_invalidateBlur();
         if (fadeView != null) {
             fadeView.invalidate();
         }
         if (tabsView != null) {
             tabsView.invalidate();
+        }
+        if (tabsFeedContainer != null) {
+            tabsFeedContainer.invalidate();
         }
         if (tabs != null) {
             for (GlassTabView tabView : tabs) {

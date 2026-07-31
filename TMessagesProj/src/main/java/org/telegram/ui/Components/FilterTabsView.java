@@ -398,6 +398,7 @@ public class FilterTabsView extends FrameLayout {
                 textX = textX * changeProgress + animateFromTextX * (1f - changeProgress);
             }
 
+            float titleOffsetX = 0;
             if (currentTab.iconRes != 0) {
                 // Пресетная вкладка Потока — рисуем иконку по центру вместо StaticLayout с текстом.
                 // Ветка ниже (else) с анимацией смены заголовка/эмодзи-спанами не задействуется:
@@ -423,7 +424,6 @@ public class FilterTabsView extends FrameLayout {
             }
 
 
-            float titleOffsetX = 0;
             if (animateTextChange) {
                 titleOffsetX = titleXOffset * (animateTextChangeOut ? changeProgress : 1f - changeProgress);
                 if (titleAnimateStableLayout != null) {

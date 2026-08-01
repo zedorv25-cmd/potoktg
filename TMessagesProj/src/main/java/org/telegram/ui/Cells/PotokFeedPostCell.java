@@ -1400,7 +1400,7 @@ public class PotokFeedPostCell extends LinearLayout {
         FrameLayout card = new FrameLayout(getContext());
         card.setClickable(true); // не отдаёт тап дальше на root (не закрывать по тапу внутри карточки)
         android.graphics.drawable.GradientDrawable cardBg = new android.graphics.drawable.GradientDrawable();
-        cardBg.setColor(Theme.getColor(Theme.key_dialogBackground, resourcesProvider));
+        cardBg.setColor(Theme.getColor(Theme.key_dialogBackground, null));
         cardBg.setCornerRadius(dp(14));
         card.setBackground(cardBg);
         card.setClipToOutline(true);

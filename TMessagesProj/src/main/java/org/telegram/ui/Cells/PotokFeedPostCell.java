@@ -74,6 +74,49 @@ import java.util.ArrayList;
  */
 public class PotokFeedPostCell extends LinearLayout {
 
+    // Фикс "долгое нажатие срабатывает только если держать идеально неподвижно"
+    // (~60% промахов по жалобе пользователя): стандартный View.checkForLongClick
+    // отменяет long-press при малейшем смещении пальца за системный touch slop
+    // (обычно ~8dp) НА ACTION_MOVE, а родительский RecyclerView ленты (вертикальный
+    // список постов) использует тот же самый маленький порог, чтобы решить "начать
+    // скроллить" -> перехватывает жест и присылает нам ACTION_CANCEL раньше, чем
+    // успевает сработать таймер long-press, даже на естественном дрожании
+    // удерживаемого пальца. Решение: пока смещение от точки ACTION_DOWN не
+    // превышает увеличенный, более терпимый порог, явно запрещаем родителю
+    // перехватывать жест (requestDisallowInterceptTouchEvent(true)) — как только
+    // смещение станет по-настоящему большим (то есть это уже явно скролл, а не
+    // дрожание), возвращаем ленте право перехватывать как обычно.
+    private float rootTouchDownX, rootTouchDownY;
+    private static final float LONG_PRESS_SLOP_MULTIPLIER = 3f;
+
+    @Override
+    public boolean onInterceptTouchEvent(MotionEvent ev) {
+        ViewParent parent = getParent();
+        switch (ev.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                rootTouchDownX = ev.getRawX();
+                rootTouchDownY = ev.getRawY();
+                if (parent != null) parent.requestDisallowInterceptTouchEvent(true);
+                break;
+            case MotionEvent.ACTION_MOVE: {
+                float dx = Math.abs(ev.getRawX() - rootTouchDownX);
+                float dy = Math.abs(ev.getRawY() - rootTouchDownY);
+                float slop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop() * LONG_PRESS_SLOP_MULTIPLIER;
+                if (parent != null && (dx > slop || dy > slop)) {
+                    // Явно скролл, а не дрожание удерживаемого пальца — отдаём
+                    // жест обратно ленте, пусть скроллит как обычно.
+                    parent.requestDisallowInterceptTouchEvent(false);
+                }
+                break;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (parent != null) parent.requestDisallowInterceptTouchEvent(false);
+                break;
+        }
+        return super.onInterceptTouchEvent(ev);
+    }
+
     private static final int MAX_TEXT_LINES   = 7;
     private static final int MAX_MEDIA_HEIGHT_DP = 560;
     private static final int MIN_MEDIA_HEIGHT_DP = 140;
@@ -269,6 +312,11 @@ public class PotokFeedPostCell extends LinearLayout {
         titleView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourcesProvider));
         titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
+        // Тап именно по названию канала (не по всей titleColumn — время рядом
+        // по-прежнему открывает профиль) -> открыть пост на канале, тот же переход,
+        // что и по долгому тапу на текст/медиа. Клик на самом titleView "съедает"
+        // событие раньше родительского titleColumn.setOnLongClickListener выше.
+        titleView.setOnClickListener(v -> openPostInChannel());
         titleColumn.addView(titleView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
 
         timeView = new TextView(context);
@@ -367,12 +415,18 @@ public class PotokFeedPostCell extends LinearLayout {
                     case MotionEvent.ACTION_MOVE:
                         float dx = Math.abs(e.getX() - startX);
                         float dy = Math.abs(e.getY() - startY);
-                        if (dx > dy) {
-                            // Горизонтальный — блокируем родителя
-                            getParent().requestDisallowInterceptTouchEvent(true);
-                        } else {
-                            // Вертикальный — отдаём родителю
-                            getParent().requestDisallowInterceptTouchEvent(false);
+                        // Допуск на дрожание удерживаемого пальца (долгий тап на фото/
+                        // видео) — пока смещение в пределах допуска, не решаем
+                        // направление вообще, чтобы не мешать таймеру long-press на img.
+                        float dirSlop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop() * LONG_PRESS_SLOP_MULTIPLIER;
+                        if (dx > dirSlop || dy > dirSlop) {
+                            if (dx > dy) {
+                                // Горизонтальный — блокируем родителя
+                                getParent().requestDisallowInterceptTouchEvent(true);
+                            } else {
+                                // Вертикальный — отдаём родителю
+                                getParent().requestDisallowInterceptTouchEvent(false);
+                            }
                         }
                         break;
                 }
@@ -1318,10 +1372,137 @@ public class PotokFeedPostCell extends LinearLayout {
         }
     }
 
+    // Сетка 3х3 всех медиа поста, открывается долгим тапом по медиа (когда медиа >1).
+    // Плавающая карточка поверх ленты с затемнением фона (не отдельный экран/переход —
+    // модальный Dialog, тап по затемнению или системная кнопка "назад" закрывает).
+    // Если медиа больше 9 — остальные доступны обычным вертикальным скроллом внутри
+    // самой сетки (GridLayoutManager сам это даёт, отдельная пагинация не нужна).
+    private void openMediaGrid(ArrayList<MessageObject> items) {
+        if (items == null || items.size() < 2 || getContext() == null || parentActivity == null) return;
+        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+
+        android.app.Dialog dialog = new android.app.Dialog(parentActivity, android.R.style.Theme_Translucent_NoTitleBar);
+        android.view.Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+            window.setDimAmount(0.72f);
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        }
+
+        FrameLayout root = new FrameLayout(getContext());
+        // Тап по затемнённому фону (мимо карточки) — закрыть.
+        root.setOnClickListener(v -> dialog.dismiss());
+
+        int cardWidth = Math.min(AndroidUtilities.displaySize.x - dp(32), dp(420));
+        int maxCardHeight = (int) (AndroidUtilities.displaySize.y * 0.78f);
+        final int cellSize = cardWidth / 3;
+
+        FrameLayout card = new FrameLayout(getContext());
+        card.setClickable(true); // не отдаёт тап дальше на root (не закрывать по тапу внутри карточки)
+        android.graphics.drawable.GradientDrawable cardBg = new android.graphics.drawable.GradientDrawable();
+        cardBg.setColor(Theme.getColor(Theme.key_dialogBackground, resourcesProvider));
+        cardBg.setCornerRadius(dp(14));
+        card.setBackground(cardBg);
+        card.setClipToOutline(true);
+        card.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, android.graphics.Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(14));
+            }
+        });
+
+        RecyclerView grid = new RecyclerView(getContext());
+        grid.setLayoutManager(new androidx.recyclerview.widget.GridLayoutManager(getContext(), 3));
+        grid.setOverScrollMode(View.OVER_SCROLL_NEVER);
+
+        RecyclerView.Adapter<RecyclerView.ViewHolder> adapter = new RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+            @Override
+            public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+                FrameLayout wrapper = new FrameLayout(getContext());
+                wrapper.setLayoutParams(new RecyclerView.LayoutParams(cellSize, cellSize));
+                BackupImageView img = new BackupImageView(getContext());
+                img.setLayoutParams(LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+                wrapper.addView(img);
+                // Тонкий зазор между ячейками через паддинг враппера + фон карточки,
+                // видимый в этом зазоре (проще и надёжнее, чем ItemDecoration).
+                wrapper.setPadding(dp(1), dp(1), dp(1), dp(1));
+                PlayIndicatorView playBadge = new PlayIndicatorView(getContext());
+                playBadge.setVisibility(GONE);
+                wrapper.addView(playBadge, LayoutHelper.createFrame(28, 28, Gravity.CENTER));
+                RecyclerView.ViewHolder holder = new RecyclerView.ViewHolder(wrapper) {};
+                holder.itemView.setTag(new View[]{img, playBadge});
+                return holder;
+            }
+
+            @Override
+            public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
+                View[] tag = (View[]) holder.itemView.getTag();
+                BackupImageView img = (BackupImageView) tag[0];
+                PlayIndicatorView playBadge = (PlayIndicatorView) tag[1];
+                MessageObject mo = items.get(position);
+                boolean isVideo = mo.isVideo() || mo.isGif();
+                playBadge.setVisibility(isVideo ? VISIBLE : GONE);
+
+                TLRPC.PhotoSize photoSize = null;
+                TLObject thumbsObject = null;
+                if (isVideo) {
+                    TLRPC.MessageMedia media = mo.messageOwner != null ? mo.messageOwner.media : null;
+                    TLRPC.Document document = (media instanceof TLRPC.TL_messageMediaDocument) ? media.document : null;
+                    if (document != null) {
+                        photoSize = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, 400);
+                        if (photoSize != null) {
+                            img.setImage(ImageLocation.getForDocument(photoSize, document), "100_100",
+                                mo.strippedThumb, mo);
+                        }
+                    }
+                } else {
+                    photoSize = FileLoader.getClosestPhotoSizeWithSize(mo.photoThumbs, 400);
+                    thumbsObject = mo.photoThumbsObject;
+                    if (photoSize != null) {
+                        img.setImage(ImageLocation.getForObject(photoSize, thumbsObject), "100_100",
+                            mo.strippedThumb, mo);
+                    }
+                }
+                if (photoSize == null) {
+                    img.setImageDrawable(mo.strippedThumb);
+                }
+
+                final int idx = position;
+                holder.itemView.setOnClickListener(v -> {
+                    dialog.dismiss();
+                    openMediaViewer(mo, idx, items);
+                });
+            }
+
+            @Override
+            public int getItemCount() {
+                return items.size();
+            }
+        };
+        grid.setAdapter(adapter);
+
+        card.addView(grid, LayoutHelper.createFrame(cardWidth, LayoutHelper.WRAP_CONTENT));
+        root.addView(card, LayoutHelper.createFrame(cardWidth, LayoutHelper.WRAP_CONTENT, Gravity.CENTER));
+        // Ограничение по высоте — если рядов много, сетка сама уходит в скролл
+        // внутри своей WRAP_CONTENT-высоты, ограниченной максимумом карточки.
+        grid.setMinimumHeight(0);
+        card.post(() -> {
+            if (card.getHeight() > maxCardHeight) {
+                ViewGroup.LayoutParams lp = card.getLayoutParams();
+                lp.height = maxCardHeight;
+                card.setLayoutParams(lp);
+            }
+        });
+
+        dialog.setContentView(root);
+        dialog.show();
+    }
+
     private ActionBarPopupWindow postMenuWindow;
 
     private void openPostInChannel() {
         if (currentMessage == null || currentChannel == null || parentFragment == null) return;
+        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
         android.os.Bundle args = new android.os.Bundle();
         args.putLong("chat_id", currentChannel.id);
         args.putInt("message_id", currentMessage.getId());
@@ -2966,8 +3147,15 @@ public class PotokFeedPostCell extends LinearLayout {
             // Фикс: карусель (RecyclerView) сама перехватывает долгое нажатие для своих
             // touch-жестов (скролл/свайп), поэтому долгий тап по фото не долетал до
             // long-click на самой карточке поста. Дублируем обработчик прямо здесь.
+            // Разделение по требованию пользователя: долгое нажатие на МЕДИА (не на
+            // тексте поста) больше не открывает канал — вместо этого, если медиа в
+            // посте больше одного, открывается сетка 3х3 со всеми медиа поста. Если
+            // медиа всего одно — сетка не имеет смысла, жест остаётся статичным
+            // (ничего не происходит), переход на канал по медиа в этом случае убран.
             img.setOnLongClickListener(v -> {
-                openPostInChannel();
+                if (items.size() > 1) {
+                    openMediaGrid(items);
+                }
                 return true;
             });
         }

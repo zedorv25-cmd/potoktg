@@ -914,12 +914,18 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         tabsView.setClickable(factor > 1);
         tabsView.setEnabled(factor > 1);
         tabsView.setAlpha(factor);
-        tabsView.setVisibility(factor > 0 ? View.VISIBLE : View.GONE);
+        // Поток — было View.GONE: скрытие таббара исключало его из layout-дерева и триггерило
+        // requestLayout() у общего с вьюпейджером родителя (tabsViewWrapper -> contentView),
+        // что при попадании ровно в момент активного флинга ломало touch-состояние RecyclerView
+        // (зависание, снимавшееся только уходом в фон/возвратом — принудительный ACTION_CANCEL).
+        // INVISIBLE не исключает view из layout-дерева, но так же не рисуется и не кликабельна
+        // (translationY уже уводит её за пределы экрана, alpha=0, clickable/enabled=false).
+        tabsView.setVisibility(factor > 0 ? View.VISIBLE : View.INVISIBLE);
         if (tabsFeedContainer != null) {
             tabsFeedContainer.setClickable(factor > 1);
             tabsFeedContainer.setEnabled(factor > 1);
             tabsFeedContainer.setAlpha(factor);
-            tabsFeedContainer.setVisibility(factor > 0 ? View.VISIBLE : View.GONE);
+            tabsFeedContainer.setVisibility(factor > 0 ? View.VISIBLE : View.INVISIBLE);
         }
     }
 

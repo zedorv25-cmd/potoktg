@@ -9355,6 +9355,7 @@ frameLayout.addView(potokDrawerLayout, LayoutHelper.createFrame(LayoutHelper.MAT
 private float swipeStartY;
 private boolean swipeTracking;
 private boolean touchStartedOnStories;
+private boolean touchStartedOnMediaCarousel;
 
 @Override
 public boolean dispatchTouchEvent(MotionEvent event) {
@@ -9370,11 +9371,17 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                 // самого списка историй на экране — если да, весь этот жест (до UP)
                 // полностью игнорируем для открытия шторки.
                 touchStartedOnStories = isPointInsideStoriesCell(swipeStartX, swipeStartY);
+                // Фикс: свайп внутри карусели медиа поста (перелистывание фото/видео
+                // вправо) на Ленте раньше всегда открывал боковую шторку, потому что
+                // этот жест ловится здесь, на уровне Activity, раньше, чем событие
+                // вообще доходит до самой карусели — тот же принцип, что и со
+                // списком историй чуть выше.
+                touchStartedOnMediaCarousel = isPointInsideMediaCarousel(swipeStartX, swipeStartY);
                 break;
             case MotionEvent.ACTION_MOVE:
                 float dx = event.getX() - swipeStartX;
                 float dy = event.getY() - swipeStartY;
-                if (!swipeTracking && !touchStartedOnStories && dx > AndroidUtilities.dp(30) && Math.abs(dy) < AndroidUtilities.dp(40)) {
+                if (!swipeTracking && !touchStartedOnStories && !touchStartedOnMediaCarousel && dx > AndroidUtilities.dp(30) && Math.abs(dy) < AndroidUtilities.dp(40)) {
                     swipeTracking = true;
                     boolean isOnChatsTab = false;
                     boolean isOnFeedTab = false;
@@ -9405,6 +9412,7 @@ public boolean dispatchTouchEvent(MotionEvent event) {
             case MotionEvent.ACTION_CANCEL:
                 swipeTracking = false;
                 touchStartedOnStories = false;
+                touchStartedOnMediaCarousel = false;
                 break;
        }
     }
@@ -9422,6 +9430,35 @@ private boolean isPointInsideStoriesCell(float x, float y) {
     cell.getLocationOnScreen(location);
     return x >= location[0] && x <= location[0] + cell.getWidth()
         && y >= location[1] && y <= location[1] + cell.getHeight();
+}
+
+private boolean isPointInsideMediaCarousel(float x, float y) {
+    if (mainFragmentsStack == null || mainFragmentsStack.isEmpty() || !isOnMainScreen()) {
+        return false;
+    }
+    BaseFragment top = mainFragmentsStack.get(mainFragmentsStack.size() - 1);
+    if (!(top instanceof MainTabsActivity)) {
+        return false;
+    }
+    if (((MainTabsActivity) top).getCurrentPosition() != MainTabsActivity.POSITION_FEED) {
+        return false;
+    }
+    BaseFragment visible = ((MainTabsActivity) top).getCurrentVisibleFragment();
+    if (!(visible instanceof PotokFeedFragment)) {
+        return false;
+    }
+    org.telegram.ui.Components.RecyclerListView listView = ((PotokFeedFragment) visible).getListView();
+    if (listView == null) {
+        return false;
+    }
+    for (int i = 0; i < listView.getChildCount(); i++) {
+        View child = listView.getChildAt(i);
+        if (child instanceof org.telegram.ui.Cells.PotokFeedPostCell
+            && ((org.telegram.ui.Cells.PotokFeedPostCell) child).isPointInsideCarousel(x, y)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 private org.telegram.ui.Stories.DialogStoriesCell findCurrentDialogStoriesCell() {

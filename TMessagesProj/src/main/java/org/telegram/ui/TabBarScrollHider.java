@@ -39,10 +39,12 @@ public class TabBarScrollHider extends RecyclerView.OnScrollListener {
 
         if (accumulatedDy > thresholdPx && tabsVisible) {
             tabsVisible = false;
+            PotokDebugLog.d("TABHIDER", "setTabsVisible(false) recyclerView=" + recyclerView.getClass().getSimpleName() + " dy=" + dy);
             controller.setTabsVisible(false);
             accumulatedDy = 0;
         } else if (accumulatedDy < -thresholdPx && !tabsVisible) {
             tabsVisible = true;
+            PotokDebugLog.d("TABHIDER", "setTabsVisible(true) recyclerView=" + recyclerView.getClass().getSimpleName() + " dy=" + dy);
             controller.setTabsVisible(true);
             accumulatedDy = 0;
         }

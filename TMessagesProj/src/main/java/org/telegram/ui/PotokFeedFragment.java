@@ -109,6 +109,12 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     }
 
     private RecyclerListView listView;
+    // Публичный доступ нужен LaunchActivity — чтобы при решении открывать ли
+    // боковую шторку по свайпу вправо проверить, не начался ли жест внутри
+    // карусели медиа одного из видимых постов (см. isPointInsideMediaCarousel).
+    public RecyclerListView getListView() {
+        return listView;
+    }
     private androidx.swiperefreshlayout.widget.SwipeRefreshLayout swipeRefreshLayout;
     private boolean refreshingFeed = false;
     private LinearLayoutManager listViewLayoutManager;

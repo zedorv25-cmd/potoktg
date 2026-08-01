@@ -891,7 +891,15 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         fadeView.setVisibility(alpha > 0 ? View.VISIBLE : View.GONE);
     }
 
+    private int checkUiTabsPositionLogCounter = 0;
     private void checkUi_tabsPosition() {
+        checkUiTabsPositionLogCounter++;
+        if (checkUiTabsPositionLogCounter == 1 || checkUiTabsPositionLogCounter % 30 == 0) {
+            PotokDebugLog.d("TABHIDER", "checkUi_tabsPosition call #" + checkUiTabsPositionLogCounter
+                    + " animatorTabsVisible.isAnimating=" + animatorTabsVisible.isAnimating()
+                    + " factor=" + animatorTabsVisible.getFloatValue());
+        }
+
         final boolean isUpdateLayoutVisible = updateLayoutWrapper.isUpdateLayoutVisible();
         final int updateLayoutHeight = isUpdateLayoutVisible ? dp(UpdateLayoutWrapper.HEIGHT) : 0;
         final int normalY = -(updateLayoutHeight);
@@ -931,6 +939,7 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
     private class MainTabsActivityControllerImpl implements MainTabsActivityController {
         @Override
         public void setTabsVisible(boolean visible) {
+            PotokDebugLog.d("TABHIDER", "MainTabsActivity.setTabsVisible(" + visible + ") called");
             animatorTabsVisible.setValue(visible, true);
         }
     }

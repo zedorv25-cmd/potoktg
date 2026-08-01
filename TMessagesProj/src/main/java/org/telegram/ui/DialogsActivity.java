@@ -5638,44 +5638,12 @@ public boolean onTouchEvent(MotionEvent ev) {
         checkUi_forwardCommentFieldVisible();
         checkUi_searchFieldStyle();
 
-        // Поток — свайп вправо для открытия шторки
-        fragmentView.setOnTouchListener(new android.view.View.OnTouchListener() {
-            private float startX;
-            private float startY;
-            private boolean tracking;
-
-            @Override
-            public boolean onTouch(android.view.View v, android.view.MotionEvent event) {
-                LaunchActivity launchActivity = (LaunchActivity) getParentActivity();
-                if (launchActivity == null) return false;
-                if (launchActivity.potokDrawerLayout != null && launchActivity.potokDrawerLayout.isDrawerOpen(android.view.Gravity.LEFT)) return false;
-
-                switch (event.getAction()) {
-                    case android.view.MotionEvent.ACTION_DOWN:
-                        startX = event.getX();
-                        startY = event.getY();
-                        tracking = false;
-                        return false;
-                    case android.view.MotionEvent.ACTION_MOVE:
-                        float dx = event.getX() - startX;
-                        float dy = event.getY() - startY;
-                        if (!tracking && dx > AndroidUtilities.dp(20) && Math.abs(dy) < AndroidUtilities.dp(30)) {
-                            tracking = true;
-                        }
-                        if (tracking) {
-                            launchActivity.openPotokDrawer();
-                            tracking = false;
-                            return true;
-                        }
-                        return false;
-                    case android.view.MotionEvent.ACTION_UP:
-                    case android.view.MotionEvent.ACTION_CANCEL:
-                        tracking = false;
-                        return false;
-                }
-                return false;
-            }
-        });
+        // Шторка теперь открывается через LaunchActivity.dispatchTouchEvent (край экрана на "Чатах",
+        // общий свайп на "Ленте") — единый механизм, согласованный с каскадной логикой свайпа
+        // верхнего/нижнего таббара. Старый отдельный обработчик здесь был снят: он не знал о новой
+        // схеме (дёргался на любой правый свайп независимо от таба/вкладки-фильтра) и, что хуже,
+        // забирал события ACTION_MOVE без ACTION_CANCEL для детей — подозревается как одна из причин
+        // зависания при скролле (см. диагностику зависания в этой же сессии).
         ViewCompat.setOnApplyWindowInsetsListener(fragmentView, this::onApplyWindowInsets);
         return fragmentView;
     }

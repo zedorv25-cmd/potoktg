@@ -1379,7 +1379,10 @@ public class PotokFeedPostCell extends LinearLayout {
     // самой сетки (GridLayoutManager сам это даёт, отдельная пагинация не нужна).
     private void openMediaGrid(ArrayList<MessageObject> items) {
         if (items == null || items.size() < 2 || getContext() == null || parentActivity == null) return;
-        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        // AndroidUtilities.vibrate — уже проверенный в проекте способ, в отличие от
+        // голого performHapticFeedback не зависит от системной настройки
+        // "виброотклик на касания" (см. использование в AndroidUtilities.java).
+        AndroidUtilities.vibrate(this);
 
         android.app.Dialog dialog = new android.app.Dialog(parentActivity, android.R.style.Theme_Translucent_NoTitleBar);
         android.view.Window window = dialog.getWindow();
@@ -1389,13 +1392,22 @@ public class PotokFeedPostCell extends LinearLayout {
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         }
 
+        int n = items.size();
+        // Референсная ширина карточки (в пикселях) — от неё считается размер одной
+        // ячейки, ОДИНАКОВЫЙ независимо от того, сколько реально колонок в сетке
+        // (иначе при 2 медиа ячейки выглядели бы неестественно огромными).
+        final int refWidthPx = Math.min(AndroidUtilities.displaySize.x - dp(32), dp(420));
+        final int cellSize = refWidthPx / 3;
+        final int maxCardHeightPx = (int) (AndroidUtilities.displaySize.y * 0.78f);
+        // Число колонок подстраивается под реальное количество медиа, чтобы не
+        // было пустых "дырок" в сетке: 2->2, 3->3, 4->2x2, 5 и больше — по 3 в ряд
+        // (неполный последний ряд центрируется, а не прижимается к левому краю).
+        final int columns = (n == 4) ? 2 : Math.min(3, n);
+        final boolean scrollable = n > 9;
+
         FrameLayout root = new FrameLayout(getContext());
         // Тап по затемнённому фону (мимо карточки) — закрыть.
         root.setOnClickListener(v -> dialog.dismiss());
-
-        int cardWidth = Math.min(AndroidUtilities.displaySize.x - dp(32), dp(420));
-        int maxCardHeight = (int) (AndroidUtilities.displaySize.y * 0.78f);
-        final int cellSize = cardWidth / 3;
 
         FrameLayout card = new FrameLayout(getContext());
         card.setClickable(true); // не отдаёт тап дальше на root (не закрывать по тапу внутри карточки)
@@ -1411,98 +1423,145 @@ public class PotokFeedPostCell extends LinearLayout {
             }
         });
 
-        RecyclerView grid = new RecyclerView(getContext());
-        grid.setLayoutManager(new androidx.recyclerview.widget.GridLayoutManager(getContext(), 3));
-        grid.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        // Общая фабрика одной ячейки (картинка + бейдж плей для видео + клик) —
+        // переиспользуется и для ручной раскладки, и для скроллящейся сетки.
+        java.util.function.IntFunction<View> cellFactory = position -> {
+            FrameLayout wrapper = new FrameLayout(getContext());
+            wrapper.setPadding(dp(1), dp(1), dp(1), dp(1));
+            BackupImageView img = new BackupImageView(getContext());
+            wrapper.addView(img, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            PlayIndicatorView playBadge = new PlayIndicatorView(getContext());
+            playBadge.setVisibility(GONE);
+            wrapper.addView(playBadge, LayoutHelper.createFrame(28, 28, Gravity.CENTER));
 
-        RecyclerView.Adapter<RecyclerView.ViewHolder> adapter = new RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-            @Override
-            public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
-                FrameLayout wrapper = new FrameLayout(getContext());
-                wrapper.setLayoutParams(new RecyclerView.LayoutParams(cellSize, cellSize));
-                BackupImageView img = new BackupImageView(getContext());
-                img.setLayoutParams(LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
-                wrapper.addView(img);
-                // Тонкий зазор между ячейками через паддинг враппера + фон карточки,
-                // видимый в этом зазоре (проще и надёжнее, чем ItemDecoration).
-                wrapper.setPadding(dp(1), dp(1), dp(1), dp(1));
-                PlayIndicatorView playBadge = new PlayIndicatorView(getContext());
-                playBadge.setVisibility(GONE);
-                wrapper.addView(playBadge, LayoutHelper.createFrame(28, 28, Gravity.CENTER));
-                RecyclerView.ViewHolder holder = new RecyclerView.ViewHolder(wrapper) {};
-                holder.itemView.setTag(new View[]{img, playBadge});
-                return holder;
-            }
+            MessageObject mo = items.get(position);
+            boolean isVideo = mo.isVideo() || mo.isGif();
+            playBadge.setVisibility(isVideo ? VISIBLE : GONE);
 
-            @Override
-            public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
-                View[] tag = (View[]) holder.itemView.getTag();
-                BackupImageView img = (BackupImageView) tag[0];
-                PlayIndicatorView playBadge = (PlayIndicatorView) tag[1];
-                MessageObject mo = items.get(position);
-                boolean isVideo = mo.isVideo() || mo.isGif();
-                playBadge.setVisibility(isVideo ? VISIBLE : GONE);
-
-                TLRPC.PhotoSize photoSize = null;
-                TLObject thumbsObject = null;
-                if (isVideo) {
-                    TLRPC.MessageMedia media = mo.messageOwner != null ? mo.messageOwner.media : null;
-                    TLRPC.Document document = (media instanceof TLRPC.TL_messageMediaDocument) ? media.document : null;
-                    if (document != null) {
-                        photoSize = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, 400);
-                        if (photoSize != null) {
-                            img.setImage(ImageLocation.getForDocument(photoSize, document), "100_100",
-                                mo.strippedThumb, mo);
-                        }
-                    }
-                } else {
-                    photoSize = FileLoader.getClosestPhotoSizeWithSize(mo.photoThumbs, 400);
-                    thumbsObject = mo.photoThumbsObject;
+            TLRPC.PhotoSize photoSize = null;
+            if (isVideo) {
+                TLRPC.MessageMedia media = mo.messageOwner != null ? mo.messageOwner.media : null;
+                TLRPC.Document document = (media instanceof TLRPC.TL_messageMediaDocument) ? media.document : null;
+                if (document != null) {
+                    photoSize = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, 400);
                     if (photoSize != null) {
-                        img.setImage(ImageLocation.getForObject(photoSize, thumbsObject), "100_100",
-                            mo.strippedThumb, mo);
+                        img.setImage(ImageLocation.getForDocument(photoSize, document), "100_100", mo.strippedThumb, mo);
                     }
                 }
-                if (photoSize == null) {
-                    img.setImageDrawable(mo.strippedThumb);
+            } else {
+                photoSize = FileLoader.getClosestPhotoSizeWithSize(mo.photoThumbs, 400);
+                if (photoSize != null) {
+                    img.setImage(ImageLocation.getForObject(photoSize, mo.photoThumbsObject), "100_100", mo.strippedThumb, mo);
+                }
+            }
+            if (photoSize == null) {
+                img.setImageDrawable(mo.strippedThumb);
+            }
+
+            wrapper.setOnClickListener(v -> {
+                dialog.dismiss();
+                openMediaViewer(mo, position, items);
+            });
+            return wrapper;
+        };
+
+        if (!scrollable) {
+            // До 9 медиа включительно — сетка целиком помещается без скролла,
+            // строим её вручную построчно, чтобы неполный последний ряд был
+            // центрирован, а не прижат к левому краю (как сделал бы GridLayoutManager).
+            int rows = (int) Math.ceil(n / (float) columns);
+            LinearLayout gridColumn = new LinearLayout(getContext());
+            gridColumn.setOrientation(LinearLayout.VERTICAL);
+            int pos = 0;
+            for (int r = 0; r < rows; r++) {
+                int itemsInRow = Math.min(columns, n - pos);
+                LinearLayout rowLayout = new LinearLayout(getContext());
+                rowLayout.setOrientation(LinearLayout.HORIZONTAL);
+                rowLayout.setGravity(Gravity.CENTER_HORIZONTAL);
+                for (int c = 0; c < itemsInRow; c++) {
+                    View cell = cellFactory.apply(pos);
+                    rowLayout.addView(cell, new LinearLayout.LayoutParams(cellSize, cellSize));
+                    pos++;
+                }
+                gridColumn.addView(rowLayout, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, cellSize));
+            }
+            card.addView(gridColumn, new FrameLayout.LayoutParams(columns * cellSize, rows * cellSize, Gravity.CENTER));
+            root.addView(card, new FrameLayout.LayoutParams(columns * cellSize, rows * cellSize, Gravity.CENTER));
+        } else {
+            // Больше 9 медиа — честная сетка 3 в ряд, дальше скроллится вниз.
+            RecyclerView grid = new RecyclerView(getContext());
+            grid.setLayoutManager(new androidx.recyclerview.widget.GridLayoutManager(getContext(), 3));
+            grid.setOverScrollMode(View.OVER_SCROLL_NEVER);
+            grid.setAdapter(new RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+                @Override
+                public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+                    FrameLayout wrapper = new FrameLayout(getContext());
+                    return new RecyclerView.ViewHolder(wrapper) {};
                 }
 
-                final int idx = position;
-                holder.itemView.setOnClickListener(v -> {
-                    dialog.dismiss();
-                    openMediaViewer(mo, idx, items);
-                });
-            }
+                @Override
+                public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
+                    FrameLayout wrapper = (FrameLayout) holder.itemView;
+                    wrapper.removeAllViews();
+                    View cell = cellFactory.apply(position);
+                    if (cell.getParent() instanceof ViewGroup) {
+                        ((ViewGroup) cell.getParent()).removeView(cell);
+                    }
+                    wrapper.addView(cell, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                }
 
-            @Override
-            public int getItemCount() {
-                return items.size();
-            }
-        };
-        grid.setAdapter(adapter);
+                @Override
+                public int getItemCount() {
+                    return items.size();
+                }
+            });
+            // Каждая ячейка ровно cellSize x cellSize — фиксируем через LayoutParams
+            // самого RecyclerView-холдера при первом измерении строки.
+            grid.addOnChildAttachStateChangeListener(new RecyclerView.OnChildAttachStateChangeListener() {
+                @Override
+                public void onChildViewAttachedToWindow(View view) {
+                    ViewGroup.LayoutParams lp = view.getLayoutParams();
+                    if (lp != null) {
+                        lp.width = cellSize;
+                        lp.height = cellSize;
+                        view.setLayoutParams(lp);
+                    }
+                }
 
-        card.addView(grid, LayoutHelper.createFrame(cardWidth, LayoutHelper.WRAP_CONTENT));
-        root.addView(card, LayoutHelper.createFrame(cardWidth, LayoutHelper.WRAP_CONTENT, Gravity.CENTER));
-        // Ограничение по высоте — если рядов много, сетка сама уходит в скролл
-        // внутри своей WRAP_CONTENT-высоты, ограниченной максимумом карточки.
-        grid.setMinimumHeight(0);
-        card.post(() -> {
-            if (card.getHeight() > maxCardHeight) {
-                ViewGroup.LayoutParams lp = card.getLayoutParams();
-                lp.height = maxCardHeight;
-                card.setLayoutParams(lp);
-            }
-        });
+                @Override
+                public void onChildViewDetachedFromWindow(View view) {
+                }
+            });
+            card.addView(grid, new FrameLayout.LayoutParams(3 * cellSize, ViewGroup.LayoutParams.WRAP_CONTENT));
+            root.addView(card, new FrameLayout.LayoutParams(3 * cellSize, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+            card.post(() -> {
+                if (card.getHeight() > maxCardHeightPx) {
+                    ViewGroup.LayoutParams lp = card.getLayoutParams();
+                    lp.height = maxCardHeightPx;
+                    card.setLayoutParams(lp);
+                }
+            });
+        }
 
         dialog.setContentView(root);
         dialog.show();
+    }
+
+    // Нужен LaunchActivity, чтобы не открывать боковую шторку, если свайп вправо
+    // начался внутри карусели медиа этого поста (см. isPointInsideMediaCarousel).
+    private final int[] carouselScreenLocation = new int[2];
+    public boolean isPointInsideCarousel(float screenX, float screenY) {
+        if (carouselView == null || carouselView.getVisibility() != VISIBLE) return false;
+        carouselView.getLocationOnScreen(carouselScreenLocation);
+        return screenX >= carouselScreenLocation[0] && screenX <= carouselScreenLocation[0] + carouselView.getWidth()
+            && screenY >= carouselScreenLocation[1] && screenY <= carouselScreenLocation[1] + carouselView.getHeight();
     }
 
     private ActionBarPopupWindow postMenuWindow;
 
     private void openPostInChannel() {
         if (currentMessage == null || currentChannel == null || parentFragment == null) return;
-        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        AndroidUtilities.vibrate(this);
         android.os.Bundle args = new android.os.Bundle();
         args.putLong("chat_id", currentChannel.id);
         args.putInt("message_id", currentMessage.getId());

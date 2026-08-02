@@ -96,17 +96,30 @@ public class PotokFeedPostCell extends LinearLayout {
             case MotionEvent.ACTION_DOWN:
                 rootTouchDownX = ev.getRawX();
                 rootTouchDownY = ev.getRawY();
-                if (parent != null) parent.requestDisallowInterceptTouchEvent(true);
+                // Намеренно НЕ вызываем requestDisallowInterceptTouchEvent(true) уже
+                // здесь: ViewPagerFixed (свайп-переключение верхних/боковых вкладок)
+                // переопределяет этот метод у себя и воспринимает ЛЮБОЙ вызов от
+                // потомка (даже disallow=false) как сигнал "сдай жест" — если дёргать
+                // его на каждом касании поста, реальные уверенные свайпы получали
+                // задержку/сбой распознавания. Решаем только на ACTION_MOVE, когда
+                // уже видно, дрожание это или явное направленное движение.
                 break;
             case MotionEvent.ACTION_MOVE: {
                 float dx = Math.abs(ev.getRawX() - rootTouchDownX);
                 float dy = Math.abs(ev.getRawY() - rootTouchDownY);
-                float slop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop() * LONG_PRESS_SLOP_MULTIPLIER;
-                if (parent != null && (dx > slop || dy > slop)) {
-                    // Явно скролл, а не дрожание удерживаемого пальца — отдаём
-                    // жест обратно ленте, пусть скроллит как обычно.
+                float stdSlop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
+                float extendedSlop = stdSlop * LONG_PRESS_SLOP_MULTIPLIER;
+                if (parent != null && dx <= stdSlop && dy <= stdSlop) {
+                    // Движение всё ещё в пределах обычного системного порога — похоже
+                    // на дрожание удерживаемого пальца, а не на уверенный жест.
+                    // Придерживаем, чтобы не спугнуть long-press раньше времени.
+                    parent.requestDisallowInterceptTouchEvent(true);
+                } else if (parent != null && (dx > extendedSlop || dy > extendedSlop)) {
+                    // Явно уже не дрожание — отдаём жест обратно как обычно.
                     parent.requestDisallowInterceptTouchEvent(false);
                 }
+                // Промежуточная зона (между обычным и увеличенным порогом) —
+                // намеренно ничего не трогаем лишний раз.
                 break;
             }
             case MotionEvent.ACTION_UP:
@@ -739,7 +752,23 @@ public class PotokFeedPostCell extends LinearLayout {
                 caption = sp;
             }
             textView.setText(caption);
-            textView.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
+            // Обычный LinkMovementMethod.getInstance() имеет системный побочный
+            // эффект: если реальная высота текста больше видимой (обрезанной по
+            // maxLines) области — сам класс умеет "протаскивать" видимую часть от
+            // касания (Touch.onTouchEvent). Раньше лента перехватывала скролл почти
+            // мгновенно и это не успевало проявиться; сейчас жест придерживается
+            // чуть дольше ради надёжности long-press, и протаскивание стало видно
+            // (на строку). Гасим его явно после каждого touch-события, сохраняя
+            // переходы по ссылкам (тап всё равно обрабатывается тем же super-классом
+            // до сброса скролла).
+            textView.setMovementMethod(new android.text.method.LinkMovementMethod() {
+                @Override
+                public boolean onTouchEvent(TextView widget, android.text.Spannable buffer, MotionEvent event) {
+                    boolean result = super.onTouchEvent(widget, buffer, event);
+                    widget.scrollTo(0, 0);
+                    return result;
+                }
+            });
             textView.setLinksClickable(true);
 
             final CharSequence finalCaption = caption;

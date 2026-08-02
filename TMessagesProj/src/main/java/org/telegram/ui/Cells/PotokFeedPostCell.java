@@ -87,7 +87,7 @@ public class PotokFeedPostCell extends LinearLayout {
     // смещение станет по-настоящему большим (то есть это уже явно скролл, а не
     // дрожание), возвращаем ленте право перехватывать как обычно.
     private float rootTouchDownX, rootTouchDownY;
-    private static final float LONG_PRESS_SLOP_MULTIPLIER = 3f;
+    private static final float LONG_PRESS_SLOP_MULTIPLIER = 1.5f;
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
@@ -1379,26 +1379,32 @@ public class PotokFeedPostCell extends LinearLayout {
     // самой сетки (GridLayoutManager сам это даёт, отдельная пагинация не нужна).
     private void openMediaGrid(ArrayList<MessageObject> items) {
         if (items == null || items.size() < 2 || getContext() == null || parentActivity == null) return;
-        // AndroidUtilities.vibrate — уже проверенный в проекте способ, в отличие от
-        // голого performHapticFeedback не зависит от системной настройки
-        // "виброотклик на касания" (см. использование в AndroidUtilities.java).
-        AndroidUtilities.vibrate(this);
+        // AndroidUtilities.vibrate молчит на телефонах без "amplitude control" в
+        // вибромоторе (частый случай на бюджетных устройствах) — оказалось, не тот
+        // способ. Взял реальный паттерн из ChatActivity — именно им в этом проекте
+        // уже вызывается вибрация на долгое нажатие на сообщение, работает на любом
+        // вибромоторе, т.к. явно игнорирует системную настройку виброотклика.
+        performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP, android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
 
         android.app.Dialog dialog = new android.app.Dialog(parentActivity, android.R.style.Theme_Translucent_NoTitleBar);
         android.view.Window window = dialog.getWindow();
         if (window != null) {
             window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
-            window.setDimAmount(0.72f);
+            // Небольшой dim окна как гарантированный fallback, если по какой-то
+            // причине снимок экрана ниже не получится — основное затемнение даёт
+            // наш собственный слой поверх заблюренного снимка (см. root.addView scrim).
+            window.setDimAmount(0.25f);
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         }
 
         int n = items.size();
-        // Референсная ширина карточки (в пикселях) — от неё считается размер одной
-        // ячейки, ОДИНАКОВЫЙ независимо от того, сколько реально колонок в сетке
-        // (иначе при 2 медиа ячейки выглядели бы неестественно огромными).
-        final int refWidthPx = Math.min(AndroidUtilities.displaySize.x - dp(32), dp(420));
+        // Референсная ширина сетки (в пикселях) — почти во весь экран, небольшой
+        // отступ по краям. От неё считается размер одной ячейки, ОДИНАКОВЫЙ
+        // независимо от того, сколько реально колонок в сетке (иначе при 2 медиа
+        // ячейки выглядели бы неестественно мелкими относительно 3-колоночных).
+        final int refWidthPx = AndroidUtilities.displaySize.x - dp(16);
         final int cellSize = refWidthPx / 3;
-        final int maxCardHeightPx = (int) (AndroidUtilities.displaySize.y * 0.78f);
+        final int maxGridHeightPx = (int) (AndroidUtilities.displaySize.y * 0.85f);
         // Число колонок подстраивается под реальное количество медиа, чтобы не
         // было пустых "дырок" в сетке: 2->2, 3->3, 4->2x2, 5 и больше — по 3 в ряд
         // (неполный последний ряд центрируется, а не прижимается к левому краю).
@@ -1406,22 +1412,40 @@ public class PotokFeedPostCell extends LinearLayout {
         final boolean scrollable = n > 9;
 
         FrameLayout root = new FrameLayout(getContext());
-        // Тап по затемнённому фону (мимо карточки) — закрыть.
+        // Тап по фону (мимо медиа) — закрыть.
         root.setOnClickListener(v -> dialog.dismiss());
 
-        FrameLayout card = new FrameLayout(getContext());
-        card.setClickable(true); // не отдаёт тап дальше на root (не закрывать по тапу внутри карточки)
-        android.graphics.drawable.GradientDrawable cardBg = new android.graphics.drawable.GradientDrawable();
-        cardBg.setColor(Theme.getColor(Theme.key_dialogBackground, (Theme.ResourcesProvider) null));
-        cardBg.setCornerRadius(dp(14));
-        card.setBackground(cardBg);
-        card.setClipToOutline(true);
-        card.setOutlineProvider(new android.view.ViewOutlineProvider() {
-            @Override
-            public void getOutline(View view, android.graphics.Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(14));
+        // Снимок текущего экрана (то, что сейчас видно позади — лента), уменьшенный
+        // и заблюренный тем же нативным блюром, что используется в остальном
+        // приложении (Utilities.blurBitmap, см. ThemePreviewActivity), плюс
+        // полупрозрачный тёмный слой поверх — получаем и блюр, и затемнение фона,
+        // как просили, вместо простого системного dim.
+        try {
+            android.view.View decor = parentActivity.getWindow().getDecorView();
+            int srcW = decor.getWidth();
+            int srcH = decor.getHeight();
+            if (srcW > 0 && srcH > 0) {
+                float scale = 100f / srcW;
+                int bw = Math.max(1, (int) (srcW * scale));
+                int bh = Math.max(1, (int) (srcH * scale));
+                Bitmap bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(bmp);
+                canvas.scale(scale, scale);
+                decor.draw(canvas);
+                Utilities.blurBitmap(bmp, 5, 1, bmp.getWidth(), bmp.getHeight(), bmp.getRowBytes());
+                BitmapDrawable blurredBg = new BitmapDrawable(getContext().getResources(), bmp);
+                blurredBg.setFilterBitmap(true);
+                ImageView blurredBgView = new ImageView(getContext());
+                blurredBgView.setScaleType(ImageView.ScaleType.FIT_XY);
+                blurredBgView.setImageDrawable(blurredBg);
+                root.addView(blurredBgView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             }
-        });
+        } catch (Throwable ignore) {
+            // Если снимок по какой-то причине не удался — остаётся fallback dim окна выше.
+        }
+        View scrim = new View(getContext());
+        scrim.setBackgroundColor(0x8A000000);
+        root.addView(scrim, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         // Общая фабрика одной ячейки (картинка + бейдж плей для видео + клик) —
         // переиспользуется и для ручной раскладки, и для скроллящейся сетки.
@@ -1485,8 +1509,7 @@ public class PotokFeedPostCell extends LinearLayout {
                 }
                 gridColumn.addView(rowLayout, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, cellSize));
             }
-            card.addView(gridColumn, new FrameLayout.LayoutParams(columns * cellSize, rows * cellSize, Gravity.CENTER));
-            root.addView(card, new FrameLayout.LayoutParams(columns * cellSize, rows * cellSize, Gravity.CENTER));
+            root.addView(gridColumn, new FrameLayout.LayoutParams(columns * cellSize, rows * cellSize, Gravity.CENTER));
         } else {
             // Больше 9 медиа — честная сетка 3 в ряд, дальше скроллится вниз.
             RecyclerView grid = new RecyclerView(getContext());
@@ -1532,15 +1555,9 @@ public class PotokFeedPostCell extends LinearLayout {
                 public void onChildViewDetachedFromWindow(View view) {
                 }
             });
-            card.addView(grid, new FrameLayout.LayoutParams(3 * cellSize, ViewGroup.LayoutParams.WRAP_CONTENT));
-            root.addView(card, new FrameLayout.LayoutParams(3 * cellSize, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
-            card.post(() -> {
-                if (card.getHeight() > maxCardHeightPx) {
-                    ViewGroup.LayoutParams lp = card.getLayoutParams();
-                    lp.height = maxCardHeightPx;
-                    card.setLayoutParams(lp);
-                }
-            });
+            grid.setClickable(true);
+            FrameLayout.LayoutParams gridParams = new FrameLayout.LayoutParams(3 * cellSize, Math.min(maxGridHeightPx, ((n + 2) / 3) * cellSize), Gravity.CENTER);
+            root.addView(grid, gridParams);
         }
 
         dialog.setContentView(root);
@@ -1561,7 +1578,7 @@ public class PotokFeedPostCell extends LinearLayout {
 
     private void openPostInChannel() {
         if (currentMessage == null || currentChannel == null || parentFragment == null) return;
-        AndroidUtilities.vibrate(this);
+        performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP, android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
         android.os.Bundle args = new android.os.Bundle();
         args.putLong("chat_id", currentChannel.id);
         args.putInt("message_id", currentMessage.getId());

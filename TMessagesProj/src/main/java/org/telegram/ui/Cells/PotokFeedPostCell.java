@@ -106,11 +106,35 @@ public class PotokFeedPostCell extends LinearLayout {
     // используемый теперь только как "наблюдатель" (never intercepts, never touches
     // parent state) — обычные тапы по кнопкам/ссылкам/карусели внутри поста
     // работают ровно как раньше, это не мешает им.
+    // ------------------------------------------------------------
+    // ВАЖНОЕ ИСПРАВЛЕНИЕ (см. историю выше): изначальная идея "отличать
+    // дрожание пальца от настоящего жеста по смещению в момент ACTION_CANCEL"
+    // оказалась структурно нерабочей. ACTION_CANCEL приходит к нам РОВНО в тот
+    // момент, когда родитель (лента/свайпер) только-только пересёк СВОЙ
+    // собственный небольшой порог и решил забрать жест себе — то есть смещение,
+    // которое мы успели увидеть к этому моменту, ВСЕГДА маленькое, независимо
+    // от того, дрожал палец на месте или пользователь медленно, но уверенно
+    // скроллил/свайпал. Сравнивать это смещение с порогом было бессмысленно:
+    // оно почти всегда оказывалось "маленьким" в обоих случаях, поэтому таймер
+    // почти никогда не отменялся и стрелял посреди чужого скролла/свайпа —
+    // отсюда и "долгое нажатие от медленного скролла", и общий хаос от почти
+    // любого касания.
+    //
+    // Новое решение: не гадать по промежуточным сигналам, а проверить ФАКТ
+    // прямо перед срабатыванием таймера. Если пост за время удержания реально
+    // сдвинулся на экране (список проскроллился) — это было настоящее
+    // скролл-движение, а не удержание на месте, и действие не выполняется.
+    // Если позиция на экране не изменилась (в пределах небольшого допуска на
+    // физиологическое дрожание руки) — палец действительно держали неподвижно,
+    // и это настоящее долгое нажатие.
+    // ------------------------------------------------------------
     private final android.os.Handler longPressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private Runnable pendingLongPress;
     private float rootTouchDownX, rootTouchDownY;
-    private float rootLastDx, rootLastDy;
+    private final int[] longPressDownScreenLoc = new int[2];
     private static final float LONG_PRESS_SLOP_MULTIPLIER = 1.5f; // используется только каруселью медиа, см. её onInterceptTouchEvent ниже
+    // Допуск на естественное дрожание руки при удержании (не на настоящий скролл).
+    private static final int LONG_PRESS_DRIFT_TOLERANCE_DP = 4;
 
     private void cancelPendingLongPress() {
         if (pendingLongPress != null) {
@@ -126,8 +150,7 @@ public class PotokFeedPostCell extends LinearLayout {
                 cancelPendingLongPress();
                 rootTouchDownX = ev.getRawX();
                 rootTouchDownY = ev.getRawY();
-                rootLastDx = 0;
-                rootLastDy = 0;
+                getLocationOnScreen(longPressDownScreenLoc);
                 // Решаем СРАЗУ на down, куда должно вести долгое нажатие: на медиа
                 // (сетка, если медиа больше одного) или на остальную часть карточки
                 // (переход на канал) — попадание проверяем по границам карусели на
@@ -135,10 +158,29 @@ public class PotokFeedPostCell extends LinearLayout {
                 // отключения шторки над медиа.
                 final boolean onMedia = isPointInsideCarousel(rootTouchDownX, rootTouchDownY);
                 final MessageObject expectedMessage = currentMessage;
+                final int downScreenX = longPressDownScreenLoc[0];
+                final int downScreenY = longPressDownScreenLoc[1];
                 pendingLongPress = () -> {
                     // Ячейка могла успеть переиспользоваться под другой пост, пока
                     // таймер ждал (RecyclerView recycling) — на всякий случай сверяем.
                     if (currentMessage != expectedMessage) return;
+                    if (!isAttachedToWindow()) return;
+                    // Финальная проверка по факту: сдвинулась ли ячейка на экране
+                    // с момента ACTION_DOWN. Реальный скролл списка меняет layout-
+                    // позицию ячейки (RecyclerView физически переносит её top/bottom),
+                    // так что getLocationOnScreen отражает это достоверно.
+                    int[] nowLoc = new int[2];
+                    getLocationOnScreen(nowLoc);
+                    float tolerancePx = android.util.TypedValue.applyDimension(
+                            android.util.TypedValue.COMPLEX_UNIT_DIP,
+                            LONG_PRESS_DRIFT_TOLERANCE_DP, getResources().getDisplayMetrics());
+                    float driftX = Math.abs(nowLoc[0] - downScreenX);
+                    float driftY = Math.abs(nowLoc[1] - downScreenY);
+                    if (driftX > tolerancePx || driftY > tolerancePx) {
+                        // Пост реально сдвинулся — это был скролл/свайп, а не
+                        // удержание на месте. Долгое нажатие не засчитываем.
+                        return;
+                    }
                     if (onMedia) {
                         if (carouselAdapter != null && carouselAdapter.items.size() > 1) {
                             openMediaGrid(carouselAdapter.items);
@@ -152,17 +194,15 @@ public class PotokFeedPostCell extends LinearLayout {
                 break;
             }
             case MotionEvent.ACTION_MOVE: {
+                // Быстрый путь: если палец уже явно и далеко ушёл от точки нажатия
+                // (заведомо не дрожание) — можно отменить таймер раньше, не дожидаясь
+                // истечения задержки. Это не единственная защита (см. финальную
+                // проверку в самом таймере выше), а просто более быстрый отклик для
+                // очевидных случаев.
                 float dx = Math.abs(ev.getRawX() - rootTouchDownX);
                 float dy = Math.abs(ev.getRawY() - rootTouchDownY);
-                rootLastDx = dx;
-                rootLastDy = dy;
                 float extendedSlop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop() * LONG_PRESS_SLOP_MULTIPLIER;
                 if (dx > extendedSlop || dy > extendedSlop) {
-                    // Заметное смещение — это уже не дрожание удерживаемого пальца,
-                    // а осознанный жест (скролл/свайп). Отменяем свою попытку
-                    // долгого нажатия, но НЕ трогаем requestDisallowInterceptTouchEvent —
-                    // пусть лента/свайпер сами решают, что делать с этим жестом,
-                    // как будто нашего кода тут вообще нет.
                     cancelPendingLongPress();
                 }
                 break;
@@ -172,22 +212,14 @@ public class PotokFeedPostCell extends LinearLayout {
                 // удержание.
                 cancelPendingLongPress();
                 break;
-            case MotionEvent.ACTION_CANCEL: {
-                // Родитель (лента/свайпер) забрал жест себе. Смотрим, каким было
-                // последнее известное нам смещение К ЭТОМУ МОМЕНТУ — по ОБЫЧНОМУ
-                // (не увеличенному) системному порогу, а не по нашему расширенному:
-                // если оно уже было заметным, это, скорее всего, настоящий скролл/
-                // свайп, который просто успел набрать порог родителя раньше, чем
-                // наш собственный увеличенный порог — тогда отменяем таймер, чтобы
-                // не сработать посреди чужого скролла. Если смещение оставалось
-                // мизерным — это именно то дрожание на месте при удержании, ради
-                // которого всё затевалось, таймер не трогаем, пусть сработает.
-                float stdSlop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
-                if (rootLastDx > stdSlop || rootLastDy > stdSlop) {
-                    cancelPendingLongPress();
-                }
+            case MotionEvent.ACTION_CANCEL:
+                // Родитель (лента/свайпер) забрал жест себе. НЕ пытаемся угадать
+                // по смещению, было это дрожание или настоящий скролл — на этот
+                // счёт CANCEL приходит слишком рано, чтобы это можно было надёжно
+                // определить (см. комментарий в начале класса). Таймер намеренно
+                // НЕ отменяем здесь — решение принимается по факту, в момент его
+                // срабатывания (см. финальную проверку позиции выше).
                 break;
-            }
         }
         // Всегда false — этот View никогда не перехватывает жест сам, только
         // наблюдает за проходящими событиями. Обычные тапы по кнопкам, ссылкам,

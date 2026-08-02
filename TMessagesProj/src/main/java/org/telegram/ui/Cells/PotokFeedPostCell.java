@@ -74,60 +74,125 @@ import java.util.ArrayList;
  */
 public class PotokFeedPostCell extends LinearLayout {
 
-    // Фикс "долгое нажатие срабатывает только если держать идеально неподвижно"
-    // (~60% промахов по жалобе пользователя): стандартный View.checkForLongClick
-    // отменяет long-press при малейшем смещении пальца за системный touch slop
-    // (обычно ~8dp) НА ACTION_MOVE, а родительский RecyclerView ленты (вертикальный
-    // список постов) использует тот же самый маленький порог, чтобы решить "начать
-    // скроллить" -> перехватывает жест и присылает нам ACTION_CANCEL раньше, чем
-    // успевает сработать таймер long-press, даже на естественном дрожании
-    // удерживаемого пальца. Решение: пока смещение от точки ACTION_DOWN не
-    // превышает увеличенный, более терпимый порог, явно запрещаем родителю
-    // перехватывать жест (requestDisallowInterceptTouchEvent(true)) — как только
-    // смещение станет по-настоящему большим (то есть это уже явно скролл, а не
-    // дрожание), возвращаем ленте право перехватывать как обычно.
+    // ============================================================
+    // Долгое нажатие — СОБСТВЕННЫЙ таймер, а не requestDisallowInterceptTouchEvent
+    // ============================================================
+    // Было (два предыдущих подхода) — оба построены на requestDisallowInterceptTouchEvent
+    // у родителя, чтобы придержать жест и не дать ленте/переключателю вкладок
+    // забрать его раньше времени. Это ломало свайп влево (Лента -> Чаты):
+    // прочитал код ViewPagerFixed.java (переключатель верхних/боковых вкладок) —
+    // у него ПЕРЕОПРЕДЕЛЁН requestDisallowInterceptTouchEvent(boolean), и САМ ФАКТ
+    // вызова этого метода потомком (Chats/PotokFeedPostCell), пока ViewPagerFixed
+    // ещё только "возможно, начинает" распознавать свайп (maybeStartTracking==true,
+    // startedTracking==false) — трактуется как сигнал "жест не мой, сдавайся":
+    // вызывается onTouchEvent(null), а внутри (см. ViewPagerFixed.java, ветка
+    // ev==null) скорость свайпа принудительно обнуляется (velX=velY=0), из-за чего
+    // свайп не распознаётся вообще ИЛИ распознаётся с большой задержкой. Неважно,
+    // каким значением (true/false) и когда именно вызывать этот метод с ячейки
+    // поста — сам вызов уже топит распознавание. Поэтому третий раз подряд
+    // подкручивать пороги смысла не было — дело не в числах.
+    //
+    // Новое решение: ячейка поста больше НИКАК не трогает
+    // requestDisallowInterceptTouchEvent — свайпы вправо (шторка, через
+    // LaunchActivity) и влево (переключение вкладок, через ViewPagerFixed)
+    // получают события совершенно нетронутыми, как будто нашего кода тут нет.
+    // Долгое нажатие вместо этого распознаётся ЯВНО, вручную: на ACTION_DOWN
+    // запускается отложенный Runnable (задержка — системный long-press timeout),
+    // который срабатывает независимо от того, что решат делать родительские
+    // списки с этим же самым касанием (даже если лента/свайпер "заберут" жест
+    // себе и пришлют нам ACTION_CANCEL) — единственное, что отменяет наш
+    // собственный таймер, это ЗАМЕТНОЕ смещение пальца (не дрожание) или отпускание
+    // пальца до истечения задержки, которые ловим сами через onInterceptTouchEvent,
+    // используемый теперь только как "наблюдатель" (never intercepts, never touches
+    // parent state) — обычные тапы по кнопкам/ссылкам/карусели внутри поста
+    // работают ровно как раньше, это не мешает им.
+    private final android.os.Handler longPressHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable pendingLongPress;
     private float rootTouchDownX, rootTouchDownY;
-    private static final float LONG_PRESS_SLOP_MULTIPLIER = 1.5f;
+    private float rootLastDx, rootLastDy;
+    private static final float LONG_PRESS_SLOP_MULTIPLIER = 1.5f; // используется только каруселью медиа, см. её onInterceptTouchEvent ниже
+
+    private void cancelPendingLongPress() {
+        if (pendingLongPress != null) {
+            longPressHandler.removeCallbacks(pendingLongPress);
+            pendingLongPress = null;
+        }
+    }
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
-        ViewParent parent = getParent();
         switch (ev.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_DOWN: {
+                cancelPendingLongPress();
                 rootTouchDownX = ev.getRawX();
                 rootTouchDownY = ev.getRawY();
-                // Намеренно НЕ вызываем requestDisallowInterceptTouchEvent(true) уже
-                // здесь: ViewPagerFixed (свайп-переключение верхних/боковых вкладок)
-                // переопределяет этот метод у себя и воспринимает ЛЮБОЙ вызов от
-                // потомка (даже disallow=false) как сигнал "сдай жест" — если дёргать
-                // его на каждом касании поста, реальные уверенные свайпы получали
-                // задержку/сбой распознавания. Решаем только на ACTION_MOVE, когда
-                // уже видно, дрожание это или явное направленное движение.
+                rootLastDx = 0;
+                rootLastDy = 0;
+                // Решаем СРАЗУ на down, куда должно вести долгое нажатие: на медиа
+                // (сетка, если медиа больше одного) или на остальную часть карточки
+                // (переход на канал) — попадание проверяем по границам карусели на
+                // экране, тем же методом, которым уже пользуется LaunchActivity для
+                // отключения шторки над медиа.
+                final boolean onMedia = isPointInsideCarousel(rootTouchDownX, rootTouchDownY);
+                final MessageObject expectedMessage = currentMessage;
+                pendingLongPress = () -> {
+                    // Ячейка могла успеть переиспользоваться под другой пост, пока
+                    // таймер ждал (RecyclerView recycling) — на всякий случай сверяем.
+                    if (currentMessage != expectedMessage) return;
+                    if (onMedia) {
+                        if (carouselAdapter != null && carouselAdapter.items.size() > 1) {
+                            openMediaGrid(carouselAdapter.items);
+                        }
+                        // Одно медиа — намеренно ничего не делаем (как и раньше).
+                    } else {
+                        openPostInChannel();
+                    }
+                };
+                longPressHandler.postDelayed(pendingLongPress, android.view.ViewConfiguration.getLongPressTimeout());
                 break;
+            }
             case MotionEvent.ACTION_MOVE: {
                 float dx = Math.abs(ev.getRawX() - rootTouchDownX);
                 float dy = Math.abs(ev.getRawY() - rootTouchDownY);
-                float stdSlop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
-                float extendedSlop = stdSlop * LONG_PRESS_SLOP_MULTIPLIER;
-                if (parent != null && dx <= stdSlop && dy <= stdSlop) {
-                    // Движение всё ещё в пределах обычного системного порога — похоже
-                    // на дрожание удерживаемого пальца, а не на уверенный жест.
-                    // Придерживаем, чтобы не спугнуть long-press раньше времени.
-                    parent.requestDisallowInterceptTouchEvent(true);
-                } else if (parent != null && (dx > extendedSlop || dy > extendedSlop)) {
-                    // Явно уже не дрожание — отдаём жест обратно как обычно.
-                    parent.requestDisallowInterceptTouchEvent(false);
+                rootLastDx = dx;
+                rootLastDy = dy;
+                float extendedSlop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop() * LONG_PRESS_SLOP_MULTIPLIER;
+                if (dx > extendedSlop || dy > extendedSlop) {
+                    // Заметное смещение — это уже не дрожание удерживаемого пальца,
+                    // а осознанный жест (скролл/свайп). Отменяем свою попытку
+                    // долгого нажатия, но НЕ трогаем requestDisallowInterceptTouchEvent —
+                    // пусть лента/свайпер сами решают, что делать с этим жестом,
+                    // как будто нашего кода тут вообще нет.
+                    cancelPendingLongPress();
                 }
-                // Промежуточная зона (между обычным и увеличенным порогом) —
-                // намеренно ничего не трогаем лишний раз.
                 break;
             }
             case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_CANCEL:
-                if (parent != null) parent.requestDisallowInterceptTouchEvent(false);
+                // Палец отпущен до истечения задержки — это обычный тап, не
+                // удержание.
+                cancelPendingLongPress();
                 break;
+            case MotionEvent.ACTION_CANCEL: {
+                // Родитель (лента/свайпер) забрал жест себе. Смотрим, каким было
+                // последнее известное нам смещение К ЭТОМУ МОМЕНТУ — по ОБЫЧНОМУ
+                // (не увеличенному) системному порогу, а не по нашему расширенному:
+                // если оно уже было заметным, это, скорее всего, настоящий скролл/
+                // свайп, который просто успел набрать порог родителя раньше, чем
+                // наш собственный увеличенный порог — тогда отменяем таймер, чтобы
+                // не сработать посреди чужого скролла. Если смещение оставалось
+                // мизерным — это именно то дрожание на месте при удержании, ради
+                // которого всё затевалось, таймер не трогаем, пусть сработает.
+                float stdSlop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
+                if (rootLastDx > stdSlop || rootLastDy > stdSlop) {
+                    cancelPendingLongPress();
+                }
+                break;
+            }
         }
-        return super.onInterceptTouchEvent(ev);
+        // Всегда false — этот View никогда не перехватывает жест сам, только
+        // наблюдает за проходящими событиями. Обычные тапы по кнопкам, ссылкам,
+        // карусели медиа и т.п. внутри поста доходят до них как раньше.
+        return false;
     }
 
     private static final int MAX_TEXT_LINES   = 7;
@@ -372,13 +437,11 @@ public class PotokFeedPostCell extends LinearLayout {
         textView.setMaxLines(MAX_TEXT_LINES);
         textView.setEllipsize(TextUtils.TruncateAt.END);
         textView.setLineSpacing(dp(2), 1f);
-        // Фикс долгого нажатия: TextView сам может перехватывать long-press под выделение
-        // текста, форвардим на тот же обработчик, что и для фото/остальной карточки.
-        textView.setLongClickable(true);
-        textView.setOnLongClickListener(v -> {
-            openPostInChannel();
-            return true;
-        });
+        // Долгое нажатие теперь ловится не здесь, а единым таймером в
+        // PotokFeedPostCell.onInterceptTouchEvent (см. начало класса) — он не
+        // зависит от собственного long-click механизма TextView, который тоже
+        // отменялся бы родителями точно так же, как раньше отменялся у остальной
+        // карточки.
         addView(textView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 12, 8, 12, 0));
 
         // --- Кнопка «ещё» ---
@@ -686,12 +749,11 @@ public class PotokFeedPostCell extends LinearLayout {
         // теперь посты — отдельные карточки с отступами снаружи (см. PotokFeedFragment,
         // где выставляются margins у RecyclerView.LayoutParams), полоса стала не нужна.
 
-        // Долгое нажатие по карточке -> открыть пост в канале
-        setLongClickable(true);
-        setOnLongClickListener(v -> {
-            openPostInChannel();
-            return true;
-        });
+        // Долгое нажатие по карточке (кроме медиа) -> открыть пост в канале.
+        // Обрабатывается единым таймером в onInterceptTouchEvent (см. начало класса),
+        // не отдельным setOnLongClickListener — так надёжнее внутри скроллящейся
+        // ленты (не зависит от того, что решают делать родительские списки с тем же
+        // самым касанием).
     }
 
     // ------------------------------------------------------------------ setPost
@@ -717,6 +779,7 @@ public class PotokFeedPostCell extends LinearLayout {
         currentChannel = channel;
         MessageObject messageObject = messages.get(0);
         currentMessage = messageObject;
+        cancelPendingLongPress();
 
         // Сброс состояния при переиспользовании
         isExpanded = false;
@@ -3249,20 +3312,12 @@ public class PotokFeedPostCell extends LinearLayout {
             // Тап по play-кнопке в центре — то же самое действие, что и тап по кадру
             // (открыть в полноэкранном просмотрщике), она не занимается загрузкой.
             holder.playIndicator.setOnClickListener(v -> openMediaViewer(mo, idx, items));
-            // Фикс: карусель (RecyclerView) сама перехватывает долгое нажатие для своих
-            // touch-жестов (скролл/свайп), поэтому долгий тап по фото не долетал до
-            // long-click на самой карточке поста. Дублируем обработчик прямо здесь.
-            // Разделение по требованию пользователя: долгое нажатие на МЕДИА (не на
-            // тексте поста) больше не открывает канал — вместо этого, если медиа в
-            // посте больше одного, открывается сетка 3х3 со всеми медиа поста. Если
-            // медиа всего одно — сетка не имеет смысла, жест остаётся статичным
-            // (ничего не происходит), переход на канал по медиа в этом случае убран.
-            img.setOnLongClickListener(v -> {
-                if (items.size() > 1) {
-                    openMediaGrid(items);
-                }
-                return true;
-            });
+            // Долгое нажатие на медиа (сетка 3х3, если медиа больше одного) теперь
+            // тоже ловится единым таймером в PotokFeedPostCell.onInterceptTouchEvent
+            // (по попаданию точки ACTION_DOWN в границы карусели), а не отдельным
+            // long-click на img — тот всё равно перехватывался бы самой каруселью
+            // (RecyclerView) при попытке скролла точно так же, как раньше это
+            // происходило у остальной карточки.
         }
 
         @Override public int getItemCount() { return items.size(); }

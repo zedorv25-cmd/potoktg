@@ -4,14 +4,17 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.Canvas;
+import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -38,6 +41,8 @@ import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Adapters.DialogsSearchAdapter;
 import org.telegram.ui.Cells.PotokFeedPostCell;
 import org.telegram.ui.Cells.TextCheckCell;
+import com.google.android.exoplayer2.ui.AspectRatioFrameLayout;
+
 import org.telegram.ui.Components.BlurredFrameLayout;
 import org.telegram.ui.Components.FragmentContextView;
 import org.telegram.ui.Components.LayoutHelper;
@@ -131,6 +136,20 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private FragmentContextView fragmentContextView;
     private RoundedBarContainer miniPlayerContainer;
     private BlurredFrameLayout miniPlayerGapBlur;
+
+    // --- Инлайн-плеер видеокружка ---
+    // 1:1 с ChatActivity.createTextureView()/destroyTextureView(): ОДИН общий
+    // плавающий контейнер (не по контейнеру на ячейку), который переставляется
+    // поверх той видимой ячейки, что сейчас держит играющий кружок. Если такая
+    // ячейка не найдена среди видимых — MediaController сам переключает вывод
+    // в PIP через setCurrentVideoVisible(false), см. updateRoundVideoTexturePosition().
+    private FrameLayout roundVideoPlayerContainer;
+    private AspectRatioFrameLayout roundVideoAspectRatioFrameLayout;
+    private TextureView roundVideoTextureView;
+    // Сообщение, для которого СЕЙЧАС зарегистрирован textureView в MediaController —
+    // нужно, чтобы не дёргать setTextureView повторно на каждый чих (скролл),
+    // а только при реальной смене играющего видеокружка.
+    private int roundVideoTextureRegisteredForMessageId;
     // Боковой отступ "острова" мини-плеера — 4dp с каждой стороны, ровно как в
     // DialogsActivityTopPanelLayout (реальный код Telegram для этого же бара).
     private static final int MINI_PLAYER_SIDE_MARGIN_DP = 4;
@@ -510,6 +529,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         int scrollButtonBottomMarginDp = (int) (scrollButtonBottomMarginPx / AndroidUtilities.density);
         frameLayout.addView(scrollToTopButton, LayoutHelper.createFrame(48, 48, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 16, scrollButtonBottomMarginDp));
 
+        createRoundVideoTextureView(context);
+        frameLayout.addView(roundVideoPlayerContainer, new FrameLayout.LayoutParams(
+                AndroidUtilities.roundPlayingMessageSize(false), AndroidUtilities.roundPlayingMessageSize(false)));
+        roundVideoPlayerContainer.setVisibility(View.GONE);
+
         listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrollStateChanged(RecyclerView rv, int newState) {
@@ -534,6 +558,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 // Пост, докрутившийся до видимой области экрана, считается
                 // просмотренным — засчитываем это как прочтение в чате канала.
                 checkVisibleFeedItemsRead();
+                updateRoundVideoTexturePosition();
             }
         });
 
@@ -1284,6 +1309,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         getNotificationCenter().removeObserver(this, NotificationCenter.messagePlayingDidStart);
         getNotificationCenter().removeObserver(this, NotificationCenter.messagePlayingPlayStateChanged);
         getNotificationCenter().removeObserver(this, NotificationCenter.messagePlayingDidReset);
+        if (roundVideoTextureRegisteredForMessageId != 0 && roundVideoTextureView != null) {
+            MediaController.getInstance().setTextureView(roundVideoTextureView, roundVideoAspectRatioFrameLayout, roundVideoPlayerContainer, false);
+            roundVideoTextureRegisteredForMessageId = 0;
+        }
         super.onFragmentDestroy();
     }
 
@@ -1334,6 +1363,86 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                     }
                 }
             }
+            updateRoundVideoTexturePosition();
+        }
+    }
+
+    /**
+     * 1:1 с ChatActivity.createTextureView() — один общий контейнер
+     * (FrameLayout -> AspectRatioFrameLayout -> TextureView), круглая обрезка
+     * через ViewOutlineProvider (у нас всегда круг, в отличие от ChatActivity,
+     * которому нужны и прямоугольные варианты — поэтому проще: всегда setOval).
+     */
+    private void createRoundVideoTextureView(Context context) {
+        if (roundVideoPlayerContainer != null) return;
+        roundVideoPlayerContainer = new FrameLayout(context);
+        roundVideoPlayerContainer.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, Outline outline) {
+                outline.setOval(0, 0, view.getMeasuredWidth(), view.getMeasuredHeight());
+            }
+        });
+        roundVideoPlayerContainer.setClipToOutline(true);
+        roundVideoPlayerContainer.setWillNotDraw(false);
+
+        roundVideoAspectRatioFrameLayout = new AspectRatioFrameLayout(context);
+        roundVideoAspectRatioFrameLayout.setBackgroundColor(0);
+        roundVideoPlayerContainer.addView(roundVideoAspectRatioFrameLayout,
+                LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.CENTER));
+
+        roundVideoTextureView = new TextureView(context);
+        roundVideoTextureView.setOpaque(false);
+        roundVideoAspectRatioFrameLayout.addView(roundVideoTextureView,
+                LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+    }
+
+    /**
+     * Ищет среди видимых ячеек ленты ту, что сейчас держит играющий видеокружок,
+     * и переставляет общий roundVideoPlayerContainer точно поверх неё — 1:1 с
+     * циклом foundTextureViewMessage в ChatActivity. Если такая ячейка НЕ
+     * найдена (проскроллили) — прячем свой контейнер и явно говорим
+     * MediaController, что видео сейчас невидимо; дальше он САМ включает PIP.
+     * Вызывается при скролле ленты и при любой смене состояния плеера.
+     */
+    private void updateRoundVideoTexturePosition() {
+        if (roundVideoPlayerContainer == null || listView == null || fragmentView == null) return;
+        MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
+        if (playing == null || !playing.isRoundVideo()) {
+            roundVideoPlayerContainer.setVisibility(View.GONE);
+            if (roundVideoTextureRegisteredForMessageId != 0) {
+                MediaController.getInstance().setTextureView(roundVideoTextureView, roundVideoAspectRatioFrameLayout, roundVideoPlayerContainer, false);
+                roundVideoTextureRegisteredForMessageId = 0;
+            }
+            return;
+        }
+        if (roundVideoTextureRegisteredForMessageId != playing.getId()) {
+            MediaController.getInstance().setTextureView(roundVideoTextureView, roundVideoAspectRatioFrameLayout, roundVideoPlayerContainer, true);
+            roundVideoTextureRegisteredForMessageId = playing.getId();
+        }
+
+        PotokFeedPostCell foundCell = null;
+        int count = listView.getChildCount();
+        for (int a = 0; a < count; a++) {
+            View child = listView.getChildAt(a);
+            if (child instanceof PotokFeedPostCell && ((PotokFeedPostCell) child).getRoundVideoMessageId() == playing.getId()) {
+                foundCell = (PotokFeedPostCell) child;
+                break;
+            }
+        }
+
+        if (foundCell != null) {
+            View roundImage = foundCell.getRoundVideoImageView();
+            int[] loc = new int[2];
+            roundImage.getLocationOnScreen(loc);
+            int[] rootLoc = new int[2];
+            fragmentView.getLocationOnScreen(rootLoc);
+            roundVideoPlayerContainer.setTranslationX(loc[0] - rootLoc[0]);
+            roundVideoPlayerContainer.setTranslationY(loc[1] - rootLoc[1]);
+            roundVideoPlayerContainer.setVisibility(View.VISIBLE);
+            MediaController.getInstance().setCurrentVideoVisible(true);
+        } else {
+            roundVideoPlayerContainer.setVisibility(View.GONE);
+            MediaController.getInstance().setCurrentVideoVisible(false);
         }
     }
 

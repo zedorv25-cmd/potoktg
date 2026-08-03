@@ -649,13 +649,85 @@ public class PotokFeedPostCell extends LinearLayout {
 
         // Тап по кружку — play/pause, а НЕ переход на канал/долгое нажатие
         // (см. onInterceptTouchEvent — точка внутри roundVideoContainer намеренно
-        // исключена из общей логики долгого нажатия). MediaController.playMessage
-        // сам разруливает toggle: играет -> ставит паузу, на паузе -> продолжает,
-        // не играет -> запускает — 1:1 с тем, как уже работает audioPlayButton.
+        // исключена из общей логики долгого нажатия).
+        //
+        // Перемотка перетаскиванием по кольцу-индикатору — 1:1 с checkRoundSeekbar
+        // из ChatMessageCell: работает ТОЛЬКО когда видео на паузе, палец должен
+        // попасть в кольцевую зону у края круга (не в середину — середина это тап
+        // play/pause), угол пальца от центра (atan2) переводится в прогресс 0..1,
+        // обновление не чаще раза в 100мс, по отпусканию пальца — воспроизведение
+        // возобновляется автоматически (ровно как в оригинале).
+        roundVideoContainer.setOnTouchListener(new View.OnTouchListener() {
+            private boolean dragging;
+            private long lastSeekUpdateTime;
+
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                if (roundVideoMessageObject == null) return false;
+                float cx = v.getWidth() / 2f;
+                float cy = v.getHeight() / 2f;
+                float dx = event.getX() - cx;
+                float dy = event.getY() - cy;
+                float dist = (float) Math.sqrt(dx * dx + dy * dy);
+                // Кольцевая зона перемотки — узкая полоса у самого края круга
+                // (~28dp), совпадает по духу с r2..r/2 диапазоном оригинала.
+                boolean insideSeekRing = dist >= (v.getWidth() / 2f - dp(28));
+                boolean paused = MediaController.getInstance().isPlayingMessage(roundVideoMessageObject)
+                        && MediaController.getInstance().isMessagePaused();
+
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        dragging = paused && insideSeekRing;
+                        if (dragging) {
+                            if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
+                            return true;
+                        }
+                        return false; // обычный тап — пусть дойдёт как клик ниже
+                    case MotionEvent.ACTION_MOVE:
+                        if (!dragging) return false;
+                        double angleDeg = Math.toDegrees(Math.atan2(dy, dx)) + 90;
+                        if (angleDeg < 0) angleDeg += 360;
+                        float progress = (float) (angleDeg / 360.0);
+                        long now = System.currentTimeMillis();
+                        if (now - lastSeekUpdateTime > 100) {
+                            lastSeekUpdateTime = now;
+                            roundVideoMessageObject.audioProgress = progress;
+                            roundVideoMessageObject.audioProgressSec = (int) (progress * roundVideoDurationSeconds);
+                            MediaController.getInstance().seekToProgress(roundVideoMessageObject, progress);
+                            roundVideoRingView.invalidate();
+                            updateRoundVideoDurationText();
+                        }
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        if (dragging) {
+                            dragging = false;
+                            if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(false);
+                            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                                // Отпустили после перемотки — воспроизведение продолжается
+                                // с новой позиции, 1:1 с оригиналом.
+                                MediaController.getInstance().playMessage(roundVideoMessageObject);
+                            }
+                            return true;
+                        }
+                        return false;
+                }
+                return false;
+            }
+        });
         roundVideoContainer.setOnClickListener(v -> {
             if (roundVideoMessageObject == null) return;
             performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP, android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
-            MediaController.getInstance().playMessage(roundVideoMessageObject);
+            // MediaController.playMessage САМ переключает паузу<->игру, только пока
+            // сообщение уже является "текущим" в плеере. Toggle нужно делать явно:
+            // играет -> pauseMessage; не играет/на паузе -> playMessage. 1:1 с
+            // веткой TYPE_ROUND_VIDEO в ChatMessageCell.didClickedImage().
+            if (MediaController.getInstance().isPlayingMessage(roundVideoMessageObject)
+                    && !MediaController.getInstance().isMessagePaused()) {
+                MediaController.getInstance().pauseMessage(roundVideoMessageObject);
+            } else {
+                MediaController.getInstance().playMessage(roundVideoMessageObject, false);
+            }
         });
 
         roundVideoPlayingDrawable = new RoundVideoPlayingDrawable(roundVideoContainer, resourcesProvider);
@@ -1359,6 +1431,23 @@ public class PotokFeedPostCell extends LinearLayout {
             chatActivity.setThreadMessages(threadMessages, originalChat, originalMsgId, discussionMessage.read_inbox_max_id, discussionMessage.read_outbox_max_id, null);
             parentFragment.presentFragment(chatActivity);
         }));
+    }
+
+    /**
+     * Для PotokFeedFragment.updateRoundVideoTexturePosition() — узнать, держит
+     * ли эта ячейка сейчас видеокружок с данным id (0, если кружка нет вообще).
+     */
+    public int getRoundVideoMessageId() {
+        return roundVideoMessageObject != null ? roundVideoMessageObject.getId() : 0;
+    }
+
+    /**
+     * Для PotokFeedFragment.updateRoundVideoTexturePosition() — точные экранные
+     * координаты круглого превью, поверх которых нужно поставить общий плавающий
+     * TextureView с реальным видео.
+     */
+    public View getRoundVideoImageView() {
+        return roundVideoImage;
     }
 
     private void hideCarousel() {

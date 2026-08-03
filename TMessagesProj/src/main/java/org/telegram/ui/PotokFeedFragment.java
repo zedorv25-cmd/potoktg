@@ -1297,6 +1297,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 View child = listView.getChildAt(a);
                 if (child instanceof PotokFeedPostCell) {
                     ((PotokFeedPostCell) child).updateAudioProgressIfPlaying(mid);
+                    ((PotokFeedPostCell) child).updateRoundVideoProgressIfPlaying(mid);
                 }
             }
         } else if (id == NotificationCenter.didSetNewTheme) {
@@ -1329,6 +1330,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                     View child = listView.getChildAt(a);
                     if (child instanceof PotokFeedPostCell) {
                         ((PotokFeedPostCell) child).refreshAudioPlaybackState();
+                        ((PotokFeedPostCell) child).refreshRoundVideoPlaybackState();
                     }
                 }
             }

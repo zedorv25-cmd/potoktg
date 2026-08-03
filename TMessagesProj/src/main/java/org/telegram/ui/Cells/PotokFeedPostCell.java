@@ -54,6 +54,7 @@ import org.telegram.ui.Components.CubicBezierInterpolator;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.MediaActionDrawable;
 import org.telegram.ui.Components.RadialProgress2;
+import org.telegram.ui.Components.RoundVideoPlayingDrawable;
 import org.telegram.ui.Components.SeekBar;
 import org.telegram.ui.Components.SeekBarWaveform;
 import org.telegram.ui.PhotoViewer;
@@ -151,6 +152,16 @@ public class PotokFeedPostCell extends LinearLayout {
                 rootTouchDownX = ev.getRawX();
                 rootTouchDownY = ev.getRawY();
                 getLocationOnScreen(longPressDownScreenLoc);
+                // Видеокружок — отдельная зона со своим тапом (play/pause через
+                // roundVideoContainer.setOnClickListener, см. конструктор), в общий
+                // механизм долгого нажатия/перехода на канал не встроена вообще —
+                // никакой из двух веток (onMedia/иначе) ей не подходит. Если палец
+                // лёг на кружок — таймер долгого нажатия просто не планируем,
+                // обычный клик дойдёт до контейнера сам по себе (мы всегда
+                // возвращаем false из onInterceptTouchEvent).
+                if (isPointInsideRoundVideo(rootTouchDownX, rootTouchDownY)) {
+                    break;
+                }
                 // Решаем СРАЗУ на down, куда должно вести долгое нажатие: на медиа
                 // (сетка, если медиа больше одного) или на остальную часть карточки
                 // (переход на канал) — попадание проверяем по границам карусели на
@@ -284,13 +295,18 @@ public class PotokFeedPostCell extends LinearLayout {
     // работает audioContainer (см. isVoiceOrMusic в setPost()).
     private final FrameLayout roundVideoContainer;
     private final BackupImageView roundVideoImage;
-    // Круглая обводка-подложка ПОД самим превью — на случай, если сетевой thumb
-    // ещё не готов/не квадратный (превью иногда приходит не идеально квадратным
-    // "тонким" в углах) — чтобы никогда не было видно углов исходного кадра за
-    // пределами круга. setRoundRadius на самом ImageReceiver уже даёт нужную
-    // обрезку по кругу, это чисто подстраховка на случай перерисовки при ресайзе.
     private final TextView roundVideoDurationView;
+    private RoundVideoRingView roundVideoRingView;
+    private RoundVideoEqualizerView roundVideoEqualizerView;
+    private RoundVideoPlayingDrawable roundVideoPlayingDrawable;
+    private final int[] roundVideoScreenLocation = new int[2];
     private MessageObject roundVideoMessageObject;
+    private int roundVideoDurationSeconds;
+    // Автоплей (беззвучный) запускается один раз на bind, если файл уже в кэше —
+    // без этого флага при каждом notifyItemChanged/ре-биндe того же ViewHolder'а
+    // (например, от didUpdatePollResults соседнего поста в той же группе) плеер
+    // перезапускался бы с нуля заново, даже если уже играет.
+    private boolean roundVideoAutoplayTried;
 
     // --- Опрос ---
     private final PollView pollView;
@@ -621,6 +637,29 @@ public class PotokFeedPostCell extends LinearLayout {
         roundVideoImage.getImageReceiver().setRoundRadius(roundSizePx / 2);
         roundVideoContainer.addView(roundVideoImage, new FrameLayout.LayoutParams(roundSizePx, roundSizePx));
 
+        // Кольцо-прогресс воспроизведения по контуру круга — 1:1 с ChatMessageCell
+        // (см. canvas.drawArc(rect, -90, 360 * audioProgress, ...) в оригинале):
+        // там это часть одного гигантского canvas-метода ячейки, здесь — отдельный
+        // маленький View поверх превью, но математика дуги та же самая.
+        // currentMessage.audioProgress — то самое поле, которое MediaController
+        // обновляет в реальном времени во время игры (тот же механизм, что уже
+        // работает для audioSeekBarView выше).
+        roundVideoRingView = new RoundVideoRingView(context);
+        roundVideoContainer.addView(roundVideoRingView, new FrameLayout.LayoutParams(roundSizePx, roundSizePx));
+
+        // Тап по кружку — play/pause, а НЕ переход на канал/долгое нажатие
+        // (см. onInterceptTouchEvent — точка внутри roundVideoContainer намеренно
+        // исключена из общей логики долгого нажатия). MediaController.playMessage
+        // сам разруливает toggle: играет -> ставит паузу, на паузе -> продолжает,
+        // не играет -> запускает — 1:1 с тем, как уже работает audioPlayButton.
+        roundVideoContainer.setOnClickListener(v -> {
+            if (roundVideoMessageObject == null) return;
+            performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP, android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
+            MediaController.getInstance().playMessage(roundVideoMessageObject);
+        });
+
+        roundVideoPlayingDrawable = new RoundVideoPlayingDrawable(roundVideoContainer, resourcesProvider);
+
         // Плашка длительности — тот же визуальный паттерн, что у обычного видео в
         // Telegram (полупрозрачная тёмная таблетка снизу-справа поверх превью,
         // белый текст, маленький шрифт). Пока просто TextView поверх картинки —
@@ -635,6 +674,15 @@ public class PotokFeedPostCell extends LinearLayout {
         FrameLayout.LayoutParams durationLp = LayoutHelper.createFrame(
                 LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 8, 8);
         roundVideoContainer.addView(roundVideoDurationView, durationLp);
+
+        // Бегущий эквалайзер ("сейчас играет") — тот же переиспользуемый класс
+        // RoundVideoPlayingDrawable, что и в ChatMessageCell, просто нарисован в
+        // собственном маленьком View вместо ручной отрисовки внутри canvas-метода
+        // всей ячейки. Видимость/старт/стоп — см. refreshRoundVideoPlaybackState().
+        roundVideoEqualizerView = new RoundVideoEqualizerView(context);
+        roundVideoEqualizerView.setVisibility(GONE);
+        FrameLayout.LayoutParams equalizerLp = LayoutHelper.createFrame(14, 14, Gravity.BOTTOM | Gravity.LEFT, 8, 0, 0, 8);
+        roundVideoContainer.addView(roundVideoEqualizerView, equalizerLp);
 
         // --- Аудио ---
         // Раньше здесь стоял SharedAudioCell — это компонент из ДРУГОГО контекста
@@ -1105,16 +1153,17 @@ public class PotokFeedPostCell extends LinearLayout {
             hideCarousel();
             hideAudio();
 
+            boolean sameRoundVideo = roundVideoMessageObject != null && roundVideoMessageObject.getId() == roundVideoMo.getId();
             roundVideoMessageObject = roundVideoMo;
             roundVideoContainer.setVisibility(VISIBLE);
+            if (!sameRoundVideo) {
+                // Новый пост (не повторный bind того же самого ViewHolder'а) —
+                // разрешаем автоплею попробовать снова.
+                roundVideoAutoplayTried = false;
+            }
 
             TLRPC.Document document = roundVideoMo.getDocument();
             if (document != null) {
-                // Статичное превью кружка (Сборка 1 — без автовоспроизведения):
-                // тот же путь получения thumb'а, что и у обычного видео в
-                // карусели (см. onBindViewHolder карусели, closest photo size +
-                // strippedThumb как мгновенный заполнитель), просто на своём
-                // отдельном BackupImageView вместо элемента RecyclerView.
                 TLRPC.PhotoSize thumb = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, AndroidUtilities.getPhotoSize());
                 BitmapDrawable strippedThumb = roundVideoMo.strippedThumb;
                 roundVideoImage.setImage(
@@ -1122,14 +1171,27 @@ public class PotokFeedPostCell extends LinearLayout {
                         (ImageLocation) null, (String) null,
                         strippedThumb, (String) null, 0, 0, roundVideoMo);
 
-                long durationSeconds = 0;
+                roundVideoDurationSeconds = 0;
                 for (TLRPC.DocumentAttribute attr : document.attributes) {
                     if (attr instanceof TLRPC.TL_documentAttributeVideo) {
-                        durationSeconds = (long) attr.duration;
+                        roundVideoDurationSeconds = (int) attr.duration;
                         break;
                     }
                 }
-                roundVideoDurationView.setText(AndroidUtilities.formatShortDuration((int) durationSeconds));
+            }
+
+            refreshRoundVideoPlaybackState();
+
+            // Беззвучный автоплей — только если файл уже реально закэширован
+            // (mediaExists), 1:1 с условием, по которому уже принято решение
+            // автоплеить обычное видео в карусели (canDecodeFromVideo/fileExists
+            // выше). Не закэшировано — просто показываем статичное превью с
+            // длительностью, играть по сети никто не просил (это отдельная тема
+            // потокового автоплея, не часть текущей задачи).
+            if (!roundVideoAutoplayTried && roundVideoMo.mediaExists
+                    && !MediaController.getInstance().isPlayingMessage(roundVideoMo)) {
+                roundVideoAutoplayTried = true;
+                MediaController.getInstance().playMessage(roundVideoMo, true);
             }
         } else if (!mediaMessages.isEmpty()) {
             hideAudio();
@@ -1311,7 +1373,11 @@ public class PotokFeedPostCell extends LinearLayout {
      */
     private void hideRoundVideo() {
         roundVideoContainer.setVisibility(GONE);
+        if (roundVideoPlayingDrawable != null) {
+            roundVideoPlayingDrawable.stop();
+        }
         roundVideoMessageObject = null;
+        roundVideoAutoplayTried = false;
         roundVideoImage.getImageReceiver().setImageBitmap((Drawable) null);
     }
 
@@ -1471,6 +1537,60 @@ public class PotokFeedPostCell extends LinearLayout {
             audioPlayButton.refresh();
             updateAudioSeekRowVisibility(currentMessage, true);
         }
+    }
+
+    /**
+     * Текст плашки под кружком: пока не играет — общая длительность ("0:07"),
+     * во время игры — прошло/всего ("0:03 / 0:07"). 1:1 с updateAudioTimeText
+     * выше, formatShortDuration(played, total) — та же самая функция форматирования.
+     */
+    private void updateRoundVideoDurationText() {
+        if (roundVideoMessageObject == null) return;
+        boolean playing = MediaController.getInstance().isPlayingMessage(roundVideoMessageObject)
+                && !MediaController.getInstance().isMessagePaused();
+        if (playing) {
+            roundVideoDurationView.setText(AndroidUtilities.formatShortDuration(roundVideoMessageObject.audioProgressSec, roundVideoDurationSeconds));
+        } else {
+            roundVideoDurationView.setText(AndroidUtilities.formatShortDuration(roundVideoDurationSeconds));
+        }
+    }
+
+    /**
+     * Вызывается извне (PotokFeedFragment) по NotificationCenter.messagePlayingProgressDidChanged —
+     * тот же паттерн, что updateAudioProgressIfPlaying выше. Двигает кольцо-прогресс
+     * и текст прошедшего времени во время игры.
+     */
+    public void updateRoundVideoProgressIfPlaying(int messageId) {
+        if (roundVideoMessageObject == null || roundVideoMessageObject.getId() != messageId) return;
+        if (roundVideoContainer.getVisibility() != VISIBLE) return;
+        MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
+        if (playing == null) return;
+        roundVideoMessageObject.audioProgress = playing.audioProgress;
+        roundVideoMessageObject.audioProgressSec = playing.audioProgressSec;
+        roundVideoRingView.invalidate();
+        updateRoundVideoDurationText();
+    }
+
+    /**
+     * Вызывается извне при messagePlayingDidStart/messagePlayingPlayStateChanged/
+     * messagePlayingDidReset — тот же паттерн, что refreshAudioPlaybackState выше.
+     * Обходит ВСЕ видимые ячейки (не только совпадающую), иначе кружок, который
+     * играл раньше, остался бы показывать устаревшее состояние (эквалайзер/кольцо),
+     * если заиграл другой трек/кружок/аудио.
+     */
+    public void refreshRoundVideoPlaybackState() {
+        if (roundVideoContainer.getVisibility() != VISIBLE || roundVideoMessageObject == null) return;
+        boolean playing = MediaController.getInstance().isPlayingMessage(roundVideoMessageObject);
+        boolean activelyPlaying = playing && !MediaController.getInstance().isMessagePaused();
+        roundVideoEqualizerView.setVisibility(playing ? VISIBLE : GONE);
+        if (activelyPlaying) {
+            roundVideoPlayingDrawable.start();
+        } else {
+            roundVideoPlayingDrawable.stop();
+        }
+        roundVideoRingView.invalidate();
+        roundVideoEqualizerView.invalidate();
+        updateRoundVideoDurationText();
     }
 
     /**
@@ -1805,6 +1925,13 @@ public class PotokFeedPostCell extends LinearLayout {
         carouselView.getLocationOnScreen(carouselScreenLocation);
         return screenX >= carouselScreenLocation[0] && screenX <= carouselScreenLocation[0] + carouselView.getWidth()
             && screenY >= carouselScreenLocation[1] && screenY <= carouselScreenLocation[1] + carouselView.getHeight();
+    }
+
+    public boolean isPointInsideRoundVideo(float screenX, float screenY) {
+        if (roundVideoContainer == null || roundVideoContainer.getVisibility() != VISIBLE) return false;
+        roundVideoContainer.getLocationOnScreen(roundVideoScreenLocation);
+        return screenX >= roundVideoScreenLocation[0] && screenX <= roundVideoScreenLocation[0] + roundVideoContainer.getWidth()
+            && screenY >= roundVideoScreenLocation[1] && screenY <= roundVideoScreenLocation[1] + roundVideoContainer.getHeight();
     }
 
     private ActionBarPopupWindow postMenuWindow;
@@ -4498,6 +4625,58 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         protected void onDraw(Canvas canvas) {
             radialProgress.draw(canvas);
+        }
+    }
+
+    // ------------------------------------------------------------------ RoundVideoRingView / RoundVideoEqualizerView
+
+    /**
+     * Кольцо-прогресс воспроизведения по контуру видеокружка. 1:1 с математикой
+     * дуги из ChatMessageCell (canvas.drawArc(rect, -90, 360 * audioProgress, ...)) —
+     * там это часть одного большого canvas-метода ячейки сообщения, здесь —
+     * отдельный маленький View, наложенный поверх круглого превью тем же размером.
+     */
+    private class RoundVideoRingView extends View {
+        private final RectF ringRect = new RectF();
+        private final Paint ringPaint;
+
+        RoundVideoRingView(Context context) {
+            super(context);
+            ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            ringPaint.setStyle(Paint.Style.STROKE);
+            ringPaint.setStrokeWidth(dp(2));
+            ringPaint.setStrokeCap(Paint.Cap.ROUND);
+            ringPaint.setColor(Color.WHITE);
+            setWillNotDraw(false);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            if (roundVideoMessageObject == null) return;
+            if (!MediaController.getInstance().isPlayingMessage(roundVideoMessageObject)) return;
+            float inset = ringPaint.getStrokeWidth() / 2f + dp(1);
+            ringRect.set(inset, inset, getWidth() - inset, getHeight() - inset);
+            canvas.drawArc(ringRect, -90, 360 * roundVideoMessageObject.audioProgress, false, ringPaint);
+        }
+    }
+
+    /**
+     * Маленький "бегущий эквалайзер" рядом с плашкой длительности — тот же
+     * переиспользуемый класс RoundVideoPlayingDrawable, что и в ChatMessageCell,
+     * просто нарисован в собственном View вместо ручной отрисовки в одном
+     * гигантском canvas-методе всей ячейки сообщения.
+     */
+    private class RoundVideoEqualizerView extends View {
+        RoundVideoEqualizerView(Context context) {
+            super(context);
+            setWillNotDraw(false);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            if (roundVideoPlayingDrawable == null) return;
+            roundVideoPlayingDrawable.setBounds(0, 0, getWidth(), getHeight());
+            roundVideoPlayingDrawable.draw(canvas);
         }
     }
 

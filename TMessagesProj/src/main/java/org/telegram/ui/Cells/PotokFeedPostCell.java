@@ -272,6 +272,26 @@ public class PotokFeedPostCell extends LinearLayout {
     private final FrameLayout audioSecondRow;
     private final LinearLayout audioSeekRow;
 
+    // --- Видеокружок (round video message) ---
+    // Кружок в Telegram — это НЕ подвид обычного видео: MessageObject.isVideoDocument()
+    // сознательно возвращает false для документов с атрибутом round_message (см.
+    // диагностику этой сессии), поэтому он никогда не должен пытаться пройти через
+    // обычную карусель фото/видео — у него всегда была задумана "своя, отдельная от
+    // карусели обработка" (см. комментарий у isVideoAsFile в onBindViewHolder карусели),
+    // просто раньше эта отдельная обработка не была написана, из-за чего кружок
+    // проваливался мимо обеих веток (не видео, не фото) и оставался пустым местом.
+    // Контейнер mutually exclusive с carouselView/audioContainer — 1:1 с тем, как уже
+    // работает audioContainer (см. isVoiceOrMusic в setPost()).
+    private final FrameLayout roundVideoContainer;
+    private final BackupImageView roundVideoImage;
+    // Круглая обводка-подложка ПОД самим превью — на случай, если сетевой thumb
+    // ещё не готов/не квадратный (превью иногда приходит не идеально квадратным
+    // "тонким" в углах) — чтобы никогда не было видно углов исходного кадра за
+    // пределами круга. setRoundRadius на самом ImageReceiver уже даёт нужную
+    // обрезку по кругу, это чисто подстраховка на случай перерисовки при ресайзе.
+    private final TextView roundVideoDurationView;
+    private MessageObject roundVideoMessageObject;
+
     // --- Опрос ---
     private final PollView pollView;
     // Сообщение группы, чей media — конкретно опрос (см. setPost()); нужно отдельно
@@ -581,6 +601,40 @@ public class PotokFeedPostCell extends LinearLayout {
         documentsContainer.setOrientation(VERTICAL);
         documentsContainer.setVisibility(GONE);
         addView(documentsContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 0));
+
+        // --- Видеокружок ---
+        // Отдельный контейнер, а не элемент карусели — см. подробный комментарий
+        // у объявления полей выше. Круглый BackupImageView + подпись длительности
+        // снизу-справа (1:1 позиция с ChatMessageCell.durationLayout). Здесь —
+        // только статичное превью (Сборка 1); тап/пауза/автоплей/эквалайзер/
+        // верхняя полоска — отдельным заходом (Сборка 2), на этом контейнере уже
+        // будет что подключать.
+        roundVideoContainer = new FrameLayout(context);
+        roundVideoContainer.setVisibility(GONE);
+        addView(roundVideoContainer, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.START, 8, 10, 8, 0));
+
+        int roundSizePx = AndroidUtilities.roundMessageSize > 0
+                ? AndroidUtilities.roundMessageSize
+                : dp(200); // фоллбэк на случай вызова до первого измерения экрана (см. AndroidUtilities.checkDisplaySize)
+
+        roundVideoImage = new BackupImageView(context);
+        roundVideoImage.getImageReceiver().setRoundRadius(roundSizePx / 2);
+        roundVideoContainer.addView(roundVideoImage, new FrameLayout.LayoutParams(roundSizePx, roundSizePx));
+
+        // Плашка длительности — тот же визуальный паттерн, что у обычного видео в
+        // Telegram (полупрозрачная тёмная таблетка снизу-справа поверх превью,
+        // белый текст, маленький шрифт). Пока просто TextView поверх картинки —
+        // этого достаточно для статичного превью; замена на анимированный
+        // индикатор во время игры — уже часть Сборки 2.
+        roundVideoDurationView = new TextView(context);
+        roundVideoDurationView.setTextColor(Color.WHITE);
+        roundVideoDurationView.setTextSize(12);
+        roundVideoDurationView.setTypeface(AndroidUtilities.bold());
+        roundVideoDurationView.setBackground(Theme.createRoundRectDrawable(dp(10), 0x66000000));
+        roundVideoDurationView.setPadding(dp(6), dp(2), dp(6), dp(2));
+        FrameLayout.LayoutParams durationLp = LayoutHelper.createFrame(
+                LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 8, 8);
+        roundVideoContainer.addView(roundVideoDurationView, durationLp);
 
         // --- Аудио ---
         // Раньше здесь стоял SharedAudioCell — это компонент из ДРУГОГО контекста
@@ -924,8 +978,19 @@ public class PotokFeedPostCell extends LinearLayout {
         // Медиа, отправленные КАК ФАЙЛ — рисуются отдельными строками через
         // documentsContainer/SharedDocumentCell (см. ниже), не в карусели.
         ArrayList<MessageObject> fileMessages = new ArrayList<>();
+        // Видеокружок (round video message) — как и voice/music, у него своя
+        // отдельная от карусели обработка (см. подробный комментарий у полей
+        // roundVideoContainer выше и у isVideoAsFile в CarouselAdapter). Раньше
+        // он НЕ исключался здесь и всё равно проходил в mediaMessages (у него
+        // есть photoThumbs), но карусель не умела его рисовать — отсюда пустое
+        // место в ленте на постах с кружком.
+        MessageObject roundVideoMo = null;
         for (MessageObject mo : messages) {
             if (mo.isVoice() || mo.isMusic()) continue;
+            if (mo.isRoundVideo()) {
+                if (roundVideoMo == null) roundVideoMo = mo; // берём первый, если их вдруг несколько в группе
+                continue;
+            }
             if (mo.type == MessageObject.TYPE_FILE) {
                 fileMessages.add(mo);
             } else if (mo.photoThumbs != null && !mo.photoThumbs.isEmpty()) {
@@ -994,6 +1059,7 @@ public class PotokFeedPostCell extends LinearLayout {
         // путь, что и для обычных постов, независимо от isPoll.
         if (isVoiceOrMusic) {
             hideCarousel();
+            hideRoundVideo();
             audioContainer.setVisibility(VISIBLE);
             boolean voice = audioMessageObject.isVoice();
             audioWaveformView.setVisibility(voice ? VISIBLE : GONE);
@@ -1035,8 +1101,39 @@ public class PotokFeedPostCell extends LinearLayout {
                 audioMessageObject.putInDownloadsStore = true;
                 FileLoader.getInstance(audioMessageObject.currentAccount).loadFile(audioMessageObject.getDocument(), audioMessageObject, FileLoader.PRIORITY_LOW, 0);
             }
+        } else if (roundVideoMo != null) {
+            hideCarousel();
+            hideAudio();
+
+            roundVideoMessageObject = roundVideoMo;
+            roundVideoContainer.setVisibility(VISIBLE);
+
+            TLRPC.Document document = roundVideoMo.getDocument();
+            if (document != null) {
+                // Статичное превью кружка (Сборка 1 — без автовоспроизведения):
+                // тот же путь получения thumb'а, что и у обычного видео в
+                // карусели (см. onBindViewHolder карусели, closest photo size +
+                // strippedThumb как мгновенный заполнитель), просто на своём
+                // отдельном BackupImageView вместо элемента RecyclerView.
+                TLRPC.PhotoSize thumb = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, AndroidUtilities.getPhotoSize());
+                BitmapDrawable strippedThumb = roundVideoMo.strippedThumb;
+                roundVideoImage.setImage(
+                        ImageLocation.getForDocument(thumb, document), null,
+                        (ImageLocation) null, (String) null,
+                        strippedThumb, (String) null, 0, 0, roundVideoMo);
+
+                long durationSeconds = 0;
+                for (TLRPC.DocumentAttribute attr : document.attributes) {
+                    if (attr instanceof TLRPC.TL_documentAttributeVideo) {
+                        durationSeconds = (long) attr.duration;
+                        break;
+                    }
+                }
+                roundVideoDurationView.setText(AndroidUtilities.formatShortDuration((int) durationSeconds));
+            }
         } else if (!mediaMessages.isEmpty()) {
             hideAudio();
+            hideRoundVideo();
 
             // Вычисляем высоту по первому медиа
             MessageObject firstMedia = mediaMessages.get(0);
@@ -1068,6 +1165,7 @@ public class PotokFeedPostCell extends LinearLayout {
         } else {
             hideCarousel();
             hideAudio();
+            hideRoundVideo();
         }
 
         // --- Файлы (медиа, отправленное в канале КАК ФАЙЛ) ---
@@ -1204,6 +1302,17 @@ public class PotokFeedPostCell extends LinearLayout {
     private void hideCarousel() {
         carouselView.setVisibility(GONE);
         dotsIndicator.setVisibility(GONE);
+    }
+
+    /**
+     * Единая точка скрытия блока видеокружка — по аналогии с hideAudio()/
+     * hideCarousel() выше, вызывается во всех ветках setPost(), где сейчас
+     * нет поста-кружка.
+     */
+    private void hideRoundVideo() {
+        roundVideoContainer.setVisibility(GONE);
+        roundVideoMessageObject = null;
+        roundVideoImage.getImageReceiver().setImageBitmap((Drawable) null);
     }
 
     /**

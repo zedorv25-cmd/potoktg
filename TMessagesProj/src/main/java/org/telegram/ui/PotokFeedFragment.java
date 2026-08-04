@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -45,6 +46,7 @@ import com.google.android.exoplayer2.ui.AspectRatioFrameLayout;
 
 import org.telegram.ui.Components.BlurredFrameLayout;
 import org.telegram.ui.Components.FragmentContextView;
+import org.telegram.ui.Components.RoundVideoPlayingDrawable;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
 
@@ -154,6 +156,27 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     // нужен, чтобы решить PIP-или-пауза уже ПОСЛЕ того, как ячейка ушла с экрана
     // и её больше нельзя спросить напрямую (её не найти среди видимых детей).
     private boolean roundVideoOpenedCached;
+    // Ячейка, поверх которой СЕЙЧАС стоит плавающий контейнер — единственный
+    // источник правды о том, куда слать тап/перемотку и что открывать/закрывать.
+    // Обновляется на каждый updateRoundVideoTexturePosition().
+    private PotokFeedPostCell roundVideoActiveCell;
+    // Кэш последнего известного сообщения/прогресса играющего кружка — нужен
+    // ТОЛЬКО для надёжной детекции "доиграл естественно до конца" на
+    // messagePlayingDidReset (см. didReceivedNotification) — messagePlayingDidReset
+    // не несёт сам объект сообщения, только id.
+    private MessageObject roundVideoLastKnownObject;
+    private float roundVideoLastKnownProgress;
+    // Живая "хрома" поверх видео — кольцо-прогресс с точкой-ручкой, плашка
+    // прошло/всего, бегущий эквалайзер. Раньше это дублировалось В КАЖДОЙ
+    // ячейке ПОД плавающим контейнером — из-за чего было видно кольцо максимум
+    // на ~10% (видео сверху перекрывало) и тапы долетали через раз в
+    // зависимости от точного совпадения границ. Теперь единственная копия,
+    // нарисованная прямо здесь, поверх TextureView — то, что физически видно,
+    // то и интерактивно, без рассинхрона.
+    private RoundVideoRingView roundVideoRingView;
+    private TextView roundVideoDurationView;
+    private View roundVideoEqualizerView;
+    private RoundVideoPlayingDrawable roundVideoPlayingDrawable;
     // Боковой отступ "острова" мини-плеера — 4dp с каждой стороны, ровно как в
     // DialogsActivityTopPanelLayout (реальный код Telegram для этого же бара).
     private static final int MINI_PLAYER_SIDE_MARGIN_DP = 4;
@@ -1330,9 +1353,20 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 View child = listView.getChildAt(a);
                 if (child instanceof PotokFeedPostCell) {
                     ((PotokFeedPostCell) child).updateAudioProgressIfPlaying(mid);
-                    ((PotokFeedPostCell) child).updateRoundVideoProgressIfPlaying(mid);
                 }
             }
+            // Кэшируем последний известный прогресс играющего видеокружка — нужно
+            // ТОЛЬКО для детекции "доиграл естественно до конца" на
+            // messagePlayingDidReset ниже (см. подробный комментарий там). Живая
+            // отрисовка кольца/текста в плавающем контейнере обновляется отдельно,
+            // в самом ring-view через invalidate() по таймеру, см. createRoundVideoTextureView.
+            MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
+            if (playing != null && playing.isRoundVideo() && playing.getId() == mid) {
+                roundVideoLastKnownObject = playing;
+                roundVideoLastKnownProgress = playing.audioProgress;
+            }
+            if (roundVideoRingView != null) roundVideoRingView.invalidate();
+            if (roundVideoDurationView != null) updateRoundVideoChromeTexts();
         } else if (id == NotificationCenter.didSetNewTheme) {
             updateWallpaper();
         } else if (id == NotificationCenter.didUpdatePollResults) {
@@ -1350,24 +1384,50 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                     ((PotokFeedPostCell) child).updatePollIfMatching(pollId, poll, results);
                 }
             }
-        } else if (id == NotificationCenter.messagePlayingDidStart || id == NotificationCenter.messagePlayingPlayStateChanged || id == NotificationCenter.messagePlayingDidReset) {
+        } else if (id == NotificationCenter.messagePlayingDidReset) {
+            // ⚠️ Единственное место, где решаем "видеокружок доиграл ЕСТЕСТВЕННО
+            // до конца" (а не просто пользователь переключился на что-то другое
+            // или свернул приложение) — раньше это пытались ловить по потоку
+            // messagePlayingProgressDidChanged (progress>=0.999), но это гонка:
+            // после перезапуска playMessage(mo,true) следующий же progress-тик
+            // мог снова оказаться близко к 1.0 ДО того, как реально обнулился,
+            // и цикл перезапускался раз за разом без остановки (баг "полоса идёт
+            // заново без остановки", который явно описал пользователь).
+            // messagePlayingDidReset — одноразовое дискретное событие на сессию
+            // воспроизведения, гонки внутри одного события быть не может.
+            int resetMid = args.length > 0 && args[0] instanceof Integer ? (Integer) args[0] : 0;
+            boolean wasNaturalRoundVideoFinish = roundVideoLastKnownObject != null
+                    && roundVideoLastKnownObject.getId() == resetMid
+                    && roundVideoLastKnownProgress >= 0.98f
+                    && roundVideoActiveCell != null
+                    && roundVideoActiveCell.isRoundVideoOpened();
+            if (wasNaturalRoundVideoFinish) {
+                MessageObject finished = roundVideoLastKnownObject;
+                roundVideoActiveCell.setRoundVideoOpenVisual(false, true);
+                roundVideoActiveCell.setRoundVideoAutoplayTried(true);
+                MediaController.getInstance().playMessage(finished, true);
+            }
+            roundVideoLastKnownObject = null;
+            roundVideoLastKnownProgress = 0f;
+            updateRoundVideoTexturePosition();
+        } else if (id == NotificationCenter.messagePlayingDidStart || id == NotificationCenter.messagePlayingPlayStateChanged) {
             // В отличие от messagePlayingProgressDidChanged (шлётся только для
-            // конкретного messageId) — эти три события общие для ЛЮБОЙ смены трека,
+            // конкретного messageId) — это событие общее для ЛЮБОЙ смены трека,
             // поэтому обходим ВСЕ видимые ячейки (не только совпадающую) — иначе
             // кнопка play/pause внутри поста, который играл раньше, осталась бы
             // показывать устаревшее состояние. Сам мини-плеер (fragmentContextView)
-            // обновляет себя сам — он подписан на эти же три события напрямую.
+            // обновляет себя сам — он подписан на эти же события напрямую.
             if (listView != null) {
                 int count = listView.getChildCount();
                 for (int a = 0; a < count; a++) {
                     View child = listView.getChildAt(a);
                     if (child instanceof PotokFeedPostCell) {
                         ((PotokFeedPostCell) child).refreshAudioPlaybackState();
-                        ((PotokFeedPostCell) child).refreshRoundVideoPlaybackState();
                     }
                 }
             }
             updateRoundVideoTexturePosition();
+            updateRoundVideoChromeTexts();
         }
     }
 
@@ -1398,6 +1458,203 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         roundVideoTextureView.setOpaque(false);
         roundVideoAspectRatioFrameLayout.addView(roundVideoTextureView,
                 LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        // ⚠️ Вся живая "хрома" — кольцо/ручка/плашка/эквалайзер — добавлена
+        // ПОСЛЕ TextureView, то есть рисуется поверх реального видео (FrameLayout
+        // рисует детей в порядке добавления). Единственная копия, физически
+        // видимая = единственная копия, за которую отвечает тач-обработчик ниже.
+        roundVideoRingView = new RoundVideoRingView(context);
+        roundVideoPlayerContainer.addView(roundVideoRingView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        roundVideoPlayingDrawable = new RoundVideoPlayingDrawable(roundVideoPlayerContainer, null);
+
+        roundVideoDurationView = new TextView(context);
+        roundVideoDurationView.setTextColor(Color.WHITE);
+        roundVideoDurationView.setTextSize(12);
+        roundVideoDurationView.setTypeface(org.telegram.messenger.AndroidUtilities.bold());
+        roundVideoDurationView.setBackground(Theme.createRoundRectDrawable(org.telegram.messenger.AndroidUtilities.dp(10), 0x66000000));
+        roundVideoDurationView.setPadding(org.telegram.messenger.AndroidUtilities.dp(6), org.telegram.messenger.AndroidUtilities.dp(2),
+                org.telegram.messenger.AndroidUtilities.dp(6), org.telegram.messenger.AndroidUtilities.dp(2));
+        roundVideoDurationView.setVisibility(View.GONE);
+        roundVideoPlayerContainer.addView(roundVideoDurationView,
+                LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 8, 8));
+
+        roundVideoEqualizerView = new View(context) {
+            @Override
+            protected void onDraw(Canvas canvas) {
+                if (roundVideoPlayingDrawable == null) return;
+                roundVideoPlayingDrawable.setBounds(0, 0, getWidth(), getHeight());
+                roundVideoPlayingDrawable.draw(canvas);
+            }
+        };
+        roundVideoEqualizerView.setWillNotDraw(false);
+        roundVideoEqualizerView.setVisibility(View.GONE);
+        roundVideoPlayerContainer.addView(roundVideoEqualizerView,
+                LayoutHelper.createFrame(14, 14, Gravity.BOTTOM | Gravity.LEFT, 8, 0, 0, 8));
+
+        // Тап — play/pause (или "открыть", если кружок ещё не был открыт — тап на
+        // МАЛЕНЬКОМ беззвучном автоплее переводит в большое состояние со звуком).
+        // Перемотка — только когда открыт И на паузе, в кольцевой зоне у края.
+        // 1:1 с checkRoundSeekbar из ChatMessageCell, но теперь на ЕДИНСТВЕННОМ
+        // физически видимом слое, а не под видео.
+        roundVideoPlayerContainer.setOnTouchListener(new View.OnTouchListener() {
+            private boolean dragging;
+            private long lastSeekUpdateTime;
+            private float downX, downY;
+
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                if (roundVideoActiveCell == null) return false;
+                MessageObject mo = MediaController.getInstance().getPlayingMessageObject();
+                if (mo == null || !mo.isRoundVideo()) return false;
+                float cx = v.getWidth() / 2f;
+                float cy = v.getHeight() / 2f;
+                float dx = event.getX() - cx;
+                float dy = event.getY() - cy;
+                float dist = (float) Math.sqrt(dx * dx + dy * dy);
+                boolean insideSeekRing = dist >= (v.getWidth() / 2f - org.telegram.messenger.AndroidUtilities.dp(28));
+                boolean paused = roundVideoActiveCell.isRoundVideoOpened()
+                        && MediaController.getInstance().isPlayingMessage(mo)
+                        && MediaController.getInstance().isMessagePaused();
+
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downX = event.getX();
+                        downY = event.getY();
+                        dragging = paused && insideSeekRing;
+                        if (dragging && v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
+                        return true; // сами решаем на UP — тап это или нет
+                    case MotionEvent.ACTION_MOVE:
+                        if (!dragging) return true;
+                        double angleDeg = Math.toDegrees(Math.atan2(dy, dx)) + 90;
+                        if (angleDeg < 0) angleDeg += 360;
+                        float progress = (float) (angleDeg / 360.0);
+                        long now = System.currentTimeMillis();
+                        if (now - lastSeekUpdateTime > 100) {
+                            lastSeekUpdateTime = now;
+                            mo.audioProgress = progress;
+                            MediaController.getInstance().seekToProgress(mo, progress);
+                            roundVideoRingView.invalidate();
+                            updateRoundVideoChromeTexts();
+                        }
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        boolean wasDragging = dragging;
+                        dragging = false;
+                        if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(false);
+                        if (event.getActionMasked() != MotionEvent.ACTION_UP) return true;
+                        if (wasDragging) {
+                            // Отпустили после перемотки — воспроизведение продолжается
+                            // с новой позиции, 1:1 с оригиналом.
+                            MediaController.getInstance().playMessage(mo);
+                            return true;
+                        }
+                        float upDist = (float) Math.hypot(event.getX() - downX, event.getY() - downY);
+                        if (upDist > org.telegram.messenger.AndroidUtilities.dp(8)) return true; // это был свайп/скролл, не тап
+                        // Обычный тап — play/pause, либо "открыть" в первый раз.
+                        roundVideoActiveCell.performHapticFeedback(
+                                android.view.HapticFeedbackConstants.KEYBOARD_TAP, android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
+                        if (!roundVideoActiveCell.isRoundVideoOpened()) {
+                            roundVideoActiveCell.setRoundVideoOpenVisual(true, true);
+                            MediaController.getInstance().playMessage(mo, false);
+                        } else if (MediaController.getInstance().isPlayingMessage(mo) && !MediaController.getInstance().isMessagePaused()) {
+                            MediaController.getInstance().pauseMessage(mo);
+                        } else {
+                            MediaController.getInstance().playMessage(mo, false);
+                        }
+                        updateRoundVideoChromeTexts();
+                        return true;
+                }
+                return false;
+            }
+        });
+    }
+
+    /**
+     * Обновляет живую плашку "прошло/всего" и видимость кольца/ручки/эквалайзера —
+     * ВСЁ это только пока кружок ОТКРЫТ (в маленьком беззвучном автоплее — чисто
+     * видео без элементов управления поверх, как обычный автоплей в любой ленте).
+     */
+    private void updateRoundVideoChromeTexts() {
+        if (roundVideoDurationView == null) return;
+        MessageObject mo = MediaController.getInstance().getPlayingMessageObject();
+        boolean opened = roundVideoActiveCell != null && roundVideoActiveCell.isRoundVideoOpened();
+        if (mo == null || !mo.isRoundVideo() || !opened) {
+            roundVideoDurationView.setVisibility(View.GONE);
+            roundVideoEqualizerView.setVisibility(View.GONE);
+            if (roundVideoPlayingDrawable != null) roundVideoPlayingDrawable.stop();
+            return;
+        }
+        roundVideoDurationView.setVisibility(View.VISIBLE);
+        boolean playing = MediaController.getInstance().isPlayingMessage(mo) && !MediaController.getInstance().isMessagePaused();
+        int totalSec = 0;
+        TLRPC.Document document = mo.getDocument();
+        if (document != null) {
+            for (TLRPC.DocumentAttribute attr : document.attributes) {
+                if (attr instanceof TLRPC.TL_documentAttributeVideo) {
+                    totalSec = (int) attr.duration;
+                    break;
+                }
+            }
+        }
+        if (playing) {
+            roundVideoDurationView.setText(org.telegram.messenger.AndroidUtilities.formatShortDuration(mo.audioProgressSec, totalSec));
+        } else {
+            roundVideoDurationView.setText(org.telegram.messenger.AndroidUtilities.formatShortDuration(totalSec));
+        }
+        boolean isPlayingNow = MediaController.getInstance().isPlayingMessage(mo);
+        roundVideoEqualizerView.setVisibility(isPlayingNow ? View.VISIBLE : View.GONE);
+        if (playing) {
+            roundVideoPlayingDrawable.start();
+        } else {
+            roundVideoPlayingDrawable.stop();
+        }
+        roundVideoEqualizerView.invalidate();
+    }
+
+    /**
+     * Кольцо-прогресс воспроизведения по контуру круга + отдельная жирная
+     * точка-ручка на текущей позиции (видна только на паузе — подсказка "здесь
+     * можно перемотать пальцем", см. скриншот из реального канала в этой сессии).
+     * 1:1 с математикой дуги из ChatMessageCell (canvas.drawArc(rect, -90,
+     * 360 * audioProgress, ...)). Видно ТОЛЬКО когда кружок открыт.
+     */
+    private class RoundVideoRingView extends View {
+        private final RectF ringRect = new RectF();
+        private final Paint ringPaint;
+        private final Paint handlePaint;
+
+        RoundVideoRingView(Context context) {
+            super(context);
+            ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            ringPaint.setStyle(Paint.Style.STROKE);
+            ringPaint.setStrokeWidth(org.telegram.messenger.AndroidUtilities.dp(2));
+            ringPaint.setStrokeCap(Paint.Cap.ROUND);
+            ringPaint.setColor(Color.WHITE);
+            handlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            handlePaint.setStyle(Paint.Style.FILL);
+            handlePaint.setColor(Color.WHITE);
+            setWillNotDraw(false);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            if (roundVideoActiveCell == null || !roundVideoActiveCell.isRoundVideoOpened()) return;
+            MessageObject mo = MediaController.getInstance().getPlayingMessageObject();
+            if (mo == null || !mo.isRoundVideo() || !MediaController.getInstance().isPlayingMessage(mo)) return;
+            float inset = ringPaint.getStrokeWidth() / 2f + org.telegram.messenger.AndroidUtilities.dp(1);
+            ringRect.set(inset, inset, getWidth() - inset, getHeight() - inset);
+            float sweep = 360 * mo.audioProgress;
+            canvas.drawArc(ringRect, -90, sweep, false, ringPaint);
+            if (MediaController.getInstance().isMessagePaused()) {
+                double angleRad = Math.toRadians(sweep - 90);
+                float radius = ringRect.width() / 2f;
+                float handleX = ringRect.centerX() + radius * (float) Math.cos(angleRad);
+                float handleY = ringRect.centerY() + radius * (float) Math.sin(angleRad);
+                canvas.drawCircle(handleX, handleY, org.telegram.messenger.AndroidUtilities.dp(4), handlePaint);
+            }
+        }
     }
 
     /**
@@ -1439,6 +1696,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             // его под текущий видимый масштаб ячейки (маленькое/большое
             // состояние), тем же pivot(0,0), что и у самой ячейки, иначе видео
             // будет вылезать за пределы маленького круга.
+            roundVideoActiveCell = foundCell;
             roundVideoOpenedCached = foundCell.isRoundVideoOpened();
             float scale = foundCell.getRoundVideoVisualScale();
             roundVideoPlayerContainer.setPivotX(0);
@@ -1461,7 +1719,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 // найдена" ниже) — возобновляем беззвучно, без нового bind().
                 MediaController.getInstance().playMessage(playing, true);
             }
+            if (roundVideoRingView != null) roundVideoRingView.invalidate();
+            updateRoundVideoChromeTexts();
         } else {
+            roundVideoActiveCell = null;
             roundVideoPlayerContainer.setVisibility(View.GONE);
             if (roundVideoOpenedCached) {
                 // Кружок был ОТКРЫТ пользователем (со звуком) и ушёл с экрана —

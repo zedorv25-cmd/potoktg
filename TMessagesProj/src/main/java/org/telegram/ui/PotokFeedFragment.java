@@ -150,6 +150,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     // нужно, чтобы не дёргать setTextureView повторно на каждый чих (скролл),
     // а только при реальной смене играющего видеокружка.
     private int roundVideoTextureRegisteredForMessageId;
+    // Кэш "было ли открыто" на момент, когда ячейка последний раз была видима —
+    // нужен, чтобы решить PIP-или-пауза уже ПОСЛЕ того, как ячейка ушла с экрана
+    // и её больше нельзя спросить напрямую (её не найти среди видимых детей).
+    private boolean roundVideoOpenedCached;
     // Боковой отступ "острова" мини-плеера — 4dp с каждой стороны, ровно как в
     // DialogsActivityTopPanelLayout (реальный код Telegram для этого же бара).
     private static final int MINI_PLAYER_SIDE_MARGIN_DP = 4;
@@ -1431,6 +1435,17 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         }
 
         if (foundCell != null) {
+            // Плавающий контейнер зарезервирован под БОЛЬШОЙ размер — подгоняем
+            // его под текущий видимый масштаб ячейки (маленькое/большое
+            // состояние), тем же pivot(0,0), что и у самой ячейки, иначе видео
+            // будет вылезать за пределы маленького круга.
+            roundVideoOpenedCached = foundCell.isRoundVideoOpened();
+            float scale = foundCell.getRoundVideoVisualScale();
+            roundVideoPlayerContainer.setPivotX(0);
+            roundVideoPlayerContainer.setPivotY(0);
+            roundVideoPlayerContainer.setScaleX(scale);
+            roundVideoPlayerContainer.setScaleY(scale);
+
             View roundImage = foundCell.getRoundVideoImageView();
             int[] loc = new int[2];
             roundImage.getLocationOnScreen(loc);
@@ -1440,9 +1455,29 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             roundVideoPlayerContainer.setTranslationY(loc[1] - rootLoc[1]);
             roundVideoPlayerContainer.setVisibility(View.VISIBLE);
             MediaController.getInstance().setCurrentVideoVisible(true);
+            if (!roundVideoOpenedCached && MediaController.getInstance().isMessagePaused()) {
+                // Маленький беззвучный автоплей вернулся в кадр после того, как
+                // был поставлен на паузу при уходе с экрана (см. ветку "не
+                // найдена" ниже) — возобновляем беззвучно, без нового bind().
+                MediaController.getInstance().playMessage(playing, true);
+            }
         } else {
             roundVideoPlayerContainer.setVisibility(View.GONE);
-            MediaController.getInstance().setCurrentVideoVisible(false);
+            if (roundVideoOpenedCached) {
+                // Кружок был ОТКРЫТ пользователем (со звуком) и ушёл с экрана —
+                // не прерываем, включаем PIP. См. обсуждение этой сессии:
+                // PIP только для осознанно открытого просмотра, не для фонового
+                // беззвучного автоплея.
+                MediaController.getInstance().setCurrentVideoVisible(false);
+            } else {
+                // Маленький беззвучный автоплей ушёл с экрана — просто ставим на
+                // паузу, как обычный автоплей видео в любой ленте; возобновится
+                // сам, когда снова попадёт в кадр (см. bind() в PotokFeedPostCell —
+                // автоплей стартует заново при следующем реальном показе, если
+                // ViewHolder переиспользуется под тот же пост, либо сработает
+                // автоплей-ветка при повторном bind).
+                MediaController.getInstance().pauseMessage(playing);
+            }
         }
     }
 

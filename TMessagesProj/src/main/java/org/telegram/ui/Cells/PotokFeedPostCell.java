@@ -658,16 +658,45 @@ public class PotokFeedPostCell extends LinearLayout {
         // либо тапы долетают через раз в зависимости от точного совпадения
         // границ (отсюда "3-4 раза, чтобы сработало"). Один физически видимый
         // слой = одно место, откуда им можно управлять, без рассинхрона.
+        // ⚠️ БАГ "обрезан правый край": AndroidUtilities.roundPlayingMessageSize()
+        // расчитан как min(displaySize.x, displaySize.y) - dp(28) — это рассчитано
+        // для оригинального ChatActivity, где плавающий видео-контейнер лежит
+        // ПРЯМО на полноэкранном chatListView, без доп. отступов. У нас же кружок
+        // сидит внутри LinearLayout-поста, у которого СВОИ горизонтальные отступы
+        // (те же 8dp+8dp margin у самого roundVideoContainer, плюс отступы самого
+        // поста как карточки — см. refWidthPx = displaySize.x - dp(16) у карусели
+        // чуть ниже по файлу, тот же паттерн). Итого не хватало ровно ~4dp по
+        // ширине — отсюда лёгкий обрез правого края круга. Ограничиваем сверху
+        // реально доступной шириной колонки поста.
+        int roundVideoMaxByColumn = AndroidUtilities.displaySize.x - dp(16) /* отступы поста */ - dp(16) /* margin контейнера 8+8 */;
+        roundVideoBigSize = AndroidUtilities.roundPlayingMessageSize(false) > 0
+                ? Math.min(AndroidUtilities.roundPlayingMessageSize(false), roundVideoMaxByColumn) : dp(280);
+        roundVideoSmallSize = AndroidUtilities.roundMessageSize > 0
+                ? AndroidUtilities.roundMessageSize : dp(200); // фоллбэк на случай вызова до первого измерения экрана
+
         roundVideoContainer = new FrameLayout(context);
         roundVideoContainer.setVisibility(GONE);
         roundVideoContainer.setPivotX(0);
         roundVideoContainer.setPivotY(0);
-        addView(roundVideoContainer, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.START, 8, 10, 8, 0));
-
-        roundVideoBigSize = AndroidUtilities.roundPlayingMessageSize(false) > 0
-                ? AndroidUtilities.roundPlayingMessageSize(false) : dp(280);
-        roundVideoSmallSize = AndroidUtilities.roundMessageSize > 0
-                ? AndroidUtilities.roundMessageSize : dp(200); // фоллбэк на случай вызова до первого измерения экрана
+        // ⚠️ НЕ WRAP_CONTENT: WRAP_CONTENT меряется по фактическим LayoutParams
+        // детей (roundVideoImage/roundVideoDownloadButton), которые ВСЕГДА
+        // roundVideoBigSize x roundVideoBigSize (см. ниже, это нужно для чёткой
+        // картинки при scaleX/Y-анимации роста). Transform (scaleX/Y) НЕ влияет
+        // на measure/layout — поэтому пост в LinearLayout всегда резервировал
+        // полный БОЛЬШОЙ размер места, даже когда кружок визуально маленький
+        // (баг: огромные пустые места справа И снизу вместо адаптивного поста).
+        // Стартуем сразу с реального маленького размера — applyRoundVideoScale()
+        // меняет эти LayoutParams на текущий (маленький/большой) размер по факту,
+        // а не просто scale-транформит фиксированный большой контейнер.
+        // ⚠️ roundVideoSmallSize/roundVideoBigSize уже в ПИКСЕЛЯХ (через dp() выше),
+        // поэтому LayoutParams собираем напрямую, а не через LayoutHelper.createLinear
+        // (тот сам конвертирует int-параметры из dp в px — двойная конвертация).
+        LinearLayout.LayoutParams roundVideoContainerLp = new LinearLayout.LayoutParams(roundVideoSmallSize, roundVideoSmallSize);
+        roundVideoContainerLp.gravity = Gravity.START;
+        roundVideoContainerLp.leftMargin = dp(8);
+        roundVideoContainerLp.topMargin = dp(10);
+        roundVideoContainerLp.rightMargin = dp(8);
+        addView(roundVideoContainer, roundVideoContainerLp);
 
         roundVideoImage = new BackupImageView(context);
         roundVideoImage.getImageReceiver().setRoundRadius(roundVideoBigSize / 2);
@@ -700,10 +729,13 @@ public class PotokFeedPostCell extends LinearLayout {
         // же плашки внутри плавающего видео-слоя фрагмента — прошло/всего).
         roundVideoDurationView = new TextView(context);
         roundVideoDurationView.setTextColor(Color.WHITE);
-        roundVideoDurationView.setTextSize(12);
+        // ⚠️ ФИКС "плашка длительности как лилипут": было 12, у оригинала
+        // (animatedInfoLayout в ChatMessageCell, тот же тип бейджа для видео/гиф)
+        // — 13, плюс более щедрый паддинг, чтобы бейдж не терялся на большом круге.
+        roundVideoDurationView.setTextSize(13);
         roundVideoDurationView.setTypeface(AndroidUtilities.bold());
         roundVideoDurationView.setBackground(Theme.createRoundRectDrawable(dp(10), 0x66000000));
-        roundVideoDurationView.setPadding(dp(6), dp(2), dp(6), dp(2));
+        roundVideoDurationView.setPadding(dp(8), dp(3), dp(8), dp(3));
         FrameLayout.LayoutParams durationLp = LayoutHelper.createFrame(
                 LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 8, 8);
         roundVideoContainer.addView(roundVideoDurationView, durationLp);
@@ -1196,10 +1228,6 @@ public class PotokFeedPostCell extends LinearLayout {
             if (document != null) {
                 TLRPC.PhotoSize thumb = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, AndroidUtilities.getPhotoSize());
                 BitmapDrawable strippedThumb = roundVideoMo.strippedThumb;
-                roundVideoImage.setImage(
-                        ImageLocation.getForDocument(thumb, document), null,
-                        (ImageLocation) null, (String) null,
-                        strippedThumb, (String) null, 0, 0, roundVideoMo);
 
                 roundVideoDurationSeconds = 0;
                 for (TLRPC.DocumentAttribute attr : document.attributes) {
@@ -1209,19 +1237,51 @@ public class PotokFeedPostCell extends LinearLayout {
                     }
                 }
 
+                // ⚠️ АРХИТЕКТУРНЫЙ ФИКС (эта сессия): маленький ЗАКРЫТЫЙ кружок
+                // (пункт C ТЗ) больше НЕ идёт через MediaController.playMessage().
+                // Причина, найденная чтением оригинала: FragmentContextView (верхняя
+                // системная полоса плеера) скрывает себя только когда
+                // messageObject.isVideo() — а round-видео сознательно НЕ isVideo()
+                // (isRoundVideo() — отдельная категория), значит вызов playMessage()
+                // для кружка ВСЕГДА поднимает верхнюю полосу, даже с silent=true.
+                // Именно поэтому был рассинхрон: звук/полоса то появлялись, то нет,
+                // а само кольцо/эквалайзер (которые завязаны на "открыт") не рисовались.
+                // В оригинале беззвучный зацикленный автоплей видео/гиф в принципе
+                // НЕ ходит через MediaController — он идёт через
+                // ImageReceiver/AnimatedFileDrawable (setImage с AUTOPLAY_FILTER +
+                // startAnimation()) — тот же самый путь, что уже работает для
+                // видео/гиф в карусели этого же файла (см. AUTOPLAY_FILTER чуть ниже
+                // по файлу). MediaController.playMessage() теперь вызывается ТОЛЬКО
+                // при реальном тапе — openRoundVideo()/фрагментом — то есть только
+                // для настоящего "громкого" состояния (D/E), как и задумано в ТЗ.
+                if (!roundVideoOpened) {
+                    if (roundVideoMo.mediaExists) {
+                        java.io.File roundCacheFile = FileLoader.getInstance(UserConfig.selectedAccount).getPathToAttach(document, false);
+                        if (roundCacheFile != null && roundCacheFile.exists()) {
+                            // Тот же фикс "двойного скачивания" (разные папки кэша для
+                            // докачки кнопкой и для автоплей-декодера), что уже
+                            // применяется к видео в карусели этого же файла.
+                            warmAutoplayCacheFromRealFile(document, roundCacheFile);
+                        }
+                        roundVideoImage.getImageReceiver().setImage(
+                                ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER,
+                                ImageLocation.getForDocument(thumb, document), (String) null,
+                                strippedThumb, document.size, (String) null, roundVideoMo, 0);
+                        roundVideoImage.getImageReceiver().setAllowStartAnimation(true);
+                        roundVideoImage.getImageReceiver().startAnimation();
+                    } else {
+                        // Не скачан — просто статичный превью-кадр, как в оригинале.
+                        roundVideoImage.setImage(
+                                ImageLocation.getForDocument(thumb, document), null,
+                                (ImageLocation) null, (String) null,
+                                strippedThumb, (String) null, 0, 0, roundVideoMo);
+                    }
+                }
+
                 roundVideoDownloadButton.bind(document, roundVideoMo, UserConfig.selectedAccount);
             }
 
             updateRoundVideoDurationText();
-
-            // Беззвучный автоплей — только если файл уже реально закэширован
-            // (mediaExists) и кружок ещё не открыт по тапу (открытый кружок сам
-            // управляет своим состоянием через playMessage(mo,false)).
-            if (!roundVideoAutoplayTried && !roundVideoOpened && roundVideoMo.mediaExists
-                    && !MediaController.getInstance().isPlayingMessage(roundVideoMo)) {
-                roundVideoAutoplayTried = true;
-                MediaController.getInstance().playMessage(roundVideoMo, true);
-            }
         } else if (!mediaMessages.isEmpty()) {
             hideAudio();
             hideRoundVideo();
@@ -1437,16 +1497,51 @@ public class PotokFeedPostCell extends LinearLayout {
     private void applyRoundVideoScale(boolean small, boolean animated) {
         float target = small ? (roundVideoSmallSize / (float) roundVideoBigSize) : 1f;
         roundVideoContainer.animate().cancel();
+        // ⚠️ Адаптивный размер поста (фикс "огромные пустые места справа и
+        // снизу"): реальные LayoutParams контейнера (то, что резервирует место
+        // в LinearLayout-посте) должны соответствовать ТЕКУЩЕМУ логическому
+        // состоянию, а не быть всегда большими. scaleX/Y — только для плавной
+        // 250мс анимации роста/сжатия картинки, отдельно от layout.
+        // Хореография: при ОТКРЫТИИ место под большой размер резервируем СРАЗУ
+        // (до начала анимации роста) — пост мгновенно освобождает место, и круг
+        // плавно растёт уже внутри него. При ЗАКРЫТИИ — наоборот: место остаётся
+        // большим, пока круг плавно сжимается, и уменьшается ТОЛЬКО в конце
+        // анимации — иначе контент под постом дёрнется раньше, чем круг уменьшится.
+        if (!small) {
+            setRoundVideoContainerLayoutSize(roundVideoBigSize);
+        }
         if (animated) {
             roundVideoContainer.animate()
                     .scaleX(target).scaleY(target)
                     .setDuration(250)
                     .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                    .withEndAction(() -> {
+                        if (small) {
+                            setRoundVideoContainerLayoutSize(roundVideoSmallSize);
+                        }
+                    })
                     .start();
         } else {
             roundVideoContainer.setScaleX(target);
             roundVideoContainer.setScaleY(target);
+            if (small) {
+                setRoundVideoContainerLayoutSize(roundVideoSmallSize);
+            }
         }
+    }
+
+    /**
+     * Меняет реальные (не transform) LayoutParams roundVideoContainer — то,
+     * что LinearLayout-пост реально резервирует под кружок. См. комментарий в
+     * applyRoundVideoScale().
+     */
+    private void setRoundVideoContainerLayoutSize(int size) {
+        ViewGroup.LayoutParams lp = roundVideoContainer.getLayoutParams();
+        if (lp == null) return;
+        if (lp.width == size && lp.height == size) return;
+        lp.width = size;
+        lp.height = size;
+        roundVideoContainer.setLayoutParams(lp);
     }
 
     /**
@@ -1475,6 +1570,21 @@ public class PotokFeedPostCell extends LinearLayout {
     public void setRoundVideoOpenVisual(boolean opened, boolean animated) {
         roundVideoOpened = opened;
         applyRoundVideoScale(!opened, animated);
+        if (opened) {
+            // Передаём управление "громкому" MediaController-плееру фрагмента —
+            // останавливаем свой беззвучный ImageReceiver-луп, чтобы не декодировать
+            // видео дважды одновременно (наш тихий луп + настоящий TextureView-плеер
+            // поверх). setAllowStartAnimation(false) — иначе ImageReceiver сам себя
+            // перезапустит на следующий invalidate/onAttached.
+            roundVideoImage.getImageReceiver().setAllowStartAnimation(false);
+            roundVideoImage.getImageReceiver().stopAnimation();
+        } else if (roundVideoMessageObject != null && roundVideoMessageObject.mediaExists) {
+            // Закрыли обратно (доиграл до конца/пользователь свернул) — возвращаемся
+            // в состояние C, беззвучный луп стартует заново сам, тем же путём, что
+            // и при обычном bind (см. setPost выше).
+            roundVideoImage.getImageReceiver().setAllowStartAnimation(true);
+            roundVideoImage.getImageReceiver().startAnimation();
+        }
     }
 
     /**
@@ -4736,7 +4846,11 @@ public class PotokFeedPostCell extends LinearLayout {
             radialProgress = new RadialProgress2(this);
             radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
                     Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
-            radialProgress.setCircleRadius(dp(20));
+            // ⚠️ ФИКС "кнопка загрузки как лилипут": dp(20) — фиксированный маленький
+            // радиус, не учитывающий что круг под ней ~roundVideoBigSize (~250-280dp).
+            // В оригинале (референс на канале) кнопка визуально заметная, а не крошечная
+            // точка в центре. Делаем радиус пропорциональным реальному размеру круга.
+            radialProgress.setCircleRadius(Math.max(dp(20), roundVideoBigSize / 8));
             setWillNotDraw(false);
         }
 

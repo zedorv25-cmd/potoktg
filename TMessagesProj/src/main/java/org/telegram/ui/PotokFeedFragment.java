@@ -1737,7 +1737,23 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 // автоплей стартует заново при следующем реальном показе, если
                 // ViewHolder переиспользуется под тот же пост, либо сработает
                 // автоплей-ветка при повторном bind).
-                MediaController.getInstance().pauseMessage(playing);
+                // ⚠️ КРИТИЧНО: MediaController.pauseMessage() шлёт
+                // messagePlayingPlayStateChanged БЕЗУСЛОВНО, даже если плеер уже
+                // на паузе (проверено чтением его кода). Это уведомление снова
+                // долетает в didReceivedNotification -> updateRoundVideoTexturePosition
+                // -> сюда же -> pauseMessage() -> уведомление -> ... — без этой
+                // проверки получается бесконечная синхронная рекурсия и
+                // StackOverflowError (реальный краш, пойманный на телефоне:
+                // видеокружок, только что опубликованный в канал, вызывает
+                // playMessage() прямо из onBindViewHolder ДО того, как ячейка
+                // становится видимым child'ом listView — foundCell==null,
+                // ветка "не найдено" срабатывает раньше, чем ячейка успевает
+                // встать на место, и без проверки isMessagePaused() уходит в
+                // цикл). Проверяем реальное состояние плеера, а не пытаемся
+                // угадать по локальным флагам.
+                if (!MediaController.getInstance().isMessagePaused()) {
+                    MediaController.getInstance().pauseMessage(playing);
+                }
             }
         }
     }

@@ -1402,10 +1402,16 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                     && roundVideoActiveCell != null
                     && roundVideoActiveCell.isRoundVideoOpened();
             if (wasNaturalRoundVideoFinish) {
-                MessageObject finished = roundVideoLastKnownObject;
+                // ⚠️ ФИКС (эта сессия): раньше здесь ПОВТОРНО звали
+                // MediaController.playMessage(finished, true) — то есть даже
+                // после архитектурного фикса автоплея закрытого кружка на
+                // ImageReceiver, именно в момент "доиграл до конца" старый баг
+                // возвращался бы обратно (снова поднимал верхнюю полосу плеера
+                // для беззвучного состояния). setRoundVideoOpenVisual(false, true)
+                // теперь САМ отвечает за возврат в состояние C — внутри него
+                // ImageReceiver.startAnimation() заново запускает беззвучный
+                // цикл, MediaController здесь больше не нужен вообще.
                 roundVideoActiveCell.setRoundVideoOpenVisual(false, true);
-                roundVideoActiveCell.setRoundVideoAutoplayTried(true);
-                MediaController.getInstance().playMessage(finished, true);
             }
             roundVideoLastKnownObject = null;
             roundVideoLastKnownProgress = 0f;
@@ -1529,13 +1535,22 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                         double angleDeg = Math.toDegrees(Math.atan2(dy, dx)) + 90;
                         if (angleDeg < 0) angleDeg += 360;
                         float progress = (float) (angleDeg / 360.0);
+                        // ⚠️ ФИКС "рубленые ступени при перемотке" (1:1 с оригиналом
+                        // checkRoundSeekbar в ChatMessageCell): визуальное обновление
+                        // (audioProgress + перерисовка кольца/текста) должно идти на
+                        // КАЖДЫЙ ACTION_MOVE, плавно вслед за пальцем. Троттлить
+                        // нужно ТОЛЬКО сам вызов seekToProgress() (реальная перемотка
+                        // в плеере, дорогая операция) — не отрисовку. Раньше и то, и
+                        // другое было внутри одного throttle-блока на 100мс, поэтому
+                        // палец двигался плавно, а кольцо/ручка визуально прыгали
+                        // скачками раз в 100мс.
+                        mo.audioProgress = progress;
+                        roundVideoRingView.invalidate();
+                        updateRoundVideoChromeTexts();
                         long now = System.currentTimeMillis();
                         if (now - lastSeekUpdateTime > 100) {
                             lastSeekUpdateTime = now;
-                            mo.audioProgress = progress;
                             MediaController.getInstance().seekToProgress(mo, progress);
-                            roundVideoRingView.invalidate();
-                            updateRoundVideoChromeTexts();
                         }
                         return true;
                     case MotionEvent.ACTION_UP:

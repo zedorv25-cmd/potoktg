@@ -557,8 +557,17 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         frameLayout.addView(scrollToTopButton, LayoutHelper.createFrame(48, 48, Gravity.BOTTOM | Gravity.RIGHT, 0, 0, 16, scrollButtonBottomMarginDp));
 
         createRoundVideoTextureView(context);
+        // ⚠️ ФИКС (эта сессия): раньше тут была СЫРАЯ AndroidUtilities.roundPlayingMessageSize(false)
+        // — та же формула, что была найдена неверной для PotokFeedPostCell.getCorrectedRoundVideoBigSize()
+        // (не учитывает отступы поста в ленте). Контейнер с РЕАЛЬНЫМ играющим видео
+        // жил по старой, большей формуле, а видимый круг под ним — по скорректированной,
+        // меньшей. Из-за этого кольцо-прогресс и зона перемотки (обе считаются от
+        // фактической ширины/высоты этого контейнера) не совпадали с видимым кругом:
+        // кольцо рисовалось у края НЕВИДИМОГО большего контейнера, а не у края видимого
+        // круга, и палец на перемотке промахивался мимо реальной зоны касания.
+        int correctedBigSize = org.telegram.ui.Cells.PotokFeedPostCell.getCorrectedRoundVideoBigSize();
         frameLayout.addView(roundVideoPlayerContainer, new FrameLayout.LayoutParams(
-                AndroidUtilities.roundPlayingMessageSize(false), AndroidUtilities.roundPlayingMessageSize(false)));
+                correctedBigSize, correctedBigSize));
         roundVideoPlayerContainer.setVisibility(View.GONE);
 
         listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
@@ -1658,16 +1667,27 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             if (roundVideoActiveCell == null || !roundVideoActiveCell.isRoundVideoOpened()) return;
             MessageObject mo = MediaController.getInstance().getPlayingMessageObject();
             if (mo == null || !mo.isRoundVideo() || !MediaController.getInstance().isPlayingMessage(mo)) return;
-            float inset = ringPaint.getStrokeWidth() / 2f + org.telegram.messenger.AndroidUtilities.dp(1);
+            boolean paused = MediaController.getInstance().isMessagePaused();
+            // ⚠️ ФИКС (эта сессия): раньше инсет был фиксированным (~1dp) вне
+            // зависимости от паузы — кольцо всегда лепилось прямо к краю круга.
+            // В оригинале (drawRoundProgress, ChatMessageCell) инсет динамический:
+            // ~1.5dp играя, и + до 16dp когда на паузе (место под "тень"-подложку
+            // и увеличенную ручку). 1:1 переносим саму логику (без анимации
+            // перехода — она нам не критична), пропорции — те же.
+            float baseInset = org.telegram.messenger.AndroidUtilities.dpf2(1.5f);
+            float pausedInset = paused ? org.telegram.messenger.AndroidUtilities.dp(16) : 0;
+            float inset = baseInset + pausedInset;
             ringRect.set(inset, inset, getWidth() - inset, getHeight() - inset);
             float sweep = 360 * mo.audioProgress;
             canvas.drawArc(ringRect, -90, sweep, false, ringPaint);
-            if (MediaController.getInstance().isMessagePaused()) {
+            if (paused) {
+                // ⚠️ ФИКС "точка-ручка как лилипут": в оригинале радиус ручки на
+                // паузе — dp(3) + dp(5) (без активного касания) = dp(8), а не dp(4).
                 double angleRad = Math.toRadians(sweep - 90);
                 float radius = ringRect.width() / 2f;
                 float handleX = ringRect.centerX() + radius * (float) Math.cos(angleRad);
                 float handleY = ringRect.centerY() + radius * (float) Math.sin(angleRad);
-                canvas.drawCircle(handleX, handleY, org.telegram.messenger.AndroidUtilities.dp(4), handlePaint);
+                canvas.drawCircle(handleX, handleY, org.telegram.messenger.AndroidUtilities.dp(8), handlePaint);
             }
         }
     }

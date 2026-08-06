@@ -739,10 +739,18 @@ public class PotokFeedPostCell extends LinearLayout {
             if (!roundVideoMessageObject.mediaExists) {
                 roundVideoDownloadButton.onClick();
             }
-            // Если файл уже скачан — тап сюда в норме не должен долетать вообще
-            // (сверху уже висит плавающий видео-слой фрагмента, см. выше), это
-            // просто защитный фоллбэк на самый первый кадр после скачивания,
-            // пока фрагмент ещё не успел переставить свой контейнер поверх.
+            // ⚠️ ФИКС (эта сессия): раньше это был "запасной" путь на случай если
+            // плавающий видео-слой фрагмента не успел встать поверх. По факту
+            // именно ЭТОТ путь и должен быть ОСНОВНЫМ и единственным для открытия
+            // закрытого кружка — 1:1 с оригиналом (ChatMessageCell.checkPhotoImageMotionEvent),
+            // где тап на круглое видео ловится САМОЙ ячейкой напрямую, круговой
+            // проверкой попадания, а не отдельным внешним слушателем, зависящим
+            // от синхронизации состояния. Обычный OnClickListener на реальном
+            // view внутри RecyclerView-итема доставляется Android'ом надёжно
+            // всегда — в отличие от плавающего оверлея, который бывает не
+            // синхронизирован/не видим в момент тапа (отсюда были 3-8 попыток).
+            // Оверлей во Fragment теперь НЕ перехватывает касание для закрытого
+            // состояния (см. его onTouch) — событие доходит именно сюда.
             else if (!roundVideoOpened) {
                 openRoundVideo();
             }
@@ -1639,7 +1647,8 @@ public class PotokFeedPostCell extends LinearLayout {
      * MediaController для кружка.
      */
     private void openRoundVideo() {
-        if (roundVideoMessageObject == null) return;
+        if (roundVideoMessageObject == null || roundVideoOpened) return;
+        performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP, android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
         setRoundVideoOpenVisual(true, true);
         MediaController.getInstance().playMessage(roundVideoMessageObject, false);
     }

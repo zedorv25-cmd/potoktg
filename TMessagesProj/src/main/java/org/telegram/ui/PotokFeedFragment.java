@@ -1520,17 +1520,32 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 if (roundVideoActiveCell == null) return false;
-                MessageObject mo = MediaController.getInstance().getPlayingMessageObject();
+                // ⚠️ ФИКС "тап открывает через раз": источник MessageObject — сама
+                // ячейка (живёт независимо от MediaController), а не
+                // MediaController.getPlayingMessageObject() (тот null для закрытого
+                // тихого автоплея через ImageReceiver — см. коммент у геттера).
+                MessageObject mo = roundVideoActiveCell.getRoundVideoMessageObject();
                 if (mo == null || !mo.isRoundVideo()) return false;
                 float cx = v.getWidth() / 2f;
                 float cy = v.getHeight() / 2f;
                 float dx = event.getX() - cx;
                 float dy = event.getY() - cy;
                 float dist = (float) Math.sqrt(dx * dx + dy * dy);
-                boolean insideSeekRing = dist >= (v.getWidth() / 2f - org.telegram.messenger.AndroidUtilities.dp(28));
                 boolean paused = roundVideoActiveCell.isRoundVideoOpened()
                         && MediaController.getInstance().isPlayingMessage(mo)
                         && MediaController.getInstance().isMessagePaused();
+                // ⚠️ ФИКС "шторка иногда перехватывает перемотку": зона касания
+                // раньше была фиксированной (28dp от края), а кольцо на паузе
+                // теперь визуально уходит внутрь на ~17.5dp (см. onDraw кольца —
+                // 1.5dp + 16dp при паузе). Палец на реальном кольце иногда
+                // промахивался мимо старой зоны касания → dragging=false →
+                // requestDisallowInterceptTouchEvent не вызывался → шторка
+                // перехватывала жест. Расширяем зону так, чтобы гарантированно
+                // накрывать фактическую (сдвинутую при паузе) позицию кольца.
+                float ringZoneWidth = paused
+                        ? org.telegram.messenger.AndroidUtilities.dp(28) + org.telegram.messenger.AndroidUtilities.dp(20)
+                        : org.telegram.messenger.AndroidUtilities.dp(28);
+                boolean insideSeekRing = dist >= (v.getWidth() / 2f - ringZoneWidth);
 
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
@@ -1732,6 +1747,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             // состояние), тем же pivot(0,0), что и у самой ячейки, иначе видео
             // будет вылезать за пределы маленького круга.
             roundVideoActiveCell = foundCell;
+            // ⚠️ ФИКС "два круга": пересинхронизируем позицию/размер оверлея на
+            // каждый кадр анимации роста/сжатия круга в ячейке, а не только по
+            // редким уведомлениям плеера — см. комментарий у поля в PostCell.
+            foundCell.setOnRoundVideoVisualScaleChanged(this::updateRoundVideoTexturePosition);
             roundVideoOpenedCached = foundCell.isRoundVideoOpened();
             float scale = foundCell.getRoundVideoVisualScale();
             roundVideoPlayerContainer.setPivotX(0);

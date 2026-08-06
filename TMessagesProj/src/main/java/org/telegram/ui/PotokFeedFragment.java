@@ -1526,6 +1526,20 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 // тихого автоплея через ImageReceiver — см. коммент у геттера).
                 MessageObject mo = roundVideoActiveCell.getRoundVideoMessageObject();
                 if (mo == null || !mo.isRoundVideo()) return false;
+                // ⚠️ ФИКС (эта сессия): раньше этот оверлей ловил ACTION_DOWN
+                // безусловно (return true), даже для ЗАКРЫТОГО кружка — то есть
+                // пытался сам решать "открыть или нет" на ACTION_UP. Проблема: этот
+                // оверлей не всегда синхронизирован/видим именно над той ячейкой,
+                // на которую реально смотрит и тапает пользователь (синхронизация
+                // идёт по редким событиям плеера/скролла, не по каждому кадру) —
+                // отсюда 3-8 попыток и случайные "перекидывания" в других местах.
+                // Теперь для ЗАКРЫТОГО состояния оверлей вообще не забирает
+                // касание — return false пропускает его дальше по стандартной
+                // Android-цепочке, и его надёжно ловит OnClickListener прямо на
+                // самой ячейке (roundVideoContainer в PostCell, см. openRoundVideo()) —
+                // как в оригинале, где тап на круглое видео ловится самой
+                // ChatMessageCell напрямую, а не внешним слушателем.
+                if (!roundVideoActiveCell.isRoundVideoOpened()) return false;
                 float cx = v.getWidth() / 2f;
                 float cy = v.getHeight() / 2f;
                 float dx = event.getX() - cx;
@@ -1591,13 +1605,13 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                         }
                         float upDist = (float) Math.hypot(event.getX() - downX, event.getY() - downY);
                         if (upDist > org.telegram.messenger.AndroidUtilities.dp(8)) return true; // это был свайп/скролл, не тап
-                        // Обычный тап — play/pause, либо "открыть" в первый раз.
+                        // Обычный тап на УЖЕ ОТКРЫТОМ кружке — play/pause. Открытие
+                        // закрытого кружка теперь целиком на OnClickListener самой
+                        // ячейки (см. комментарий у ACTION_DOWN выше) — эта ветка
+                        // сюда для закрытого состояния больше не доходит вообще.
                         roundVideoActiveCell.performHapticFeedback(
                                 android.view.HapticFeedbackConstants.KEYBOARD_TAP, android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
-                        if (!roundVideoActiveCell.isRoundVideoOpened()) {
-                            roundVideoActiveCell.setRoundVideoOpenVisual(true, true);
-                            MediaController.getInstance().playMessage(mo, false);
-                        } else if (MediaController.getInstance().isPlayingMessage(mo) && !MediaController.getInstance().isMessagePaused()) {
+                        if (MediaController.getInstance().isPlayingMessage(mo) && !MediaController.getInstance().isMessagePaused()) {
                             MediaController.getInstance().pauseMessage(mo);
                         } else {
                             MediaController.getInstance().playMessage(mo, false);

@@ -302,6 +302,19 @@ public class PotokFeedPostCell extends LinearLayout {
     private RoundVideoDownloadButton roundVideoDownloadButton;
     private final int[] roundVideoScreenLocation = new int[2];
     private MessageObject roundVideoMessageObject;
+
+    // ⚠️ ФИКС "тап на открытие срабатывает через раз (3-8 попыток)": обработчик
+    // тапа во Fragment раньше брал MessageObject ТОЛЬКО из
+    // MediaController.getInstance().getPlayingMessageObject() — но маленький
+    // закрытый кружок теперь (после фикса автоплея через ImageReceiver) в
+    // MediaController вообще не зарегистрирован, там null. Тап на закрытый
+    // кружок срабатывал только случайно, если в MediaController завалялся
+    // предыдущий round-видео объект. Этот геттер даёт источник правды на
+    // MessageObject кружка НЕЗАВИСИМО от того, играет ли он через
+    // MediaController или через тихий ImageReceiver-цикл.
+    public MessageObject getRoundVideoMessageObject() {
+        return roundVideoMessageObject;
+    }
     private int roundVideoDurationSeconds;
     // Автоплей (беззвучный) запускается один раз на bind, если файл уже в кэше —
     // без этого флага при каждом notifyItemChanged/ре-биндe того же ViewHolder'а
@@ -1505,6 +1518,21 @@ public class PotokFeedPostCell extends LinearLayout {
      * визуально совпадает с оригиналом (круг растёт "из своего угла", а не из
      * центра общего зарезервированного места).
      */
+    // ⚠️ ФИКС "два круга / кольцо не на месте, пока не обновишь ленту 10 раз":
+    // updateRoundVideoTexturePosition() во Fragment раньше пересчитывал позицию/
+    // размер плавающего оверлея ТОЛЬКО по уведомлениям плеера (play/pause/скролл),
+    // а не на каждый кадр 250мс-анимации роста/сжатия круга. Пока идёт анимация,
+    // статичный фон (roundVideoImage) плавно меняет реальный видимый размер, а
+    // оверлей с живым видео либо уже стоял в старой (маленькой) позиции, либо
+    // прыгал сразу в конечную — рассинхрон на весь путь анимации и иногда после
+    // (если следующее уведомление от плеера не приходило). Теперь Fragment сам
+    // подписывается на каждый тик этой анимации через колбэк.
+    private Runnable onRoundVideoVisualScaleChanged;
+
+    public void setOnRoundVideoVisualScaleChanged(Runnable callback) {
+        this.onRoundVideoVisualScaleChanged = callback;
+    }
+
     private void applyRoundVideoScale(boolean small, boolean animated) {
         float target = small ? (roundVideoSmallSize / (float) roundVideoBigSize) : 1f;
         roundVideoContainer.animate().cancel();
@@ -1526,10 +1554,14 @@ public class PotokFeedPostCell extends LinearLayout {
                     .scaleX(target).scaleY(target)
                     .setDuration(250)
                     .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                    .setUpdateListener(anim -> {
+                        if (onRoundVideoVisualScaleChanged != null) onRoundVideoVisualScaleChanged.run();
+                    })
                     .withEndAction(() -> {
                         if (small) {
                             setRoundVideoContainerLayoutSize(roundVideoSmallSize);
                         }
+                        if (onRoundVideoVisualScaleChanged != null) onRoundVideoVisualScaleChanged.run();
                     })
                     .start();
         } else {
@@ -1538,6 +1570,7 @@ public class PotokFeedPostCell extends LinearLayout {
             if (small) {
                 setRoundVideoContainerLayoutSize(roundVideoSmallSize);
             }
+            if (onRoundVideoVisualScaleChanged != null) onRoundVideoVisualScaleChanged.run();
         }
     }
 

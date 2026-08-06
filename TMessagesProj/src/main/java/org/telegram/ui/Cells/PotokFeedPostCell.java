@@ -324,6 +324,19 @@ public class PotokFeedPostCell extends LinearLayout {
     private int roundVideoSmallSize;
     private int roundVideoBigSize;
 
+    // ⚠️ ЕДИНЫЙ источник правды для размера большого кружка — раньше формула
+    // жила только здесь, а плавающий контейнер в PotokFeedFragment.java
+    // (реальное играющее видео) использовал СТАРУЮ, некорректированную
+    // AndroidUtilities.roundPlayingMessageSize(false) напрямую — отсюда
+    // рассинхрон между видимым кругом (тут, скорректирован) и невидимым
+    // контейнером с настоящим видео/кольцом/зоной перемотки (там, не
+    // скорректирован). Теперь оба места обязаны звать этот метод.
+    public static int getCorrectedRoundVideoBigSize() {
+        int roundVideoMaxByColumn = AndroidUtilities.displaySize.x - dp(16) /* отступы поста */ - dp(16) /* margin контейнера 8+8 */;
+        return AndroidUtilities.roundPlayingMessageSize(false) > 0
+                ? Math.min(AndroidUtilities.roundPlayingMessageSize(false), roundVideoMaxByColumn) : dp(280);
+    }
+
     // --- Опрос ---
     private final PollView pollView;
     // Сообщение группы, чей media — конкретно опрос (см. setPost()); нужно отдельно
@@ -668,9 +681,7 @@ public class PotokFeedPostCell extends LinearLayout {
         // чуть ниже по файлу, тот же паттерн). Итого не хватало ровно ~4dp по
         // ширине — отсюда лёгкий обрез правого края круга. Ограничиваем сверху
         // реально доступной шириной колонки поста.
-        int roundVideoMaxByColumn = AndroidUtilities.displaySize.x - dp(16) /* отступы поста */ - dp(16) /* margin контейнера 8+8 */;
-        roundVideoBigSize = AndroidUtilities.roundPlayingMessageSize(false) > 0
-                ? Math.min(AndroidUtilities.roundPlayingMessageSize(false), roundVideoMaxByColumn) : dp(280);
+        roundVideoBigSize = getCorrectedRoundVideoBigSize();
         roundVideoSmallSize = AndroidUtilities.roundMessageSize > 0
                 ? AndroidUtilities.roundMessageSize : dp(200); // фоллбэк на случай вызова до первого измерения экрана
 
@@ -4929,11 +4940,26 @@ public class PotokFeedPostCell extends LinearLayout {
         public void onSuccessDownload(String name) {
             radialProgress.setProgress(1, true);
             updateState(true);
-            // Файл только что докачался — запускаем беззвучный автоплей в
-            // маленьком состоянии, как и для уже закэшированных при биндe.
-            if (roundVideoMessageObject != null && !roundVideoOpened && !roundVideoAutoplayTried) {
-                roundVideoAutoplayTried = true;
-                MediaController.getInstance().playMessage(roundVideoMessageObject, true);
+            // ⚠️ ФИКС (эта сессия): файл только что докачался — здесь БЫЛ второй,
+            // независимый от bind() вызов MediaController.getInstance().playMessage(),
+            // забытый при архитектурном переносе автоплея на ImageReceiver/AUTOPLAY_FILTER.
+            // Именно он поднимал звук и верхнюю системную полосу плеера сразу после
+            // докачки кружка. Теперь — тот же самый путь, что и в bind() для уже
+            // закэшированных кружков: setImage(..., AUTOPLAY_FILTER, ...) + startAnimation(),
+            // без единого обращения к MediaController.
+            if (roundVideoMessageObject != null && !roundVideoOpened && document != null) {
+                java.io.File roundCacheFile = FileLoader.getInstance(UserConfig.selectedAccount).getPathToAttach(document, false);
+                if (roundCacheFile != null && roundCacheFile.exists()) {
+                    warmAutoplayCacheFromRealFile(document, roundCacheFile);
+                }
+                TLRPC.PhotoSize successThumb = FileLoader.getClosestPhotoSizeWithSize(document.thumbs, AndroidUtilities.getPhotoSize());
+                BitmapDrawable successStrippedThumb = roundVideoMessageObject.strippedThumb;
+                roundVideoImage.getImageReceiver().setImage(
+                        ImageLocation.getForDocument(document), org.telegram.messenger.ImageLoader.AUTOPLAY_FILTER,
+                        ImageLocation.getForDocument(successThumb, document), (String) null,
+                        successStrippedThumb, document.size, (String) null, roundVideoMessageObject, 0);
+                roundVideoImage.getImageReceiver().setAllowStartAnimation(true);
+                roundVideoImage.getImageReceiver().startAnimation();
             }
         }
 

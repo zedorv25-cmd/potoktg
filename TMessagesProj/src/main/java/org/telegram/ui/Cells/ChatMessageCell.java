@@ -121,6 +121,7 @@ import org.telegram.messenger.ImageReceiver;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MediaController;
+import org.telegram.ui.PotokDebugLog;
 import org.telegram.messenger.MediaDataController;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
@@ -4129,6 +4130,14 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
     }
 
     private boolean checkRoundSeekbar(MotionEvent event) {
+        if (currentMessageObject != null && currentMessageObject.isRoundVideo() && event.getAction() == MotionEvent.ACTION_DOWN) {
+            // ⚠️ ДИАГНОСТИКА (ROUNDVID_SEEK_CHAT): вход в перемотку блокируется прямо
+            // тут, если isPlayingMessage/isMessagePaused не те, что визуально на экране —
+            // это объяснило бы "пауза есть, а перемотки нет" без единой строчки жеста.
+            PotokDebugLog.d("ROUNDVID_SEEK_CHAT", "checkRoundSeekbar gate isPlayingMessage="
+                + MediaController.getInstance().isPlayingMessage(currentMessageObject)
+                + " isMessagePaused=" + MediaController.getInstance().isMessagePaused());
+        }
         if (!MediaController.getInstance().isPlayingMessage(currentMessageObject) || !MediaController.getInstance().isMessagePaused()) {
             return false;
         }

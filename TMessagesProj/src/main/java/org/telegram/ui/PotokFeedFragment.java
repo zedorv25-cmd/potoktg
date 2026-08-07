@@ -1487,9 +1487,25 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         if (roundVideoPlayerContainer != null) return;
         roundVideoPlayerContainer = new FrameLayout(context);
         roundVideoPlayerContainer.setOutlineProvider(new ViewOutlineProvider() {
+            private int lastLoggedW = -1, lastLoggedH = -1;
             @Override
             public void getOutline(View view, Outline outline) {
-                outline.setOval(0, 0, view.getMeasuredWidth(), view.getMeasuredHeight());
+                int w = view.getMeasuredWidth();
+                int h = view.getMeasuredHeight();
+                // ⚠️ ДИАГНОСТИКА (логи ROUNDVID_CROP): логируем только при ИЗМЕНЕНИИ
+                // размера (не на каждый вызов — getOutline может дёргаться очень
+                // часто при анимациях). Если w != h в момент бага "крестообразной"
+                // обрезки — это прямое доказательство, что клип строится по
+                // неквадратному прямоугольнику (сам оверлей не квадратный в этот
+                // момент), а не проблема где-то глубже в MediaController/текстуре.
+                if (w != lastLoggedW || h != lastLoggedH) {
+                    lastLoggedW = w;
+                    lastLoggedH = h;
+                    PotokDebugLog.d("ROUNDVID_CROP", "getOutline size changed w=" + w + " h=" + h
+                        + " scaleX=" + view.getScaleX() + " scaleY=" + view.getScaleY()
+                        + " square=" + (w == h));
+                }
+                outline.setOval(0, 0, w, h);
             }
         });
         roundVideoPlayerContainer.setClipToOutline(true);
@@ -1550,6 +1566,24 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
 
             @Override
             public boolean onTouch(View v, MotionEvent event) {
+                // ⚠️ ДИАГНОСТИКА (логи ROUNDVID_SEEK): лог САМОГО ВЕРХА метода,
+                // безусловно, на ACTION_DOWN — до всех return false выше. Если при
+                // воспроизведении бага (шторка открылась) в логе НЕТ этой строки —
+                // значит палец физически не попал в этот оверлей вообще (например
+                // оверлей не успел встать на позицию активной ячейки), и проблема
+                // не в disallowIntercept ниже, а в синхронизации позиции. Если
+                // строка ЕСТЬ — идём разбирать remainder лога по этому же жесту.
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    int[] locOnScreen = new int[2];
+                    v.getLocationOnScreen(locOnScreen);
+                    PotokDebugLog.d("ROUNDVID_SEEK", "onTouch ACTION_DOWN ENTRY"
+                        + " rawX=" + event.getRawX() + " rawY=" + event.getRawY()
+                        + " localX=" + event.getX() + " localY=" + event.getY()
+                        + " viewScreenX=" + locOnScreen[0] + " viewScreenY=" + locOnScreen[1]
+                        + " viewW=" + v.getWidth() + " viewH=" + v.getHeight()
+                        + " scaleX=" + v.getScaleX() + " scaleY=" + v.getScaleY()
+                        + " roundVideoActiveCell=" + (roundVideoActiveCell != null));
+                }
                 if (roundVideoActiveCell == null) return false;
                 // ⚠️ ФИКС "тап открывает через раз": источник MessageObject — сама
                 // ячейка (живёт независимо от MediaController), а не
@@ -1597,6 +1631,15 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                         downX = event.getX();
                         downY = event.getY();
                         dragging = paused && insideSeekRing;
+                        // ⚠️ ДИАГНОСТИКА (ROUNDVID_SEEK): все значения, от которых
+                        // зависит решение блокировать перехват шторкой или нет.
+                        PotokDebugLog.d("ROUNDVID_SEEK", "ACTION_DOWN decision"
+                            + " dist=" + dist + " ringZoneWidth=" + ringZoneWidth
+                            + " paused=" + paused + " insideSeekRing=" + insideSeekRing
+                            + " dragging=" + dragging
+                            + " roundVideoOpened=" + roundVideoActiveCell.isRoundVideoOpened()
+                            + " isPlayingMessage=" + MediaController.getInstance().isPlayingMessage(mo)
+                            + " isMessagePaused=" + MediaController.getInstance().isMessagePaused());
                         // ⚠️ ФИКС "шторка иногда всё равно перехватывает": раньше
                         // requestDisallowInterceptTouchEvent(true) вызывался ТОЛЬКО
                         // если dragging уже true (палец точно попал в узкую
@@ -1614,10 +1657,35 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                         // круга, не только в узкой кольцевой полосе — обычный тап
                         // в центр (play/pause) это не ломает, там движения almost
                         // нет и жест всё равно останется коротким тапом.
-                        if (paused && v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
+                        if (paused && v.getParent() != null) {
+                            // ⚠️ ДИАГНОСТИКА (ROUNDVID_SEEK): фиксируем ФАКТ вызова и
+                            // на каком именно классе родителя — чтобы убедиться, что
+                            // цепочка parent'ов реально та, что мы предполагаем
+                            // (fragmentView -> containerView -> ActionBarLayout), а не
+                            // что-то ещё встряло посередине.
+                            PotokDebugLog.d("ROUNDVID_SEEK", "requestDisallowInterceptTouchEvent(true) called on "
+                                + v.getParent().getClass().getSimpleName());
+                            v.getParent().requestDisallowInterceptTouchEvent(true);
+                        } else {
+                            // ⚠️ ДИАГНОСТИКА: если paused=false на ACTION_DOWN, мы
+                            // НЕ блокируем перехват вообще — это ожидаемо для обычного
+                            // тапа play/pause, но если окажется, что в момент бага
+                            // paused почему-то false, хотя пользователь визуально видит
+                            // паузу — вот где это будет видно.
+                            PotokDebugLog.d("ROUNDVID_SEEK", "requestDisallowInterceptTouchEvent NOT called (paused=" + paused + ")");
+                        }
                         return true; // сами решаем на UP — тап это или нет
                     case MotionEvent.ACTION_MOVE:
-                        if (!dragging) return true;
+                        if (!dragging) {
+                            // ⚠️ ДИАГНОСТИКА (ROUNDVID_SEEK): ACTION_MOVE, который мы
+                            // игнорируем (dragging=false) — если шторка открывается
+                            // именно в такие моменты, лог покажет где палец находился
+                            // относительно круга, когда его "отпустили" на волю других
+                            // перехватчиков.
+                            PotokDebugLog.d("ROUNDVID_SEEK", "ACTION_MOVE ignored (dragging=false)"
+                                + " localX=" + event.getX() + " localY=" + event.getY());
+                            return true;
+                        }
                         double angleDeg = Math.toDegrees(Math.atan2(dy, dx)) + 90;
                         if (angleDeg < 0) angleDeg += 360;
                         float progress = (float) (angleDeg / 360.0);
@@ -1789,6 +1857,28 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             return;
         }
         if (roundVideoTextureRegisteredForMessageId != playing.getId()) {
+            // ⚠️ ДИАГНОСТИКА (логи ROUNDVID_CROP): первая регистрация текстуры для
+            // НОВОГО видео — логируем реальное соотношение сторон исходного видео
+            // (TL_documentAttributeVideo.w/h, через готовые статические геттеры
+            // MessageObject.getVideoWidth/Height — НЕ выдумываем новый метод) и
+            // измеренные размеры контейнеров в этот момент. Если видео НЕ
+            // квадратное (например 720x1280 вместо ожидаемого квадрата) — это
+            // прямая причина "надкуса" при setOval(0,0,w,h) на квадратном
+            // контейнере, если AspectRatioFrameLayout внутри масштабирует видео
+            // не по центру или неверно кадрирует под квадрат.
+            TLRPC.Document doc = playing.getDocument();
+            int videoAttrW = doc != null ? org.telegram.messenger.MessageObject.getVideoWidth(doc) : 0;
+            int videoAttrH = doc != null ? org.telegram.messenger.MessageObject.getVideoHeight(doc) : 0;
+            PotokDebugLog.d("ROUNDVID_CROP", "setTextureView(true) new messageId=" + playing.getId()
+                + " videoAttrW=" + videoAttrW + " videoAttrH=" + videoAttrH
+                + " containerMeasuredW=" + roundVideoPlayerContainer.getMeasuredWidth()
+                + " containerMeasuredH=" + roundVideoPlayerContainer.getMeasuredHeight()
+                + " containerW=" + roundVideoPlayerContainer.getWidth()
+                + " containerH=" + roundVideoPlayerContainer.getHeight()
+                + " aspectFrameW=" + roundVideoAspectRatioFrameLayout.getWidth()
+                + " aspectFrameH=" + roundVideoAspectRatioFrameLayout.getHeight()
+                + " aspectFrameMeasuredW=" + roundVideoAspectRatioFrameLayout.getMeasuredWidth()
+                + " aspectFrameMeasuredH=" + roundVideoAspectRatioFrameLayout.getMeasuredHeight());
             MediaController.getInstance().setTextureView(roundVideoTextureView, roundVideoAspectRatioFrameLayout, roundVideoPlayerContainer, true);
             roundVideoTextureRegisteredForMessageId = playing.getId();
         }

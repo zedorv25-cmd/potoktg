@@ -588,17 +588,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // обычного layout-прохода и всегда имеет реальный измеренный размер.
         roundVideoHiddenTranslationY = -correctedBigSize - 100;
         roundVideoPlayerContainer.setTranslationY(roundVideoHiddenTranslationY);
-        // ⚠️ ФИКС (обрезка/"надкус" формы кружка): 1:1 с ChatActivity.updateTextureViewPosition()
-        // для круглого видео — RESIZE_MODE_FIT сам по себе не гарантирует, что видео
-        // долетает до края круглого клипа (letterbox по одной оси при малейшем несовпадении
-        // пропорций). Оригинал компенсирует это доп. увеличением самой TextureView на
-        // scale = (roundPlayingMessageSize + roundMessageInset*2) / roundPlayingMessageSize.
-        // У нас этого масштабирования не было вообще — добавляем тот же расчёт под наш
-        // corrected-размер.
-        roundVideoAspectRatioFrameLayout.setResizeMode(com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
-        float roundVideoTextureCompensationScale = (correctedBigSize + AndroidUtilities.roundMessageInset * 2) / (float) correctedBigSize;
-        roundVideoTextureView.setScaleX(roundVideoTextureCompensationScale);
-        roundVideoTextureView.setScaleY(roundVideoTextureCompensationScale);
         // ⚠️ ФИКС (наезд открытого кружка на верхнюю полосу мини-плеера при
         // скролле ленты): roundVideoPlayerContainer добавлен в frameLayout
         // последним из всех плавающих элементов (после miniPlayerGapBlur,
@@ -1561,6 +1550,31 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         roundVideoTextureView.setOpaque(false);
         roundVideoAspectRatioFrameLayout.addView(roundVideoTextureView,
                 LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+        // ⚠️ ДИАГНОСТИКА (логи ROUNDVID_CROP): раньше логировался только размер
+        // КОНТЕЙНЕРА (всегда 984x984, подтверждено). Ни разу не логировался
+        // реальный размер самой TextureView ПОСЛЕ того, как AspectRatioFrameLayout
+        // её переизмерил под соотношение сторон видео — а именно это финальное
+        // значение и есть то, что физически видно под маской. Если w/h тут
+        // меньше, чем у контейнера — видео физически не долетает до края круга,
+        // это и есть источник "надкуса", без предположений.
+        roundVideoTextureView.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            private int lastW = -1, lastH = -1;
+            @Override
+            public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                    int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                int w = right - left;
+                int h = bottom - top;
+                if (w != lastW || h != lastH) {
+                    lastW = w;
+                    lastH = h;
+                    int containerW = roundVideoPlayerContainer != null ? roundVideoPlayerContainer.getMeasuredWidth() : -1;
+                    int containerH = roundVideoPlayerContainer != null ? roundVideoPlayerContainer.getMeasuredHeight() : -1;
+                    PotokDebugLog.d("ROUNDVID_CROP", "textureView real layout w=" + w + " h=" + h
+                        + " containerW=" + containerW + " containerH=" + containerH
+                        + " gapW=" + (containerW - w) + " gapH=" + (containerH - h));
+                }
+            }
+        });
 
         // ⚠️ Вся живая "хрома" — кольцо/ручка/плашка/эквалайзер — добавлена
         // ПОСЛЕ TextureView, то есть рисуется поверх реального видео (FrameLayout

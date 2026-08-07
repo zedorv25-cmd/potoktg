@@ -1405,9 +1405,18 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             // messagePlayingDidReset — одноразовое дискретное событие на сессию
             // воспроизведения, гонки внутри одного события быть не может.
             int resetMid = args.length > 0 && args[0] instanceof Integer ? (Integer) args[0] : 0;
+            // ⚠️ ФИКС "истукан после завершения" (этот заход): в оригинале
+            // (ChatActivity.didReceivedNotification, ветка messagePlayingDidReset)
+            // НЕТ никакого порога прогресса — просто проверяется, что это
+            // round-видео и что оно СЕЙЧАС не играет, и сразу сбрасывается.
+            // Мой прежний порог roundVideoLastKnownProgress >= 0.98f был
+            // придуман с головы, а не из оригинала — и для короткого ролика
+            // (в жалобе пользователя длительность 0:04) обновления прогресса
+            // идут слишком редко, порог мог просто не успеть накопиться до
+            // 0.98 к моменту сброса — тогда ветка вообще не срабатывала, и
+            // кружок оставался замороженным большим стоп-кадром навсегда.
             boolean wasNaturalRoundVideoFinish = roundVideoLastKnownObject != null
                     && roundVideoLastKnownObject.getId() == resetMid
-                    && roundVideoLastKnownProgress >= 0.98f
                     && roundVideoActiveCell != null
                     && roundVideoActiveCell.isRoundVideoOpened();
             if (wasNaturalRoundVideoFinish) {
@@ -1421,6 +1430,28 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 // ImageReceiver.startAnimation() заново запускает беззвучный
                 // цикл, MediaController здесь больше не нужен вообще.
                 roundVideoActiveCell.setRoundVideoOpenVisual(false, true);
+                // ⚠️ ФИКС "истукан" (подстраховка, 1:1 с духом оригинала): в
+                // ChatActivity на этом же событии ячейка не просто патчится
+                // вручную — вызывается messageObject.forceUpdate=true +
+                // notifyItemChanged(position), то есть состояние гарантированно
+                // проходит через чистый путь ребайнда, а не полагается только на
+                // ручной вызов одного метода. Делаем то же самое здесь —
+                // подчищаем этим же путём, если ручной сброс почему-то не взялся.
+                if (listView != null) {
+                    final PotokFeedPostCell cellForRebindCheck = roundVideoActiveCell;
+                    listView.postDelayed(() -> {
+                        // Подстраховка выполняется ПОСЛЕ 250мс-анимации сжатия
+                        // (см. applyRoundVideoScale) — если она сама прошла
+                        // успешно, ребайнд просто ничего визуально не меняет
+                        // (то же самое состояние C); если что-то не взялось —
+                        // гарантированно чинит через чистый путь bind().
+                        if (cellForRebindCheck.isRoundVideoOpened()) return; // уже переоткрыли — не мешаем
+                        int pos = listView.getChildAdapterPosition(cellForRebindCheck);
+                        if (pos != RecyclerView.NO_POSITION && listView.getAdapter() != null) {
+                            listView.getAdapter().notifyItemChanged(pos);
+                        }
+                    }, 300);
+                }
             }
             roundVideoLastKnownObject = null;
             roundVideoLastKnownProgress = 0f;
@@ -1566,7 +1597,24 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                         downX = event.getX();
                         downY = event.getY();
                         dragging = paused && insideSeekRing;
-                        if (dragging && v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
+                        // ⚠️ ФИКС "шторка иногда всё равно перехватывает": раньше
+                        // requestDisallowInterceptTouchEvent(true) вызывался ТОЛЬКО
+                        // если dragging уже true (палец точно попал в узкую
+                        // кольцевую зону на ACTION_DOWN). Если палец на паузе
+                        // касался чуть мимо этой зоны (но всё ещё внутри видимого
+                        // круга) — dragging оставался false, запрет на перехват
+                        // не выставлялся, и на следующем ACTION_MOVE предок
+                        // (шторка) успевал перехватить жест раньше, чем мы
+                        // могли передумать. В оригинале это невозможно — там
+                        // ВЕСЬ onTouchEvent ячейки идёт первым (см. checkRoundSeekbar
+                        // в самом начале onTouchEvent), у нас же это отдельный
+                        // оверлей-view, и его решение "не мешать шторке" нужно
+                        // принимать более осторожно. Теперь на паузе блокируем
+                        // перехват шторкой при касании в ЛЮБОМ месте видимого
+                        // круга, не только в узкой кольцевой полосе — обычный тап
+                        // в центр (play/pause) это не ломает, там движения almost
+                        // нет и жест всё равно останется коротким тапом.
+                        if (paused && v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
                         return true; // сами решаем на UP — тап это или нет
                     case MotionEvent.ACTION_MOVE:
                         if (!dragging) return true;

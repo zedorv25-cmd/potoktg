@@ -9356,6 +9356,7 @@ private float swipeStartY;
 private boolean swipeTracking;
 private boolean touchStartedOnStories;
 private boolean touchStartedOnMediaCarousel;
+private boolean touchStartedOnRoundVideo;
 
 @Override
 public boolean dispatchTouchEvent(MotionEvent event) {
@@ -9377,11 +9378,29 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                 // вообще доходит до самой карусели — тот же принцип, что и со
                 // списком историй чуть выше.
                 touchStartedOnMediaCarousel = isPointInsideMediaCarousel(swipeStartX, swipeStartY);
+                // Фикс: перемотка ОТКРЫТОГО видеокружка на паузе (перетаскивание
+                // пальцем по кольцу-прогрессу, часто слева-направо) открывала боковую
+                // шторку — по ТОЙ ЖЕ причине, что карусель/истории выше: этот
+                // dispatchTouchEvent на уровне Activity перехватывает жест ДО того, как
+                // событие доходит до PotokFeedFragment/оверлея кружка, поэтому попытка
+                // фикса requestDisallowInterceptTouchEvent внутри оверлея (см.
+                // PotokFeedFragment) физически не могла сюда достучаться — это два
+                // разных, независимых уровня перехвата. Переиспользуем готовый
+                // isPointInsideRoundVideo() (уже есть в PotokFeedPostCell, используется
+                // для исключения долгого нажатия) — контейнер кружка в ячейке остаётся
+                // VISIBLE весь период показа поста независимо от маленького/большого
+                // состояния (см. bind()), и плавающий оверлей с реальным видео всегда
+                // синхронизирован на ту же экранную позицию, так что проверка по ячейке
+                // корректно ловит касание и во время перемотки.
+                touchStartedOnRoundVideo = isPointInsideRoundVideo(swipeStartX, swipeStartY);
+                PotokDebugLog.d("ROUNDVID_SEEK", "LaunchActivity.dispatchTouchEvent ACTION_DOWN"
+                    + " x=" + swipeStartX + " y=" + swipeStartY
+                    + " touchStartedOnRoundVideo=" + touchStartedOnRoundVideo);
                 break;
             case MotionEvent.ACTION_MOVE:
                 float dx = event.getX() - swipeStartX;
                 float dy = event.getY() - swipeStartY;
-                if (!swipeTracking && !touchStartedOnStories && !touchStartedOnMediaCarousel && dx > AndroidUtilities.dp(30) && Math.abs(dy) < AndroidUtilities.dp(40)) {
+                if (!swipeTracking && !touchStartedOnStories && !touchStartedOnMediaCarousel && !touchStartedOnRoundVideo && dx > AndroidUtilities.dp(30) && Math.abs(dy) < AndroidUtilities.dp(40)) {
                     swipeTracking = true;
                     boolean isOnChatsTab = false;
                     boolean isOnFeedTab = false;
@@ -9400,6 +9419,16 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                     // у самого левого края экрана. На "Ленте" она ничем больше не занята — свайп
                     // вправо откуда угодно, как раньше было на "Чатах".
                     boolean shouldOpenDrawer = isOnFeedTab || (isOnChatsTab && swipeStartX <= AndroidUtilities.dp(24));
+                    // ⚠️ ДИАГНОСТИКА (ROUNDVID_SEEK): если этот лог когда-нибудь
+                    // покажет shouldOpenDrawer=true ОДНОВРЕМЕННО с
+                    // touchStartedOnRoundVideo=true — значит наше исключение выше
+                    // почему-то не остановило свайп (баг НЕ должен так делать, это
+                    // сюда просто не должно доходить при touchStartedOnRoundVideo=true,
+                    // но логируем на всякий случай для полной уверенности).
+                    PotokDebugLog.d("ROUNDVID_SEEK", "swipe threshold reached shouldOpenDrawer=" + shouldOpenDrawer
+                        + " touchStartedOnRoundVideo=" + touchStartedOnRoundVideo
+                        + " touchStartedOnMediaCarousel=" + touchStartedOnMediaCarousel
+                        + " isOnFeedTab=" + isOnFeedTab);
                     if (shouldOpenDrawer) {
                         openPotokDrawer();
                         event.setAction(MotionEvent.ACTION_CANCEL);
@@ -9413,6 +9442,7 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                 swipeTracking = false;
                 touchStartedOnStories = false;
                 touchStartedOnMediaCarousel = false;
+                touchStartedOnRoundVideo = false;
                 break;
        }
     }
@@ -9455,6 +9485,41 @@ private boolean isPointInsideMediaCarousel(float x, float y) {
         View child = listView.getChildAt(i);
         if (child instanceof org.telegram.ui.Cells.PotokFeedPostCell
             && ((org.telegram.ui.Cells.PotokFeedPostCell) child).isPointInsideCarousel(x, y)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Фикс "перемотка видеокружка открывает шторку" — 1:1 по структуре с
+// isPointInsideMediaCarousel выше (та же ситуация: жест перехватывается тут,
+// на уровне Activity, раньше, чем видит его сама ячейка/оверлей кружка).
+// Проверяем ВСЕ видимые ячейки ленты (не только текущую "активную" для
+// плеера) — так же, как и карусель выше — на случай если несколько постов с
+// кружками видны на экране одновременно.
+private boolean isPointInsideRoundVideo(float x, float y) {
+    if (mainFragmentsStack == null || mainFragmentsStack.isEmpty() || !isOnMainScreen()) {
+        return false;
+    }
+    BaseFragment top = mainFragmentsStack.get(mainFragmentsStack.size() - 1);
+    if (!(top instanceof MainTabsActivity)) {
+        return false;
+    }
+    if (((MainTabsActivity) top).getCurrentPosition() != MainTabsActivity.POSITION_FEED) {
+        return false;
+    }
+    BaseFragment visible = ((MainTabsActivity) top).getCurrentVisibleFragment();
+    if (!(visible instanceof PotokFeedFragment)) {
+        return false;
+    }
+    org.telegram.ui.Components.RecyclerListView listView = ((PotokFeedFragment) visible).getListView();
+    if (listView == null) {
+        return false;
+    }
+    for (int i = 0; i < listView.getChildCount(); i++) {
+        View child = listView.getChildAt(i);
+        if (child instanceof org.telegram.ui.Cells.PotokFeedPostCell
+            && ((org.telegram.ui.Cells.PotokFeedPostCell) child).isPointInsideRoundVideo(x, y)) {
             return true;
         }
     }

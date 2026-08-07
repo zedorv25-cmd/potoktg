@@ -148,6 +148,21 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private FrameLayout roundVideoPlayerContainer;
     private AspectRatioFrameLayout roundVideoAspectRatioFrameLayout;
     private TextureView roundVideoTextureView;
+    // ⚠️ ФИКС "надкус"/неправильная форма кружка (Сборка 1): раньше пустой
+    // контейнер прятался через setVisibility(GONE). GONE-view пропускается
+    // layout-проходом целиком и НЕ получает реальных measured-размеров — из-за
+    // этого к моменту setTextureView(true) на новом видео контейнер ещё ни разу
+    // не был измерен (containerMeasuredW/H=0 в логах ROUNDVID_CROP), и
+    // ExoPlayer/TextureView стартовали с нулевого кадра. В оригинале
+    // (ChatActivity.videoPlayerContainer) контейнер НИКОГДА не уходит в GONE —
+    // он всегда VISIBLE и просто уводится за пределы экрана через
+    // translationY (см. updateTextureViewPosition), поэтому у него всегда есть
+    // реальный измеренный размер из фиксированных LayoutParams. Повторяем этот
+    // подход 1:1: контейнер всегда VISIBLE, "спрятан" только этим смещением.
+    // Значение — фиксированный размер контейнера (px) + запас 100px, считается
+    // один раз при создании (см. createRoundVideoTextureView), используется
+    // во всех местах, где раньше стоял setVisibility(GONE).
+    private float roundVideoHiddenTranslationY;
     // Сообщение, для которого СЕЙЧАС зарегистрирован textureView в MediaController —
     // нужно, чтобы не дёргать setTextureView повторно на каждый чих (скролл),
     // а только при реальной смене играющего видеокружка.
@@ -568,7 +583,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         int correctedBigSize = org.telegram.ui.Cells.PotokFeedPostCell.getCorrectedRoundVideoBigSize();
         frameLayout.addView(roundVideoPlayerContainer, new FrameLayout.LayoutParams(
                 correctedBigSize, correctedBigSize));
-        roundVideoPlayerContainer.setVisibility(View.GONE);
+        // ⚠️ ФИКС (см. комментарий у поля roundVideoHiddenTranslationY выше):
+        // никогда не GONE — прячем уводом за экран, контейнер остаётся частью
+        // обычного layout-прохода и всегда имеет реальный измеренный размер.
+        roundVideoHiddenTranslationY = -correctedBigSize - 100;
+        roundVideoPlayerContainer.setTranslationY(roundVideoHiddenTranslationY);
 
         listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
@@ -1849,7 +1868,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         if (roundVideoPlayerContainer == null || listView == null || fragmentView == null) return;
         MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
         if (playing == null || !playing.isRoundVideo()) {
-            roundVideoPlayerContainer.setVisibility(View.GONE);
+            // ⚠️ ФИКС: не GONE — см. комментарий у roundVideoHiddenTranslationY.
+            roundVideoPlayerContainer.setTranslationY(roundVideoHiddenTranslationY);
             if (roundVideoTextureRegisteredForMessageId != 0) {
                 MediaController.getInstance().setTextureView(roundVideoTextureView, roundVideoAspectRatioFrameLayout, roundVideoPlayerContainer, false);
                 roundVideoTextureRegisteredForMessageId = 0;
@@ -1929,7 +1949,8 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             updateRoundVideoChromeTexts();
         } else {
             roundVideoActiveCell = null;
-            roundVideoPlayerContainer.setVisibility(View.GONE);
+            // ⚠️ ФИКС: не GONE — см. комментарий у roundVideoHiddenTranslationY.
+            roundVideoPlayerContainer.setTranslationY(roundVideoHiddenTranslationY);
             if (roundVideoOpenedCached) {
                 // Кружок был ОТКРЫТ пользователем (со звуком) и ушёл с экрана —
                 // не прерываем, включаем PIP. См. обсуждение этой сессии:

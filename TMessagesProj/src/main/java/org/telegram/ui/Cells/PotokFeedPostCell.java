@@ -4899,11 +4899,14 @@ public class PotokFeedPostCell extends LinearLayout {
             radialProgress = new RadialProgress2(this);
             radialProgress.setColorKeys(Theme.key_chat_mediaLoaderPhoto, Theme.key_chat_mediaLoaderPhotoSelected,
                     Theme.key_chat_mediaLoaderPhotoIcon, Theme.key_chat_mediaLoaderPhotoIconSelected);
-            // ⚠️ ФИКС "кнопка загрузки как лилипут": dp(20) — фиксированный маленький
-            // радиус, не учитывающий что круг под ней ~roundVideoBigSize (~250-280dp).
-            // В оригинале (референс на канале) кнопка визуально заметная, а не крошечная
-            // точка в центре. Делаем радиус пропорциональным реальному размеру круга.
-            radialProgress.setCircleRadius(Math.max(dp(20), roundVideoBigSize / 8));
+            // ⚠️ ФИКС (этот заход): предыдущая "пропорциональная" формула была
+            // придумана с головы и давала радиус в 1.5-2 раза БОЛЬШЕ, чем в
+            // оригинале — отсюда жалоба "теперь кнопка огромная". В оригинале
+            // (ChatMessageCell.drawContent, универсальная кнопка для ЛЮБОГО типа
+            // медиа) диаметр кнопки — ФИКСИРОВАННЫЙ 44dp (радиус 22dp), никак не
+            // зависит от размера самого медиа/круга под ней. Возвращаем к
+            // фиксированному значению, 1:1 с оригиналом.
+            radialProgress.setCircleRadius(dp(22));
             setWillNotDraw(false);
         }
 
@@ -4968,7 +4971,11 @@ public class PotokFeedPostCell extends LinearLayout {
         @Override
         protected void onDraw(Canvas canvas) {
             if (buttonState == -1) return;
-            int cx = getWidth() / 2, cy = getHeight() / 2, r = dp(20);
+            // r синхронизирован с radialProgress.setCircleRadius(dp(22)) в
+            // конструкторе — было рассинхронизировано (там 20, тут тоже был 20
+            // до правки радиуса, теперь оба 22), иначе прогресс-дуга не совпадала
+            // бы с реальным радиусом кнопки.
+            int cx = getWidth() / 2, cy = getHeight() / 2, r = dp(22);
             radialProgress.setProgressRect(cx - r, cy - r, cx + r, cy + r);
             radialProgress.draw(canvas);
         }
@@ -4982,6 +4989,15 @@ public class PotokFeedPostCell extends LinearLayout {
         public void onSuccessDownload(String name) {
             radialProgress.setProgress(1, true);
             updateState(true);
+            // ⚠️ ФИКС (этот заход): именно здесь была причина "тап не открывает
+            // сразу после свежей докачки, только после перезахода в приложение".
+            // mediaExists у roundVideoMessageObject не обновлялся тут — оставался
+            // false. Клик-обработчик на ячейке (openRoundVideo — основной путь
+            // открытия, см. предыдущий фикс) проверяет именно этот флаг: если он
+            // false — считает что видео ещё НЕ скачано и уходит в ветку
+            // "скачать" вместо "открыть". После перезахода ячейка биндится с
+            // нуля, mediaExists корректно true с диска — потому там срабатывало.
+            if (roundVideoMessageObject != null) roundVideoMessageObject.mediaExists = true;
             // ⚠️ ФИКС (эта сессия): файл только что докачался — здесь БЫЛ второй,
             // независимый от bind() вызов MediaController.getInstance().playMessage(),
             // забытый при архитектурном переносе автоплея на ImageReceiver/AUTOPLAY_FILTER.

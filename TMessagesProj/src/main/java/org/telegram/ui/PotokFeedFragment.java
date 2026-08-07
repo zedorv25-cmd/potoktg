@@ -588,6 +588,17 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // обычного layout-прохода и всегда имеет реальный измеренный размер.
         roundVideoHiddenTranslationY = -correctedBigSize - 100;
         roundVideoPlayerContainer.setTranslationY(roundVideoHiddenTranslationY);
+        // ⚠️ ФИКС (наезд открытого кружка на верхнюю полосу мини-плеера при
+        // скролле ленты): roundVideoPlayerContainer добавлен в frameLayout
+        // последним из всех плавающих элементов (после miniPlayerGapBlur,
+        // miniPlayerContainer и scrollToTopButton) — в обычном z-order
+        // Android то, что добавлено позже, рисуется поверх того, что раньше.
+        // Явно возвращаем полосу мини-плеера (и зазор-блюр под ней) и кнопку
+        // "наверх" на самый верх стека, чтобы кружок при скролле проходил
+        // ПОД ними, а не поверх — порядок остального addView не меняем.
+        frameLayout.bringChildToFront(miniPlayerGapBlur);
+        frameLayout.bringChildToFront(miniPlayerContainer);
+        frameLayout.bringChildToFront(scrollToTopButton);
 
         listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override

@@ -588,6 +588,17 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // обычного layout-прохода и всегда имеет реальный измеренный размер.
         roundVideoHiddenTranslationY = -correctedBigSize - 100;
         roundVideoPlayerContainer.setTranslationY(roundVideoHiddenTranslationY);
+        // ⚠️ ФИКС (обрезка/"надкус" формы кружка): 1:1 с ChatActivity.updateTextureViewPosition()
+        // для круглого видео — RESIZE_MODE_FIT сам по себе не гарантирует, что видео
+        // долетает до края круглого клипа (letterbox по одной оси при малейшем несовпадении
+        // пропорций). Оригинал компенсирует это доп. увеличением самой TextureView на
+        // scale = (roundPlayingMessageSize + roundMessageInset*2) / roundPlayingMessageSize.
+        // У нас этого масштабирования не было вообще — добавляем тот же расчёт под наш
+        // corrected-размер.
+        roundVideoAspectRatioFrameLayout.setResizeMode(com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT);
+        float roundVideoTextureCompensationScale = (correctedBigSize + AndroidUtilities.roundMessageInset * 2) / (float) correctedBigSize;
+        roundVideoTextureView.setScaleX(roundVideoTextureCompensationScale);
+        roundVideoTextureView.setScaleY(roundVideoTextureCompensationScale);
         // ⚠️ ФИКС (наезд открытого кружка на верхнюю полосу мини-плеера при
         // скролле ленты): roundVideoPlayerContainer добавлен в frameLayout
         // последним из всех плавающих элементов (после miniPlayerGapBlur,

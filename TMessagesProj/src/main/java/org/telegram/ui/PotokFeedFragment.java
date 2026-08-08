@@ -1572,12 +1572,34 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                     PotokDebugLog.d("ROUNDVID_CROP", "textureView real layout w=" + w + " h=" + h
                         + " containerW=" + containerW + " containerH=" + containerH
                         + " gapW=" + (containerW - w) + " gapH=" + (containerH - h));
+                    // ⚠️ ДИАГНОСТИКА (ROUNDVID_CROP, самый глубокий уровень): читаем
+                    // (не переустанавливаем!) transform matrix текущего буфера, если он
+                    // уже доступен — покажет реальное растяжение/обрезку кадра декодера
+                    // внутри TextureView, независимо от layout/outline (оба уже square).
+                    if (roundVideoTextureView != null && roundVideoTextureView.isAvailable()) {
+                        try {
+                            android.graphics.SurfaceTexture st = roundVideoTextureView.getSurfaceTexture();
+                            if (st != null) {
+                                float[] m = new float[16];
+                                st.getTransformMatrix(m);
+                                PotokDebugLog.d("ROUNDVID_CROP", "surfaceTexture matrix=" + java.util.Arrays.toString(m));
+                            }
+                        } catch (Throwable t) {
+                            PotokDebugLog.d("ROUNDVID_CROP", "surfaceTexture matrix read failed: " + t);
+                        }
+                    }
                 }
             }
         });
 
-        // ⚠️ Вся живая "хрома" — кольцо/ручка/плашка/эквалайзер — добавлена
-        // ПОСЛЕ TextureView, то есть рисуется поверх реального видео (FrameLayout
+        // ⚠️ ДИАГНОСТИКА (ROUNDVID_CROP, самый глубокий уровень): матрица трансформации
+        // реального буфера SurfaceTexture. НЕ используем setSurfaceTextureListener —
+        // ExoPlayer сам вызывает textureView.setSurfaceTextureListener(...) внутри
+        // player.setVideoTextureView() при каждом playMessage() (см.
+        // ExoPlayerImpl.java:1380) и перезаписал бы наш listener, сломав нам
+        // диагностику после первого воспроизведения. Вместо этого читаем
+        // getSurfaceTexture() из уже существующего, безопасного onLayoutChangeListener
+        // выше — только чтение, ничего не переустанавливаем.
         // рисует детей в порядке добавления). Единственная копия, физически
         // видимая = единственная копия, за которую отвечает тач-обработчик ниже.
         roundVideoRingView = new RoundVideoRingView(context);

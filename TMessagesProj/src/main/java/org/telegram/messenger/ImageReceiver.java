@@ -1288,13 +1288,24 @@ public class ImageReceiver implements NotificationCenter.NotificationCenterDeleg
         // Гейт по isRoundVideo — чтобы не спамить логами каждый аватар/фото
         // в приложении (drawDrawable вызывается для ВСЕГО, не только кружков).
         if (isRoundVideo) {
-            PotokDebugLog.d("ROUNDVID_MASK", "drawDrawable ENTRY imageX=" + imageX + " imageY=" + imageY
+            long roundVideoMsgId = currentParentObject instanceof MessageObject ? ((MessageObject) currentParentObject).getId() : 0;
+            PotokDebugLog.d("ROUNDVID_MASK", "drawDrawable ENTRY msgId=" + roundVideoMsgId + " imageX=" + imageX + " imageY=" + imageY
                 + " imageW=" + imageW + " imageH=" + imageH
                 + " orientation=" + orientation + " invert=" + invert
                 + " roundRadius0=" + (roundRadius.length > 0 ? roundRadius[0] : -1)
                 + " isRoundRect=" + isRoundRect + " useRoundRadius=" + useRoundRadius
                 + " sideClip=" + sideClip + " isAspectFit=" + isAspectFit
                 + " backgroundThreadDrawHolder=" + (backgroundThreadDrawHolder != null));
+            // ⚠️ ДИАГНОСТИКА (TARGETPOST, по требованию пользователя): безусловная
+            // запись КАЖДОЙ отрисовки конкретно для целевого поста (PotokDebugLog.
+            // TARGET_MESSAGE_ID), без гейтов по изменению — гарантированная фиксация
+            // независимо от того, где именно этот пост отрисовывается (лента/канал).
+            if (roundVideoMsgId == PotokDebugLog.TARGET_MESSAGE_ID) {
+                PotokDebugLog.d("TARGETPOST", "ImageReceiver.drawDrawable msgId=" + roundVideoMsgId
+                    + " imageX=" + imageX + " imageY=" + imageY + " imageW=" + imageW + " imageH=" + imageH
+                    + " roundRadius0=" + (roundRadius.length > 0 ? roundRadius[0] : -1)
+                    + " isRoundRect=" + isRoundRect + " useRoundRadius=" + useRoundRadius);
+            }
         }
         if (drawable instanceof BitmapDrawable) {
             BitmapDrawable bitmapDrawable = (BitmapDrawable) drawable;
@@ -1487,16 +1498,29 @@ public class ImageReceiver implements NotificationCenter.NotificationCenterDeleg
                         shaderMatrix.preScale(scale, scale);
                         if (isRoundVideo) {
                             float postScale = (realImageW + AndroidUtilities.roundMessageInset * 2) / realImageW;
+                            long roundVideoMsgId2 = currentParentObject instanceof MessageObject ? ((MessageObject) currentParentObject).getId() : 0;
                             // ⚠️ ДИАГНОСТИКА (ROUNDVID_MASK): именно этот блок — единственное
                             // место в оригинальном коде Telegram, где для round video
                             // применяется ДОПОЛНИТЕЛЬНЫЙ компенсирующий scale поверх
                             // обычного center-crop. Если drawRegion/bitmapW/H здесь не
                             // соответствуют реальному видимому окну — вот кандидат №1.
-                            PotokDebugLog.d("ROUNDVID_MASK", "isRoundVideo postScale=" + postScale
+                            PotokDebugLog.d("ROUNDVID_MASK", "isRoundVideo msgId=" + roundVideoMsgId2 + " postScale=" + postScale
                                 + " realImageW=" + realImageW + " realImageH=" + realImageH
                                 + " roundMessageInset=" + AndroidUtilities.roundMessageInset
                                 + " drawRegion=" + drawRegion + " bitmapW=" + bitmapW + " bitmapH=" + bitmapH
                                 + " scaleW=" + scaleW + " scaleH=" + scaleH + " scale=" + scale);
+                            // ⚠️ TARGETPOST — безусловная запись именно для целевого поста,
+                            // без гейтов; это единственное место где реально применяется
+                            // компенсирующий scale, поэтому здесь особенно важно не потерять
+                            // ни одной записи для конкретного поста, который проверяет пользователь.
+                            if (roundVideoMsgId2 == PotokDebugLog.TARGET_MESSAGE_ID) {
+                                PotokDebugLog.d("TARGETPOST", "ImageReceiver.postScale msgId=" + roundVideoMsgId2
+                                    + " postScale=" + postScale + " realImageW=" + realImageW + " realImageH=" + realImageH
+                                    + " roundMessageInset=" + AndroidUtilities.roundMessageInset
+                                    + " drawRegion=" + drawRegion + " bitmapW=" + bitmapW + " bitmapH=" + bitmapH
+                                    + " scaleW=" + scaleW + " scaleH=" + scaleH + " scale=" + scale
+                                    + " shaderMatrix=" + shaderMatrix);
+                            }
                             shaderMatrix.postScale(postScale, postScale, drawRegion.centerX(), drawRegion.centerY());
                         }
                         if (legacyShader != null) {

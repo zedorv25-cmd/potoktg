@@ -37,6 +37,7 @@ import com.google.android.exoplayer2.util.Log;
 
 import org.telegram.tgnet.TLObject;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.ui.PotokDebugLog;
 import org.telegram.ui.Components.AnimatedEmojiDrawable;
 import org.telegram.ui.Components.AnimatedEmojiSpan;
 import org.telegram.ui.Components.AnimatedFileDrawable;
@@ -1281,6 +1282,20 @@ public class ImageReceiver implements NotificationCenter.NotificationCenterDeleg
             roundRadius = this.roundRadius;
         }
         if (!useRoundRadius) roundRadius = emptyRoundRadius;
+        // ⚠️ ДИАГНОСТИКА (ROUNDVID_MASK, новый узел этой сессии): реальные
+        // значения на КАЖДОЙ отрисовке кадра именно для round video — то,
+        // что фактически подаётся в orientation/scale/clip логику ниже.
+        // Гейт по isRoundVideo — чтобы не спамить логами каждый аватар/фото
+        // в приложении (drawDrawable вызывается для ВСЕГО, не только кружков).
+        if (isRoundVideo) {
+            PotokDebugLog.d("ROUNDVID_MASK", "drawDrawable ENTRY imageX=" + imageX + " imageY=" + imageY
+                + " imageW=" + imageW + " imageH=" + imageH
+                + " orientation=" + orientation + " invert=" + invert
+                + " roundRadius0=" + (roundRadius.length > 0 ? roundRadius[0] : -1)
+                + " isRoundRect=" + isRoundRect + " useRoundRadius=" + useRoundRadius
+                + " sideClip=" + sideClip + " isAspectFit=" + isAspectFit
+                + " backgroundThreadDrawHolder=" + (backgroundThreadDrawHolder != null));
+        }
         if (drawable instanceof BitmapDrawable) {
             BitmapDrawable bitmapDrawable = (BitmapDrawable) drawable;
             if (drawable instanceof RLottieDrawable) {
@@ -1472,6 +1487,16 @@ public class ImageReceiver implements NotificationCenter.NotificationCenterDeleg
                         shaderMatrix.preScale(scale, scale);
                         if (isRoundVideo) {
                             float postScale = (realImageW + AndroidUtilities.roundMessageInset * 2) / realImageW;
+                            // ⚠️ ДИАГНОСТИКА (ROUNDVID_MASK): именно этот блок — единственное
+                            // место в оригинальном коде Telegram, где для round video
+                            // применяется ДОПОЛНИТЕЛЬНЫЙ компенсирующий scale поверх
+                            // обычного center-crop. Если drawRegion/bitmapW/H здесь не
+                            // соответствуют реальному видимому окну — вот кандидат №1.
+                            PotokDebugLog.d("ROUNDVID_MASK", "isRoundVideo postScale=" + postScale
+                                + " realImageW=" + realImageW + " realImageH=" + realImageH
+                                + " roundMessageInset=" + AndroidUtilities.roundMessageInset
+                                + " drawRegion=" + drawRegion + " bitmapW=" + bitmapW + " bitmapH=" + bitmapH
+                                + " scaleW=" + scaleW + " scaleH=" + scaleH + " scale=" + scale);
                             shaderMatrix.postScale(postScale, postScale, drawRegion.centerX(), drawRegion.centerY());
                         }
                         if (legacyShader != null) {

@@ -755,6 +755,27 @@ public class PotokFeedPostCell extends LinearLayout {
         roundVideoImage.getImageReceiver().setRoundRadius(DEBUG_DISABLE_ROUND_MASK ? 0 : roundVideoBigSize / 2);
         roundVideoContainer.addView(roundVideoImage, new FrameLayout.LayoutParams(roundVideoBigSize, roundVideoBigSize));
 
+        // ⚠️ ДИАГНОСТИКА (ROUNDVID_MASK, новый узел этой сессии — UI layout):
+        // реальные значения контейнера/картинки закрытого маленького кружка
+        // ПРЯМО в момент layout-прохода. Этого узла не было вообще — раньше
+        // логировался только ОТКРЫТЫЙ (playing) контейнер в PotokFeedFragment.
+        // Логируем оба уровня: сам контейнер (его layout size + scaleX/Y —
+        // визуальный множитель) и картинку внутри (её фактический layout size,
+        // который ДОЛЖЕН всегда быть roundVideoBigSize независимо от состояния).
+        roundVideoContainer.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            PotokDebugLog.d("ROUNDVID_MASK", "roundVideoContainer onLayout w=" + (right - left) + " h=" + (bottom - top)
+                + " scaleX=" + roundVideoContainer.getScaleX() + " scaleY=" + roundVideoContainer.getScaleY()
+                + " pivotX=" + roundVideoContainer.getPivotX() + " pivotY=" + roundVideoContainer.getPivotY()
+                + " lpW=" + roundVideoContainer.getLayoutParams().width + " lpH=" + roundVideoContainer.getLayoutParams().height
+                + " clipChildren=" + roundVideoContainer.getClipChildren()
+                + " roundVideoOpened=" + roundVideoOpened + " roundVideoMessageId=" + (roundVideoMessageObject != null ? roundVideoMessageObject.getId() : -1));
+        });
+        roundVideoImage.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            PotokDebugLog.d("ROUNDVID_MASK", "roundVideoImage onLayout w=" + (right - left) + " h=" + (bottom - top)
+                + " expectedBigSize=" + roundVideoBigSize
+                + " roundVideoOpened=" + roundVideoOpened + " roundVideoMessageId=" + (roundVideoMessageObject != null ? roundVideoMessageObject.getId() : -1));
+        });
+
         // Кнопка/кольцо загрузки для ещё не скачанного файла — тот же самый
         // переиспользуемый RadialProgress2, которым уже рисуется загрузка
         // обычного фото/видео в карусели (см. MediaHolder выше), просто заведён

@@ -3371,6 +3371,15 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                 + " state=" + stateName + " playWhenReady=" + playWhenReady
                 + " isPlaying=" + videoPlayer.isPlaying() + " destroyAtEnd=" + destroyAtEnd
                 + " playerWasReady(before)=" + playerWasReady);
+            // ⚠️ TARGETPOST — безусловно, для целевого поста, работает одинаково
+            // и в ленте, и на канале (общий физический плеер).
+            if (messageObject.getId() == PotokDebugLog.TARGET_MESSAGE_ID) {
+                PotokDebugLog.d("TARGETPOST", "PLAYER updateVideoState msgId=" + messageObject.getId()
+                    + " dialogId=" + messageObject.getDialogId()
+                    + " state=" + stateName + " playWhenReady=" + playWhenReady
+                    + " isPlaying=" + videoPlayer.isPlaying() + " destroyAtEnd=" + destroyAtEnd
+                    + " playerWasReady(before)=" + playerWasReady);
+            }
         }
         if (playbackState != ExoPlayer.STATE_ENDED && playbackState != ExoPlayer.STATE_IDLE) {
             try {
@@ -3802,6 +3811,13 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                             + " exceptionClass=" + e.getClass().getSimpleName()
                             + " message=" + e.getMessage()
                             + " cause=" + (e.getCause() == null ? "null" : e.getCause().toString()));
+                        if (playingMessageObject.getId() == PotokDebugLog.TARGET_MESSAGE_ID) {
+                            PotokDebugLog.d("TARGETPOST", "PLAYER onError msgId=" + playingMessageObject.getId()
+                                + " dialogId=" + playingMessageObject.getDialogId()
+                                + " exceptionClass=" + e.getClass().getSimpleName()
+                                + " message=" + e.getMessage()
+                                + " cause=" + (e.getCause() == null ? "null" : e.getCause().toString()));
+                        }
                     }
                     FileLog.e(e);
                 }
@@ -3849,6 +3865,11 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                         PotokDebugLog.d("ROUNDVID_PLAY", "onRenderedFirstFrame msgId=" + playingMessageObject.getId()
                             + " dialogId=" + playingMessageObject.getDialogId()
                             + " wasDrawingReadyBefore=" + isDrawingWasReady);
+                        if (playingMessageObject.getId() == PotokDebugLog.TARGET_MESSAGE_ID) {
+                            PotokDebugLog.d("TARGETPOST", "PLAYER onRenderedFirstFrame msgId=" + playingMessageObject.getId()
+                                + " dialogId=" + playingMessageObject.getDialogId()
+                                + " wasDrawingReadyBefore=" + isDrawingWasReady);
+                        }
                     }
                     if (currentAspectRatioFrameLayout != null && !currentAspectRatioFrameLayout.isDrawingReady()) {
                         isDrawingWasReady = true;
@@ -3875,6 +3896,12 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                             + " dialogId=" + playingMessageObject.getDialogId()
                             + " pipSwitchingState=" + pipSwitchingState
                             + " videoPlayerIsPlaying=" + (videoPlayer != null && videoPlayer.isPlaying()));
+                        if (playingMessageObject.getId() == PotokDebugLog.TARGET_MESSAGE_ID) {
+                            PotokDebugLog.d("TARGETPOST", "PLAYER onSurfaceDestroyed msgId=" + playingMessageObject.getId()
+                                + " dialogId=" + playingMessageObject.getDialogId()
+                                + " pipSwitchingState=" + pipSwitchingState
+                                + " videoPlayerIsPlaying=" + (videoPlayer != null && videoPlayer.isPlaying()));
+                        }
                     }
                     if (videoPlayer == null) {
                         return false;
@@ -3933,6 +3960,16 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                         if (surfaceUpdateCounter % 30 == 0) {
                             PotokDebugLog.d("ROUNDVID_PLAY", "onSurfaceTextureUpdated msgId=" + playingMessageObject.getId()
                                 + " frameCount=" + surfaceUpdateCounter);
+                        }
+                        // ⚠️ TARGETPOST — для целевого поста НЕ throttle-им (важнее поймать
+                        // точный момент залипания/чёрного кадра, чем экономить буфер);
+                        // здесь же логируем реальную позицию плеера — если seek залипает
+                        // на 0, это будет видно по currentPosition, не меняющемуся между кадрами.
+                        if (playingMessageObject.getId() == PotokDebugLog.TARGET_MESSAGE_ID) {
+                            PotokDebugLog.d("TARGETPOST", "PLAYER onSurfaceTextureUpdated msgId=" + playingMessageObject.getId()
+                                + " frameCount=" + surfaceUpdateCounter
+                                + " currentPosition=" + (videoPlayer != null ? videoPlayer.getCurrentPosition() : -1)
+                                + " isPlaying=" + (videoPlayer != null && videoPlayer.isPlaying()));
                         }
                     }
                 }

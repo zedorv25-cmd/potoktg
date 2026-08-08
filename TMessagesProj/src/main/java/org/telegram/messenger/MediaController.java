@@ -5812,4 +5812,1291 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
     private static void writeMotionPhoto(File photoFile, File videoFile, OutputStream out, boolean[] cancelled) throws IOException {
         final long videoLength = videoFile.length();
         final String xmp = buildMotionPhotoXmp(videoLength);
-        final byte[] xmpHeader = "http://ns.adobe.com/xap/1.0/
+        final byte[] xmpHeader = "http://ns.adobe.com/xap/1.0/ ".getBytes("UTF-8");
+        final byte[] xmpBytes = xmp.getBytes("UTF-8");
+        final int segLen = xmpHeader.length + xmpBytes.length + 2;
+        if (segLen > 65535) {
+            throw new IOException("XMP segment too large: " + segLen);
+        }
+
+        try (FileInputStream pis = new FileInputStream(photoFile)) {
+            final int b0 = pis.read();
+            final int b1 = pis.read();
+            if (b0 != 0xFF || b1 != 0xD8) {
+                throw new IOException("Not a JPEG: " + photoFile);
+            }
+            out.write(0xFF);
+            out.write(0xD8);
+            out.write(0xFF);
+            out.write(0xE1);
+            out.write((segLen >> 8) & 0xFF);
+            out.write(segLen & 0xFF);
+            out.write(xmpHeader);
+            out.write(xmpBytes);
+            final byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = pis.read(buf)) > 0) {
+                if (cancelled != null && cancelled[0]) return;
+                out.write(buf, 0, n);
+            }
+        }
+        try (FileInputStream vis = new FileInputStream(videoFile)) {
+            final byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = vis.read(buf)) > 0) {
+                if (cancelled != null && cancelled[0]) return;
+                out.write(buf, 0, n);
+            }
+        }
+    }
+
+    private static String buildMotionPhotoXmp(long videoLength) {
+        return "<?xpacket begin=\"﻿\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>" +
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">" +
+                "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">" +
+                "<rdf:Description rdf:about=\"\" " +
+                "xmlns:GCamera=\"http://ns.google.com/photos/1.0/camera/\" " +
+                "xmlns:Container=\"http://ns.google.com/photos/1.0/container/\" " +
+                "xmlns:Item=\"http://ns.google.com/photos/1.0/container/item/\" " +
+                "GCamera:MotionPhoto=\"1\" " +
+                "GCamera:MotionPhotoVersion=\"1\" " +
+                "GCamera:MotionPhotoPresentationTimestampUs=\"0\">" +
+                "<Container:Directory>" +
+                "<rdf:Seq>" +
+                "<rdf:li rdf:parseType=\"Resource\">" +
+                "<Container:Item Item:Mime=\"image/jpeg\" Item:Semantic=\"Primary\" Item:Length=\"0\" Item:Padding=\"0\"/>" +
+                "</rdf:li>" +
+                "<rdf:li rdf:parseType=\"Resource\">" +
+                "<Container:Item Item:Mime=\"video/mp4\" Item:Semantic=\"MotionPhoto\" Item:Length=\"" + videoLength + "\" Item:Padding=\"0\"/>" +
+                "</rdf:li>" +
+                "</rdf:Seq>" +
+                "</Container:Directory>" +
+                "</rdf:Description>" +
+                "</rdf:RDF>" +
+                "</x:xmpmeta>" +
+                "<?xpacket end=\"w\"?>";
+    }
+
+    private static Uri saveFileInternal(int type, File sourceFile, String filename) {
+        try {
+            int selectedType = type;
+            ContentValues contentValues = new ContentValues();
+            String extension = FileLoader.getFileExtension(sourceFile);
+            String mimeType = null;
+            if (extension != null) {
+                mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+            }
+            Uri uriToInsert = null;
+            if ((type == 0 || type == 1) && mimeType != null) {
+                if (mimeType.startsWith("image")) {
+                    selectedType = 0;
+                }
+                if (mimeType.startsWith("video")) {
+                    selectedType = 1;
+                }
+            }
+            if (selectedType == 0) {
+                if (filename == null) {
+                    filename = AndroidUtilities.generateFileName(0, extension);
+                }
+                uriToInsert = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+                File dirDest = new File(Environment.DIRECTORY_PICTURES, "Telegram");
+                contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, dirDest + File.separator);
+                contentValues.put(MediaStore.Images.Media.DISPLAY_NAME, filename);
+                contentValues.put(MediaStore.Images.Media.MIME_TYPE, mimeType);
+            } else if (selectedType == 1) {
+                if (filename == null) {
+                    filename = AndroidUtilities.generateFileName(1, extension);
+                }
+                File dirDest = new File(Environment.DIRECTORY_MOVIES, "Telegram");
+                contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, dirDest + File.separator);
+                uriToInsert = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+                contentValues.put(MediaStore.Video.Media.DISPLAY_NAME, filename);
+            } else if (selectedType == 2) {
+                if (filename == null) {
+                    filename = sourceFile.getName();
+                }
+                File dirDest = new File(Environment.DIRECTORY_DOWNLOADS, "Telegram");
+                contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, dirDest + File.separator);
+                uriToInsert = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+                contentValues.put(MediaStore.Downloads.DISPLAY_NAME, filename);
+            } else {
+                if (filename == null) {
+                    filename = sourceFile.getName();
+                }
+                File dirDest = new File(Environment.DIRECTORY_MUSIC, "Telegram");
+                contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, dirDest + File.separator);
+                uriToInsert = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+                contentValues.put(MediaStore.Audio.Media.DISPLAY_NAME, filename);
+            }
+
+            contentValues.put(MediaStore.MediaColumns.MIME_TYPE, mimeType);
+
+            Uri dstUri = ApplicationLoader.applicationContext.getContentResolver().insert(uriToInsert, contentValues);
+            if (dstUri != null) {
+                FileInputStream fileInputStream = new FileInputStream(sourceFile);
+                OutputStream outputStream = ApplicationLoader.applicationContext.getContentResolver().openOutputStream(dstUri);
+                AndroidUtilities.copyFile(fileInputStream, outputStream);
+                fileInputStream.close();
+            }
+            return dstUri;
+        } catch (Exception e) {
+            FileLog.e(e);
+            return null;
+        }
+    }
+
+    public static String getStickerExt(Uri uri) {
+        InputStream inputStream = null;
+        try {
+            try {
+                inputStream = ApplicationLoader.applicationContext.getContentResolver().openInputStream(uri);
+            } catch (Exception e) {
+                inputStream = null;
+            }
+            if (inputStream == null) {
+                File file = new File(uri.getPath());
+                if (file.exists()) {
+                    inputStream = new FileInputStream(file);
+                }
+            }
+
+            byte[] header = new byte[12];
+            if (inputStream.read(header, 0, 12) == 12) {
+                if (header[0] == (byte) 0x89 && header[1] == (byte) 0x50 && header[2] == (byte) 0x4E && header[3] == (byte) 0x47 && header[4] == (byte) 0x0D && header[5] == (byte) 0x0A && header[6] == (byte) 0x1A && header[7] == (byte) 0x0A) {
+                    return "png";
+                }
+                if (header[0] == 0x1f && header[1] == (byte) 0x8b) {
+                    return "tgs";
+                }
+                String str = new String(header);
+                if (str != null) {
+                    str = str.toLowerCase();
+                    if (str.startsWith("riff") && str.endsWith("webp")) {
+                        return "webp";
+                    }
+                }
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        } finally {
+            try {
+                if (inputStream != null) {
+                    inputStream.close();
+                }
+            } catch (Exception e2) {
+                FileLog.e(e2);
+            }
+        }
+        return null;
+    }
+
+    public static boolean isWebp(Uri uri) {
+        InputStream inputStream = null;
+        try {
+            inputStream = ApplicationLoader.applicationContext.getContentResolver().openInputStream(uri);
+            byte[] header = new byte[12];
+            if (inputStream.read(header, 0, 12) == 12) {
+                String str = new String(header);
+                str = str.toLowerCase();
+                if (str.startsWith("riff") && str.endsWith("webp")) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        } finally {
+            try {
+                if (inputStream != null) {
+                    inputStream.close();
+                }
+            } catch (Exception e2) {
+                FileLog.e(e2);
+            }
+        }
+        return false;
+    }
+
+    public static boolean isGif(Uri uri) {
+        InputStream inputStream = null;
+        try {
+            inputStream = ApplicationLoader.applicationContext.getContentResolver().openInputStream(uri);
+            byte[] header = new byte[3];
+            if (inputStream.read(header, 0, 3) == 3) {
+                String str = new String(header);
+                if (str.equalsIgnoreCase("gif")) {
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        } finally {
+            try {
+                if (inputStream != null) {
+                    inputStream.close();
+                }
+            } catch (Exception e2) {
+                FileLog.e(e2);
+            }
+        }
+        return false;
+    }
+
+    public static String getFileName(Uri uri) {
+        if (uri == null) {
+            return "";
+        }
+        try {
+            String result = null;
+            if (uri.getScheme().equals("content")) {
+                try (Cursor cursor = ApplicationLoader.applicationContext.getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                    if (cursor.moveToFirst()) {
+                        result = cursor.getString(cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME));
+                    }
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+            }
+            if (result == null) {
+                result = uri.getPath();
+                int cut = result.lastIndexOf('/');
+                if (cut != -1) {
+                    result = result.substring(cut + 1);
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+        return "";
+    }
+
+    public static File createFileInCache(String name, String ext) {
+        File f = null;
+        try {
+            f = AndroidUtilities.getSharingDirectory();
+            f.mkdirs();
+            if (AndroidUtilities.isInternalUri(Uri.fromFile(f))) {
+                return null;
+            }
+            int count = 0;
+            do {
+                f = AndroidUtilities.getSharingDirectory();
+                if (count == 0) {
+                    f = new File(f, name);
+                } else {
+                    int lastDotIndex = name.lastIndexOf(".");
+                    if (lastDotIndex > 0) {
+                        f = new File(f, name.substring(0, lastDotIndex) + " (" + count + ")" + name.substring(lastDotIndex));
+                    } else {
+                        f = new File(f, name + " (" + count + ")");
+                    }
+                }
+                count++;
+            } while (f.exists());
+            return f;
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+        return null;
+    }
+
+    public static String copyFileToCache(Uri uri, String ext) {
+        return copyFileToCache(uri, ext, -1);
+    }
+
+    @SuppressLint("DiscouragedPrivateApi")
+    public static String copyFileToCache(Uri uri, String ext, long sizeLimit) {
+        InputStream inputStream = null;
+        FileOutputStream output = null;
+        int totalLen = 0;
+        File f = null;
+        try {
+            String name = FileLoader.fixFileName(getFileName(uri));
+            if (name == null) {
+                int id = SharedConfig.getLastLocalId();
+                SharedConfig.saveConfig();
+                name = String.format(Locale.US, "%d.%s", id, ext);
+            }
+            f = AndroidUtilities.getSharingDirectory();
+            f.mkdirs();
+            if (AndroidUtilities.isInternalUri(Uri.fromFile(f))) {
+                return null;
+            }
+            int count = 0;
+            do {
+                f = AndroidUtilities.getSharingDirectory();
+                if (count == 0) {
+                    f = new File(f, name);
+                } else {
+                    int lastDotIndex = name.lastIndexOf(".");
+                    if (lastDotIndex > 0) {
+                        f = new File(f, name.substring(0, lastDotIndex) + " (" + count + ")" + name.substring(lastDotIndex));
+                    } else {
+                        f = new File(f, name + " (" + count + ")");
+                    }
+                }
+                count++;
+            } while (f.exists());
+            inputStream = ApplicationLoader.applicationContext.getContentResolver().openInputStream(uri);
+            if (inputStream instanceof FileInputStream) {
+                FileInputStream fileInputStream = (FileInputStream) inputStream;
+                try {
+                    Method getInt = FileDescriptor.class.getDeclaredMethod("getInt$");
+                    int fdint = (Integer) getInt.invoke(fileInputStream.getFD());
+                    if (AndroidUtilities.isInternalUri(fdint)) {
+                        return null;
+                    }
+                } catch (Throwable e) {
+                    FileLog.e(e);
+                }
+            }
+            output = new FileOutputStream(f);
+            byte[] buffer = new byte[1024 * 20];
+            int len;
+            while ((len = inputStream.read(buffer)) != -1) {
+                output.write(buffer, 0, len);
+                totalLen += len;
+                if (sizeLimit > 0 && totalLen > sizeLimit) {
+                    return null;
+                }
+            }
+            return f.getAbsolutePath();
+        } catch (Exception e) {
+            FileLog.e(e);
+        } finally {
+            try {
+                if (inputStream != null) {
+                    inputStream.close();
+                }
+            } catch (Exception e2) {
+                FileLog.e(e2);
+            }
+            try {
+                if (output != null) {
+                    output.close();
+                }
+            } catch (Exception e2) {
+                FileLog.e(e2);
+            }
+            if (sizeLimit > 0 && totalLen > sizeLimit) {
+                f.delete();
+            }
+        }
+        return null;
+    }
+
+    public static void loadGalleryPhotosAlbums(final int guid) {
+        Thread thread = new Thread(() -> {
+            final ArrayList<AlbumEntry> mediaAlbumsSorted = new ArrayList<>();
+            final ArrayList<AlbumEntry> photoAlbumsSorted = new ArrayList<>();
+            SparseArray<AlbumEntry> mediaAlbums = new SparseArray<>();
+            SparseArray<AlbumEntry> photoAlbums = new SparseArray<>();
+            AlbumEntry allPhotosAlbum = null;
+            AlbumEntry allVideosAlbum = null;
+            AlbumEntry allMediaAlbum = null;
+            String cameraFolder = null;
+            try {
+                cameraFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).getAbsolutePath() + "/" + "Camera/";
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+            Integer mediaCameraAlbumId = null;
+            Integer photoCameraAlbumId = null;
+
+            Cursor cursor = null;
+            try {
+                final Context context = ApplicationLoader.applicationContext;
+                if (
+                    Build.VERSION.SDK_INT < 23 ||
+                    Build.VERSION.SDK_INT < 33 && context.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED ||
+                    Build.VERSION.SDK_INT >= 33 && (
+                        context.checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED ||
+                        context.checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED ||
+                        context.checkSelfPermission(Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+                    )
+                ) {
+                    cursor = MediaStore.Images.Media.query(context.getContentResolver(), MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projectionPhotos, null, null, (Build.VERSION.SDK_INT > 28 ? MediaStore.Images.Media.DATE_MODIFIED : MediaStore.Images.Media.DATE_TAKEN) + " DESC");
+                    if (cursor != null) {
+                        int imageIdColumn = cursor.getColumnIndex(MediaStore.Images.Media._ID);
+                        int bucketIdColumn = cursor.getColumnIndex(MediaStore.Images.Media.BUCKET_ID);
+                        int bucketNameColumn = cursor.getColumnIndex(MediaStore.Images.Media.BUCKET_DISPLAY_NAME);
+                        int dataColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATA);
+                        int dateColumn = cursor.getColumnIndex(Build.VERSION.SDK_INT > 28 ? MediaStore.Images.Media.DATE_MODIFIED : MediaStore.Images.Media.DATE_TAKEN);
+                        int orientationColumn = cursor.getColumnIndex(MediaStore.Images.Media.ORIENTATION);
+                        int widthColumn = cursor.getColumnIndex(MediaStore.Images.Media.WIDTH);
+                        int heightColumn = cursor.getColumnIndex(MediaStore.Images.Media.HEIGHT);
+                        int sizeColumn = cursor.getColumnIndex(MediaStore.Images.Media.SIZE);
+
+                        while (cursor.moveToNext()) {
+                            String path = cursor.getString(dataColumn);
+                            if (TextUtils.isEmpty(path)) {
+                                continue;
+                            }
+
+                            int imageId = cursor.getInt(imageIdColumn);
+                            int bucketId = cursor.getInt(bucketIdColumn);
+                            String bucketName = cursor.getString(bucketNameColumn);
+                            long dateTaken = cursor.getLong(dateColumn);
+                            int orientation = cursor.getInt(orientationColumn);
+                            int width = cursor.getInt(widthColumn);
+                            int height = cursor.getInt(heightColumn);
+                            long size = cursor.getLong(sizeColumn);
+
+                            PhotoEntry photoEntry = new PhotoEntry(bucketId, imageId, dateTaken, path, orientation, 0, false, width, height, size);
+
+                            if (allPhotosAlbum == null) {
+                                allPhotosAlbum = new AlbumEntry(0, LocaleController.getString(R.string.AllPhotos), photoEntry);
+                                photoAlbumsSorted.add(0, allPhotosAlbum);
+                            }
+                            if (allMediaAlbum == null) {
+                                allMediaAlbum = new AlbumEntry(0, LocaleController.getString(R.string.AllMedia), photoEntry);
+                                mediaAlbumsSorted.add(0, allMediaAlbum);
+                            }
+                            if (allPhotosAlbum.photos.size() < 15) {
+                                // preload XMP of first few photos
+                                photoEntry.isLivePhoto();
+                            }
+                            allPhotosAlbum.addPhoto(photoEntry);
+                            allMediaAlbum.addPhoto(photoEntry);
+
+                            AlbumEntry albumEntry = mediaAlbums.get(bucketId);
+                            if (albumEntry == null) {
+                                albumEntry = new AlbumEntry(bucketId, bucketName, photoEntry);
+                                mediaAlbums.put(bucketId, albumEntry);
+                                if (mediaCameraAlbumId == null && cameraFolder != null && path != null && path.startsWith(cameraFolder)) {
+                                    mediaAlbumsSorted.add(0, albumEntry);
+                                    mediaCameraAlbumId = bucketId;
+                                } else {
+                                    mediaAlbumsSorted.add(albumEntry);
+                                }
+                            }
+                            albumEntry.addPhoto(photoEntry);
+
+                            albumEntry = photoAlbums.get(bucketId);
+                            if (albumEntry == null) {
+                                albumEntry = new AlbumEntry(bucketId, bucketName, photoEntry);
+                                photoAlbums.put(bucketId, albumEntry);
+                                if (photoCameraAlbumId == null && cameraFolder != null && path != null && path.startsWith(cameraFolder)) {
+                                    photoAlbumsSorted.add(0, albumEntry);
+                                    photoCameraAlbumId = bucketId;
+                                } else {
+                                    photoAlbumsSorted.add(albumEntry);
+                                }
+                            }
+                            albumEntry.addPhoto(photoEntry);
+                        }
+                    }
+                }
+            } catch (Throwable e) {
+                FileLog.e(e);
+            } finally {
+                if (cursor != null) {
+                    try {
+                        cursor.close();
+                    } catch (Exception e) {
+                        FileLog.e(e);
+                    }
+                }
+            }
+
+            try {
+
+                final Context context = ApplicationLoader.applicationContext;
+                if (
+                    Build.VERSION.SDK_INT < 23 ||
+                    Build.VERSION.SDK_INT < 33 && context.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED ||
+                    Build.VERSION.SDK_INT >= 33 && (
+                        context.checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED ||
+                        context.checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED ||
+                        context.checkSelfPermission(Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+                    )
+                ) {
+                    cursor = MediaStore.Images.Media.query(ApplicationLoader.applicationContext.getContentResolver(), MediaStore.Video.Media.EXTERNAL_CONTENT_URI, projectionVideo, null, null, (Build.VERSION.SDK_INT > 28 ? MediaStore.Video.Media.DATE_MODIFIED : MediaStore.Video.Media.DATE_TAKEN) + " DESC");
+                    if (cursor != null) {
+                        int imageIdColumn = cursor.getColumnIndex(MediaStore.Video.Media._ID);
+                        int bucketIdColumn = cursor.getColumnIndex(MediaStore.Video.Media.BUCKET_ID);
+                        int bucketNameColumn = cursor.getColumnIndex(MediaStore.Video.Media.BUCKET_DISPLAY_NAME);
+                        int dataColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATA);
+                        int dateColumn = cursor.getColumnIndex(Build.VERSION.SDK_INT > 28 ? MediaStore.Video.Media.DATE_MODIFIED : MediaStore.Video.Media.DATE_TAKEN);
+                        int durationColumn = cursor.getColumnIndex(MediaStore.Video.Media.DURATION);
+                        int widthColumn = cursor.getColumnIndex(MediaStore.Video.Media.WIDTH);
+                        int heightColumn = cursor.getColumnIndex(MediaStore.Video.Media.HEIGHT);
+                        int sizeColumn = cursor.getColumnIndex(MediaStore.Video.Media.SIZE);
+                        int orientationColumn = cursor.getColumnIndex(MediaStore.Video.Media.ORIENTATION);
+
+                        while (cursor.moveToNext()) {
+                            String path = cursor.getString(dataColumn);
+                            if (TextUtils.isEmpty(path)) {
+                                continue;
+                            }
+
+                            int imageId = cursor.getInt(imageIdColumn);
+                            int bucketId = cursor.getInt(bucketIdColumn);
+                            String bucketName = cursor.getString(bucketNameColumn);
+                            long dateTaken = cursor.getLong(dateColumn);
+                            long duration = cursor.getLong(durationColumn);
+                            int width = cursor.getInt(widthColumn);
+                            int height = cursor.getInt(heightColumn);
+                            long size = cursor.getLong(sizeColumn);
+                            int orientation = 0;
+
+                            PhotoEntry photoEntry = new PhotoEntry(bucketId, imageId, dateTaken, path, orientation, (int) (duration / 1000), true, width, height, size);
+
+                            if (allVideosAlbum == null) {
+                                allVideosAlbum = new AlbumEntry(0, LocaleController.getString(R.string.AllVideos), photoEntry);
+                                allVideosAlbum.videoOnly = true;
+                                int index = 0;
+                                if (allMediaAlbum != null) {
+                                    index++;
+                                }
+                                if (allPhotosAlbum != null) {
+                                    index++;
+                                }
+                                mediaAlbumsSorted.add(index, allVideosAlbum);
+                            }
+                            if (allMediaAlbum == null) {
+                                allMediaAlbum = new AlbumEntry(0, LocaleController.getString(R.string.AllMedia), photoEntry);
+                                mediaAlbumsSorted.add(0, allMediaAlbum);
+                            }
+                            allVideosAlbum.addPhoto(photoEntry);
+                            allMediaAlbum.addPhoto(photoEntry);
+
+                            AlbumEntry albumEntry = mediaAlbums.get(bucketId);
+                            if (albumEntry == null) {
+                                albumEntry = new AlbumEntry(bucketId, bucketName, photoEntry);
+                                mediaAlbums.put(bucketId, albumEntry);
+                                if (mediaCameraAlbumId == null && cameraFolder != null && path != null && path.startsWith(cameraFolder)) {
+                                    mediaAlbumsSorted.add(0, albumEntry);
+                                    mediaCameraAlbumId = bucketId;
+                                } else {
+                                    mediaAlbumsSorted.add(albumEntry);
+                                }
+                            }
+
+                            albumEntry.addPhoto(photoEntry);
+                        }
+                    }
+                }
+            } catch (Throwable e) {
+                FileLog.e(e);
+            } finally {
+                if (cursor != null) {
+                    try {
+                        cursor.close();
+                    } catch (Exception e) {
+                        FileLog.e(e);
+                    }
+                }
+            }
+            for (int a = 0; a < mediaAlbumsSorted.size(); a++) {
+                Collections.sort(mediaAlbumsSorted.get(a).photos, (o1, o2) -> {
+                    if (o1.dateTaken < o2.dateTaken) {
+                        return 1;
+                    } else if (o1.dateTaken > o2.dateTaken) {
+                        return -1;
+                    }
+                    return 0;
+                });
+            }
+            broadcastNewPhotos(guid, mediaAlbumsSorted, photoAlbumsSorted, mediaCameraAlbumId, allMediaAlbum, allPhotosAlbum, allVideosAlbum, 0);
+        });
+        thread.setPriority(Thread.MIN_PRIORITY);
+        thread.start();
+    }
+
+    public static boolean forceBroadcastNewPhotos;
+    private static void broadcastNewPhotos(final int guid, final ArrayList<AlbumEntry> mediaAlbumsSorted, final ArrayList<AlbumEntry> photoAlbumsSorted, final Integer cameraAlbumIdFinal, final AlbumEntry allMediaAlbumFinal, final AlbumEntry allPhotosAlbumFinal, final AlbumEntry allVideosAlbumFinal, int delay) {
+        if (broadcastPhotosRunnable != null) {
+            AndroidUtilities.cancelRunOnUIThread(broadcastPhotosRunnable);
+        }
+        AndroidUtilities.runOnUIThread(broadcastPhotosRunnable = () -> {
+            if (PhotoViewer.getInstance().isVisible() && !forceBroadcastNewPhotos) {
+                broadcastNewPhotos(guid, mediaAlbumsSorted, photoAlbumsSorted, cameraAlbumIdFinal, allMediaAlbumFinal, allPhotosAlbumFinal, allVideosAlbumFinal, 1000);
+                return;
+            }
+            allMediaAlbums = mediaAlbumsSorted;
+            allPhotoAlbums = photoAlbumsSorted;
+            broadcastPhotosRunnable = null;
+            allPhotosAlbumEntry = allPhotosAlbumFinal;
+            allMediaAlbumEntry = allMediaAlbumFinal;
+            allVideosAlbumEntry = allVideosAlbumFinal;
+            NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.albumsDidLoad, guid, mediaAlbumsSorted, photoAlbumsSorted, cameraAlbumIdFinal);
+        }, delay);
+    }
+
+    public void scheduleVideoConvert(MessageObject messageObject) {
+        scheduleVideoConvert(messageObject, false, true, false);
+    }
+
+    public void scheduleVideoConvert(MessageObject messageObject, VideoEditedInfo videoEditedInfo) {
+        scheduleVideoConvert(messageObject, videoEditedInfo, false, true, false);
+    }
+
+    public boolean scheduleVideoConvert(MessageObject messageObject, boolean isEmpty, boolean withForeground, boolean forConversion) {
+        return scheduleVideoConvert(messageObject, messageObject != null ? messageObject.videoEditedInfo : null, isEmpty, withForeground, forConversion);
+    }
+
+    public boolean scheduleVideoConvert(MessageObject messageObject, VideoEditedInfo videoEditedInfo, boolean isEmpty, boolean withForeground, boolean forConversion) {
+        if (messageObject == null || videoEditedInfo == null) {
+            return false;
+        }
+        if (isEmpty && !videoConvertQueue.isEmpty()) {
+            return false;
+        } else if (isEmpty) {
+            new File(messageObject.messageOwner.attachPath).delete();
+        }
+        VideoConvertMessage videoConvertMessage = new VideoConvertMessage(messageObject, videoEditedInfo, withForeground, forConversion);
+        videoConvertQueue.add(videoConvertMessage);
+        if (videoConvertMessage.foreground) {
+            foregroundConvertingMessages.add(videoConvertMessage);
+            checkForegroundConvertMessage(false);
+        }
+        if (videoConvertQueue.size() == 1) {
+            startVideoConvertFromQueue();
+        }
+        return true;
+    }
+
+    public void cancelVideoConvert(MessageObject messageObject) {
+        if (messageObject != null) {
+            if (!videoConvertQueue.isEmpty()) {
+                for (int a = 0; a < videoConvertQueue.size(); a++) {
+                    VideoConvertMessage videoConvertMessage = videoConvertQueue.get(a);
+                    MessageObject object = videoConvertMessage.messageObject;
+                    if (object.equals(messageObject) && object.currentAccount == messageObject.currentAccount) {
+                        if (a == 0) {
+                            synchronized (videoConvertSync) {
+                                videoConvertMessage.videoEditedInfo.canceled = true;
+                            }
+                        } else {
+                            VideoConvertMessage convertMessage = videoConvertQueue.remove(a);
+                            foregroundConvertingMessages.remove(convertMessage);
+                            checkForegroundConvertMessage(true);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private void checkForegroundConvertMessage(boolean cancelled) {
+        if (!foregroundConvertingMessages.isEmpty()) {
+            currentForegroundConvertingVideo = foregroundConvertingMessages.get(0);
+        } else {
+            currentForegroundConvertingVideo = null;
+        }
+        if (currentForegroundConvertingVideo != null || cancelled) {
+            VideoEncodingService.start(cancelled);
+        }
+    }
+
+    private boolean startVideoConvertFromQueue() {
+        if (!videoConvertQueue.isEmpty()) {
+            VideoConvertMessage videoConvertMessage = videoConvertQueue.get(0);
+            VideoEditedInfo videoEditedInfo = videoConvertMessage.videoEditedInfo;
+            synchronized (videoConvertSync) {
+                if (videoEditedInfo != null) {
+                    videoEditedInfo.canceled = false;
+                }
+            }
+            VideoConvertRunnable.runConversion(videoConvertMessage);
+            return true;
+        }
+        return false;
+    }
+
+    @SuppressLint("NewApi")
+    public static MediaCodecInfo selectCodec(String mimeType) {
+        int numCodecs = MediaCodecList.getCodecCount();
+        MediaCodecInfo lastCodecInfo = null;
+        for (int i = 0; i < numCodecs; i++) {
+            MediaCodecInfo codecInfo = MediaCodecList.getCodecInfoAt(i);
+            if (!codecInfo.isEncoder()) {
+                continue;
+            }
+            String[] types = codecInfo.getSupportedTypes();
+            for (String type : types) {
+                if (type.equalsIgnoreCase(mimeType)) {
+                    lastCodecInfo = codecInfo;
+                    String name = lastCodecInfo.getName();
+                    if (name != null) {
+                        if (!name.equals("OMX.SEC.avc.enc")) {
+                            return lastCodecInfo;
+                        } else if (name.equals("OMX.SEC.AVC.Encoder")) {
+                            return lastCodecInfo;
+                        }
+                    }
+                }
+            }
+        }
+        return lastCodecInfo;
+    }
+
+    private static boolean isRecognizedFormat(int colorFormat) {
+        switch (colorFormat) {
+            case MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar:
+            case MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420PackedPlanar:
+            case MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar:
+            case MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420PackedSemiPlanar:
+            case MediaCodecInfo.CodecCapabilities.COLOR_TI_FormatYUV420PackedSemiPlanar:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    @SuppressLint("NewApi")
+    public static int selectColorFormat(MediaCodecInfo codecInfo, String mimeType) {
+        MediaCodecInfo.CodecCapabilities capabilities = codecInfo.getCapabilitiesForType(mimeType);
+        int lastColorFormat = 0;
+        for (int i = 0; i < capabilities.colorFormats.length; i++) {
+            int colorFormat = capabilities.colorFormats[i];
+            if (isRecognizedFormat(colorFormat)) {
+                lastColorFormat = colorFormat;
+                if (!(codecInfo.getName().equals("OMX.SEC.AVC.Encoder") && colorFormat == 19)) {
+                    return colorFormat;
+                }
+            }
+        }
+        return lastColorFormat;
+    }
+
+    public static int findTrack(MediaExtractor extractor, boolean audio) {
+        int numTracks = extractor.getTrackCount();
+        for (int i = 0; i < numTracks; i++) {
+            MediaFormat format = extractor.getTrackFormat(i);
+            String mime = format.getString(MediaFormat.KEY_MIME);
+            if (audio) {
+                if (mime.startsWith("audio/")) {
+                    return i;
+                }
+            } else {
+                if (mime.startsWith("video/")) {
+                    return i;
+                }
+            }
+        }
+        return -5;
+    }
+
+    public static boolean isH264Video(String videoPath) {
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            extractor.setDataSource(videoPath);
+            int videoIndex = MediaController.findTrack(extractor, false);
+            return videoIndex >= 0 && extractor.getTrackFormat(videoIndex).getString(MediaFormat.KEY_MIME).equals(MediaController.VIDEO_MIME_TYPE);
+        } catch (Exception e) {
+            FileLog.e(e);
+        } finally {
+            extractor.release();
+        }
+        return false;
+    }
+
+    private void didWriteData(final VideoConvertMessage message, final File file, final boolean last, final long lastFrameTimestamp, long availableSize, final boolean error, final float progress) {
+        final boolean firstWrite = message.videoEditedInfo.videoConvertFirstWrite;
+        if (firstWrite) {
+            message.videoEditedInfo.videoConvertFirstWrite = false;
+        }
+        AndroidUtilities.runOnUIThread(() -> {
+            if (error || last) {
+                boolean cancelled = message.videoEditedInfo.canceled;
+                synchronized (videoConvertSync) {
+                    message.videoEditedInfo.canceled = false;
+                }
+                videoConvertQueue.remove(message);
+                foregroundConvertingMessages.remove(message);
+                checkForegroundConvertMessage(cancelled || error);
+                startVideoConvertFromQueue();
+            }
+            if (error) {
+                NotificationCenter.getInstance(message.currentAccount).postNotificationName(NotificationCenter.filePreparingFailed, message.messageObject, file.toString(), progress, lastFrameTimestamp);
+            } else {
+                if (firstWrite) {
+                    NotificationCenter.getInstance(message.currentAccount).postNotificationName(NotificationCenter.filePreparingStarted, message.messageObject, file.toString(), progress, lastFrameTimestamp);
+                }
+                NotificationCenter.getInstance(message.currentAccount).postNotificationName(NotificationCenter.fileNewChunkAvailable, message.messageObject, file.toString(), availableSize, last ? file.length() : 0, progress, lastFrameTimestamp);
+            }
+        });
+    }
+
+    public void pauseByRewind() {
+        if (audioPlayer != null) {
+            audioPlayer.pause();
+        }
+    }
+
+    public void resumeByRewind() {
+        if (audioPlayer != null && playingMessageObject != null && !isPaused) {
+            if (audioPlayer.isBuffering()) {
+                MessageObject currentMessageObject = playingMessageObject;
+                cleanupPlayer(false, false);
+                playMessage(currentMessageObject);
+            } else {
+                audioPlayer.play();
+            }
+        }
+    }
+
+
+    private static class VideoConvertRunnable implements Runnable {
+
+        private VideoConvertMessage convertMessage;
+
+        private VideoConvertRunnable(VideoConvertMessage message) {
+            convertMessage = message;
+        }
+
+        @Override
+        public void run() {
+            MediaController.getInstance().convertVideo(convertMessage);
+        }
+
+        public static void runConversion(final VideoConvertMessage obj) {
+            new Thread(() -> {
+                try {
+                    VideoConvertRunnable wrapper = new VideoConvertRunnable(obj);
+                    Thread th = new Thread(wrapper, "VideoConvertRunnable");
+                    th.start();
+                    th.join();
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+            }).start();
+        }
+    }
+
+
+    private boolean convertVideo(final VideoConvertMessage convertMessage) {
+        MessageObject messageObject = convertMessage.messageObject;
+        VideoEditedInfo info = convertMessage.videoEditedInfo;
+        if (messageObject == null || info == null) {
+            return false;
+        }
+        String videoPath = info.originalPath;
+        long videoOffset = info.videoOffset;
+        long startTime = info.startTime;
+        long avatarStartTime = info.avatarStartTime;
+        long endTime = info.endTime;
+        int resultWidth = info.resultWidth;
+        int resultHeight = info.resultHeight;
+        int rotationValue = info.rotationValue;
+        int originalWidth = info.originalWidth;
+        int originalHeight = info.originalHeight;
+        int framerate = info.framerate;
+        int bitrate = info.bitrate;
+        int originalBitrate = info.originalBitrate;
+        boolean isSecret = DialogObject.isEncryptedDialog(messageObject.getDialogId()) || info.forceFragmenting;
+        final File cacheFile = new File(messageObject.messageOwner.attachPath);
+        if (cacheFile.exists()) {
+            cacheFile.delete();
+        }
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("begin convert " + videoPath + " startTime = " + startTime + " avatarStartTime = " + avatarStartTime + " endTime " + endTime + " rWidth = " + resultWidth + " rHeight = " + resultHeight + " rotation = " + rotationValue + " oWidth = " + originalWidth + " oHeight = " + originalHeight + " framerate = " + framerate + " bitrate = " + bitrate + " originalBitrate = " + originalBitrate);
+        }
+
+        if (videoPath == null) {
+            videoPath = "";
+        }
+
+        long duration;
+        if (startTime > 0 && endTime > 0) {
+            duration = endTime - startTime;
+        } else if (endTime > 0) {
+            duration = endTime;
+        } else if (startTime > 0) {
+            duration = info.originalDuration - startTime;
+        } else {
+            duration = info.originalDuration;
+        }
+
+        if (framerate == 0) {
+            framerate = 25;
+        } else if (framerate > 59) {
+            framerate = 59;
+        }
+
+        if (rotationValue == 90 || rotationValue == 270) {
+            int temp = resultHeight;
+            resultHeight = resultWidth;
+            resultWidth = temp;
+        }
+
+        if (!info.shouldLimitFps && framerate > 40 && (Math.min(resultHeight, resultWidth) <= 480)) {
+            framerate = 30;
+        }
+
+        boolean needCompress = avatarStartTime != -1 || info.cropState != null || info.mediaEntities != null || info.paintPath != null || info.filterState != null ||
+                resultWidth != originalWidth || resultHeight != originalHeight || rotationValue != 0 || info.roundVideo || startTime != -1 || !info.mixedSoundInfos.isEmpty();
+
+
+        SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("videoconvert", Activity.MODE_PRIVATE);
+
+        long time = System.currentTimeMillis();
+
+        VideoConvertorListener callback = new VideoConvertorListener() {
+
+            private long lastAvailableSize = 0;
+
+            @Override
+            public boolean checkConversionCanceled() {
+                return info.canceled;
+            }
+
+            @Override
+            public void didWriteData(long availableSize, float progress) {
+                if (info.canceled) {
+                    return;
+                }
+                if (availableSize < 0) {
+                    availableSize = cacheFile.length();
+                }
+
+                if (!info.needUpdateProgress && lastAvailableSize == availableSize) {
+                    return;
+                }
+
+                lastAvailableSize = availableSize;
+                MediaController.this.didWriteData(convertMessage, cacheFile, false, 0, availableSize, false, progress);
+            }
+        };
+
+        info.videoConvertFirstWrite = true;
+
+        MediaCodecVideoConvertor videoConvertor = new MediaCodecVideoConvertor();
+        MediaCodecVideoConvertor.ConvertVideoParams convertVideoParams = MediaCodecVideoConvertor.ConvertVideoParams.of(
+                videoPath, cacheFile, videoOffset,
+                rotationValue, isSecret,
+                originalWidth, originalHeight,
+                resultWidth, resultHeight,
+                framerate, bitrate, originalBitrate,
+                startTime, endTime, avatarStartTime,
+                needCompress, duration,
+                callback,
+                info
+        );
+        convertVideoParams.soundInfos.addAll(info.mixedSoundInfos);
+        boolean error = videoConvertor.convertVideo(convertVideoParams);
+
+
+        boolean canceled = info.canceled;
+        if (!canceled) {
+            synchronized (videoConvertSync) {
+                canceled = info.canceled;
+            }
+        }
+
+        if (BuildVars.LOGS_ENABLED) {
+            FileLog.d("time=" + (System.currentTimeMillis() - time) + " canceled=" + canceled);
+        }
+
+        preferences.edit().putBoolean("isPreviousOk", true).apply();
+        didWriteData(convertMessage, cacheFile, true, videoConvertor.getLastFrameTimestamp(), cacheFile.length(), error || canceled, 1f);
+
+        return true;
+    }
+
+    public static int getVideoBitrate(String path) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        int bitrate = 0;
+        try {
+            retriever.setDataSource(path);
+            bitrate = Integer.parseInt(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE));
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+
+        try {
+            retriever.release();
+        } catch (Throwable throwable) {
+            FileLog.e(throwable);
+        }
+        return bitrate;
+    }
+
+    public static int makeVideoBitrate(int originalHeight, int originalWidth, int originalBitrate, int height, int width) {
+        float compressFactor;
+        float minCompressFactor;
+        int maxBitrate;
+        if (Math.min(height, width) >= 1080) {
+            maxBitrate = 6800_000;
+            compressFactor = 1f;
+            minCompressFactor = 1f;
+        } else if (Math.min(height, width) >= 720) {
+            maxBitrate = 2600_000;
+            compressFactor = 1f;
+            minCompressFactor = 1f;
+        } else if (Math.min(height, width) >= 480) {
+            maxBitrate = 1000_000;
+            compressFactor = 0.75f;
+            minCompressFactor = 0.9f;
+        } else {
+            maxBitrate = 750_000;
+            compressFactor = 0.6f;
+            minCompressFactor = 0.7f;
+        }
+        int remeasuredBitrate = (int) (originalBitrate / (Math.min(originalHeight / (float) (height), originalWidth / (float) (width))));
+        remeasuredBitrate *= compressFactor;
+        int minBitrate = (int) (getVideoBitrateWithFactor(minCompressFactor) / (1280f * 720f / (width * height)));
+        if (originalBitrate < minBitrate) {
+            return remeasuredBitrate;
+        }
+        if (remeasuredBitrate > maxBitrate) {
+            return maxBitrate;
+        }
+        return Math.max(remeasuredBitrate, minBitrate);
+    }
+
+    /**
+     * Some encoders(e.g. OMX.Exynos) can forcibly raise bitrate during encoder initialization.
+     */
+    public static int extractRealEncoderBitrate(int width, int height, int bitrate, boolean tryHevc) {
+        String cacheKey = width + "" + height + "" + bitrate;
+        Integer cachedBitrate = cachedEncoderBitrates.get(cacheKey);
+        if (cachedBitrate != null) return cachedBitrate;
+        try {
+            MediaCodec encoder = null;
+            if (tryHevc) {
+                try {
+                    encoder = MediaCodec.createEncoderByType("video/hevc");
+                } catch (Exception ignore) {}
+            }
+            if (encoder == null) {
+                encoder = MediaCodec.createEncoderByType(MediaController.VIDEO_MIME_TYPE);
+            }
+            MediaFormat outputFormat = MediaFormat.createVideoFormat(MediaController.VIDEO_MIME_TYPE, width, height);
+            outputFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+            outputFormat.setInteger("max-bitrate", bitrate);
+            outputFormat.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
+            outputFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
+            outputFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+            encoder.configure(outputFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            int encoderBitrate = (int) (encoder.getOutputFormat().getInteger(MediaFormat.KEY_BIT_RATE));
+            cachedEncoderBitrates.put(cacheKey, encoderBitrate);
+            encoder.release();
+            return encoderBitrate;
+        } catch (Exception e) {
+            return bitrate;
+        }
+    }
+
+    private static int getVideoBitrateWithFactor(float f) {
+        return (int) (f * 2000f * 1000f * 1.13f);
+    }
+
+    public interface VideoConvertorListener {
+        boolean checkConversionCanceled();
+
+        void didWriteData(long availableSize, float progress);
+    }
+
+    public static class PlaylistGlobalSearchParams {
+        final String query;
+        final FiltersView.MediaFilterData filter;
+        final long dialogId;
+        public long topicId;
+        final long minDate;
+        final long maxDate;
+        public int totalCount;
+        public boolean endReached;
+        public int nextSearchRate;
+        public int folderId;
+
+        public ReactionsLayoutInBubble.VisibleReaction reaction;
+
+        public PlaylistGlobalSearchParams(String query, long dialogId, long minDate, long maxDate, FiltersView.MediaFilterData filter) {
+            this.filter = filter;
+            this.query = query;
+            this.dialogId = dialogId;
+            this.minDate = minDate;
+            this.maxDate = maxDate;
+        }
+    }
+
+    public boolean currentPlaylistIsGlobalSearch() {
+        return playlistGlobalSearchParams != null;
+    }
+
+    /* */
+
+    private SavedMusicPlaylistState savedMusicPlaylistState;
+
+    private static class SavedMusicPlaylistState {
+        public final MessageObject playingMessage;
+        public final float progress;
+        public final int progressMs;
+        public final int progressSec;
+
+        public SavedMusicPlaylistState(MessageObject playingMessage) {
+            this.playingMessage = playingMessage;
+            this.progress = playingMessage.audioProgress;
+            this.progressMs = playingMessage.audioProgressMs;
+            this.progressSec = playingMessage.audioProgressSec;
+        }
+    }
+
+    private void clearMusicPlaylistState() {
+        savedMusicPlaylistState = null;
+    }
+
+    private boolean saveMusicPlaylistStateIfNeeded() {
+        if (playingMessageObject != null && playingMessageObject.isMusic() && !playlist.isEmpty()) {
+            savedMusicPlaylistState = new SavedMusicPlaylistState(playingMessageObject);
+            return true;
+        } else {
+            return savedMusicPlaylistState != null;
+        }
+    }
+
+    private boolean restoreMusicPlaylistState() {
+        if (savedMusicPlaylistState == null) {
+            return false;
+        }
+
+        final SavedMusicPlaylistState state = savedMusicPlaylistState;
+        savedMusicPlaylistState = null;
+
+
+        final ArrayList<MessageObject> currentPlayList = SharedConfig.shuffleMusic ? shuffledPlaylist : playlist;
+        if (currentPlayList == null) {
+            return false;
+        }
+        if (currentPlaylistNum < 0 || currentPlaylistNum >= currentPlayList.size()) {
+            return false;
+        }
+
+        MessageObject messageObject = currentPlayList.get(currentPlaylistNum);
+        if (messageObject == null) {
+            return false;
+        }
+
+        if (messageObject.getDialogId() != state.playingMessage.getDialogId()
+                || messageObject.getId() != state.playingMessage.getId()) {
+            return false;
+        }
+
+        playMusicAgain = false;
+        messageObject.forceSeekTo = state.progress;
+        messageObject.audioProgress = state.progress;
+        messageObject.audioProgressMs = state.progressMs;
+        messageObject.audioProgressSec = state.progressSec;
+        playMessage(messageObject);
+        pauseMessage(messageObject, false);
+
+        return true;
+    }
+
+    private static class MusicListenReporter {
+
+        public final int currentAccount;
+        private TLRPC.InputDocument audio;
+
+        public MusicListenReporter(int currentAccount) {
+            this.currentAccount = currentAccount;
+        }
+
+        public void setup(TLRPC.InputDocument document) {
+            AndroidUtilities.cancelRunOnUIThread(reportRunnable);
+            if (document != null && document.id == 0) {
+                document = null;
+            }
+            audio = document;
+            rangeStart = C.TIME_UNSET;
+            ranges.clear();
+        }
+
+        private long rangeStart = C.TIME_UNSET;
+        public Player.Listener getPlayerListener(ExoPlayer player) {
+            return new Player.Listener() {
+                private void closeRange() {
+                    long pos = player.getCurrentPosition();
+                    if (rangeStart != C.TIME_UNSET && pos > rangeStart) {
+                        listenedRange(rangeStart, pos);
+                    }
+                    rangeStart = C.TIME_UNSET;
+                }
+
+                @Override
+                public void onIsPlayingChanged(boolean isPlaying) {
+                    if (isPlaying) {
+                        rangeStart = player.getCurrentPosition();
+                    } else {
+                        closeRange();
+                    }
+
+                    AndroidUtilities.cancelRunOnUIThread(reportRunnable);
+                    if (!isPlaying) {
+                        AndroidUtilities.runOnUIThread(reportRunnable, 60_000);
+                    }
+                }
+
+                @Override
+                public void onPositionDiscontinuity(
+                    Player.PositionInfo oldPosition,
+                    Player.PositionInfo newPosition,
+                    int reason
+                ) {
+                    if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                        if (rangeStart != C.TIME_UNSET) {
+                            listenedRange(rangeStart, oldPosition.positionMs);
+                        }
+                        rangeStart = player.isPlaying() ? newPosition.positionMs : C.TIME_UNSET;
+
+                        AndroidUtilities.cancelRunOnUIThread(reportRunnable);
+                    }
+                }
+            };
+        }
+
+        private final ArrayList<Pair<Long, Long>> ranges = new ArrayList<>();
+        private void listenedRange(long fromMs, long toMs) {
+            int idx = 0;
+            while (idx < ranges.size() && ranges.get(idx).first <= fromMs) idx++;
+            ranges.add(idx, new Pair<>(fromMs, toMs));
+            int i = Math.max(0, idx - 1);
+            while (i < ranges.size() - 1) {
+                Pair<Long, Long> cur  = ranges.get(i);
+                Pair<Long, Long> next = ranges.get(i + 1);
+                if (cur.second >= next.first) {
+                    ranges.set(i, new Pair<>(cur.first, Math.max(cur.second, next.second)));
+                    ranges.remove(i + 1);
+                } else {
+                    i++;
+                }
+            }
+        }
+        private long getTotalListened() {
+            long total = 0L;
+            for (Pair<Long, Long> r : ranges) {
+                total += r.second - r.first;
+            }
+            return total;
+        }
+
+        private final Runnable reportRunnable = this::report;
+        private void report() {
+            AndroidUtilities.cancelRunOnUIThread(reportRunnable);
+            if (audio == null) return;
+
+            final long ms = getTotalListened();
+            if (ms < 3_000) return;
+
+            final TLRPC.TL_messages_reportMusicListen req = new TLRPC.TL_messages_reportMusicListen();
+            req.id = audio;
+            req.listened_duration = (int) Math.round(getTotalListened() / 1000.0);
+            ConnectionsManager.getInstance(currentAccount).sendRequest(req, null);
+
+            rangeStart = C.TIME_UNSET;
+            ranges.clear();
+        }
+
+        public void destroy() {
+            if (audio == null) return;
+
+            report();
+            audio = null;
+        }
+    }
+}

@@ -3351,6 +3351,27 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
         if (videoPlayer == null) {
             return;
         }
+        // ⚠️ ДИАГНОСТИКА (ROUNDVID_PLAY): состояние ExoPlayer на каждой смене,
+        // 1:1 с тем что даёт AnalyticsListener.onPlaybackStateChanged. Работает
+        // и для ленты, и для чата/канала — MediaController один физический
+        // плеер на всё приложение. Так же логируем isPlaying() и destroyAtEnd,
+        // это покажет момент реального перехода в STATE_ENDED/IDLE, если баг
+        // "ошибки воспроизведения на канале" — это преждевременная остановка.
+        if (messageObject != null && messageObject.isRoundVideo()) {
+            String stateName;
+            switch (playbackState) {
+                case ExoPlayer.STATE_IDLE: stateName = "IDLE"; break;
+                case ExoPlayer.STATE_BUFFERING: stateName = "BUFFERING"; break;
+                case ExoPlayer.STATE_READY: stateName = "READY"; break;
+                case ExoPlayer.STATE_ENDED: stateName = "ENDED"; break;
+                default: stateName = "UNKNOWN(" + playbackState + ")";
+            }
+            PotokDebugLog.d("ROUNDVID_PLAY", "updateVideoState msgId=" + messageObject.getId()
+                + " dialogId=" + messageObject.getDialogId()
+                + " state=" + stateName + " playWhenReady=" + playWhenReady
+                + " isPlaying=" + videoPlayer.isPlaying() + " destroyAtEnd=" + destroyAtEnd
+                + " playerWasReady(before)=" + playerWasReady);
+        }
         if (playbackState != ExoPlayer.STATE_ENDED && playbackState != ExoPlayer.STATE_IDLE) {
             try {
                 baseActivity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -3772,6 +3793,16 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
 
                 @Override
                 public void onError(VideoPlayer player, Exception e) {
+                    // ⚠️ ДИАГНОСТИКА (ROUNDVID_PLAY): реальная ошибка ExoPlayer для
+                    // круглого видео — раньше уходила только в FileLog (не видна
+                    // в диагностическом буфере). Работает и для ленты, и для чата/канала.
+                    if (playingMessageObject != null && playingMessageObject.isRoundVideo()) {
+                        PotokDebugLog.d("ROUNDVID_PLAY", "onError msgId=" + playingMessageObject.getId()
+                            + " dialogId=" + playingMessageObject.getDialogId()
+                            + " exceptionClass=" + e.getClass().getSimpleName()
+                            + " message=" + e.getMessage()
+                            + " cause=" + (e.getCause() == null ? "null" : e.getCause().toString()));
+                    }
                     FileLog.e(e);
                 }
 
@@ -3810,6 +3841,15 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
 
                 @Override
                 public void onRenderedFirstFrame() {
+                    // ⚠️ ДИАГНОСТИКА (ROUNDVID_PLAY): момент реального появления
+                    // первого декодированного кадра на экране — если crop/битые
+                    // кадры видны СРАЗУ на этом моменте, а не позже — проблема
+                    // в первом кадре/инициализации, а не в дальнейшем воспроизведении.
+                    if (playingMessageObject != null && playingMessageObject.isRoundVideo()) {
+                        PotokDebugLog.d("ROUNDVID_PLAY", "onRenderedFirstFrame msgId=" + playingMessageObject.getId()
+                            + " dialogId=" + playingMessageObject.getDialogId()
+                            + " wasDrawingReadyBefore=" + isDrawingWasReady);
+                    }
                     if (currentAspectRatioFrameLayout != null && !currentAspectRatioFrameLayout.isDrawingReady()) {
                         isDrawingWasReady = true;
                         currentAspectRatioFrameLayout.setDrawingReady(true);
@@ -3825,6 +3865,17 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
 
                 @Override
                 public boolean onSurfaceDestroyed(SurfaceTexture surfaceTexture) {
+                    // ⚠️ ДИАГНОСТИКА (ROUNDVID_PLAY): Surface lifecycle — если это
+                    // сработает В СЕРЕДИНЕ воспроизведения (не при закрытии кружка
+                    // пользователем), значит surface уничтожается раньше времени,
+                    // что и есть кандидат на "ошибки воспроизведения". pipSwitchingState
+                    // показывает, куда система пытается перекинуть surface дальше.
+                    if (playingMessageObject != null && playingMessageObject.isRoundVideo()) {
+                        PotokDebugLog.d("ROUNDVID_PLAY", "onSurfaceDestroyed msgId=" + playingMessageObject.getId()
+                            + " dialogId=" + playingMessageObject.getDialogId()
+                            + " pipSwitchingState=" + pipSwitchingState
+                            + " videoPlayerIsPlaying=" + (videoPlayer != null && videoPlayer.isPlaying()));
+                    }
                     if (videoPlayer == null) {
                         return false;
                     }
@@ -3869,9 +3920,21 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                     return false;
                 }
 
+                private int surfaceUpdateCounter;
                 @Override
                 public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
-
+                    // ⚠️ ДИАГНОСТИКА (ROUNDVID_PLAY): подтверждение что кадры реально
+                    // долетают до TextureView. Логируем не каждый кадр (это будет
+                    // 30-60 раз в секунду и зафлудит буфер), а каждый 30-й — этого
+                    // достаточно чтобы увидеть, что поток кадров не прерывается
+                    // и не зависает молча (баг "ошибки воспроизведения").
+                    if (playingMessageObject != null && playingMessageObject.isRoundVideo()) {
+                        surfaceUpdateCounter++;
+                        if (surfaceUpdateCounter % 30 == 0) {
+                            PotokDebugLog.d("ROUNDVID_PLAY", "onSurfaceTextureUpdated msgId=" + playingMessageObject.getId()
+                                + " frameCount=" + surfaceUpdateCounter);
+                        }
+                    }
                 }
             });
             currentAspectRatioFrameLayoutReady = false;

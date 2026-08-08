@@ -1307,6 +1307,14 @@ public class PotokFeedPostCell extends LinearLayout {
                     + " sameRoundVideo=" + sameRoundVideo + " roundVideoOpened(before)=" + roundVideoOpened
                     + " mediaControllerIsPlayingThisMessage=" + actuallyPlaying
                     + " cellInstance=@" + System.identityHashCode(this));
+                // ⚠️ TARGETPOST — безусловно, каждый bind этого конкретного поста
+                // в ленте (RecyclerView может биндить его многократно при скролле).
+                if (roundVideoMo.getId() == PotokDebugLog.TARGET_MESSAGE_ID) {
+                    PotokDebugLog.d("TARGETPOST", "FEED bind msgId=" + roundVideoMo.getId()
+                        + " sameRoundVideo=" + sameRoundVideo + " roundVideoOpened(before)=" + roundVideoOpened
+                        + " mediaControllerIsPlayingThisMessage=" + actuallyPlaying
+                        + " cellInstance=@" + System.identityHashCode(this));
+                }
             }
             if (!sameRoundVideo) {
                 // Новый пост (не повторный bind того же самого ViewHolder'а) —
@@ -1633,6 +1641,7 @@ public class PotokFeedPostCell extends LinearLayout {
                         if (small) {
                             setRoundVideoContainerLayoutSize(roundVideoSmallSize);
                         }
+                        logTargetPostScaleSettled("animated end-action", target, small);
                         if (onRoundVideoVisualScaleChanged != null) onRoundVideoVisualScaleChanged.run();
                     })
                     .start();
@@ -1642,8 +1651,28 @@ public class PotokFeedPostCell extends LinearLayout {
             if (small) {
                 setRoundVideoContainerLayoutSize(roundVideoSmallSize);
             }
+            logTargetPostScaleSettled("non-animated", target, small);
             if (onRoundVideoVisualScaleChanged != null) onRoundVideoVisualScaleChanged.run();
         }
+    }
+
+    /**
+     * ⚠️ TARGETPOST — безусловная запись РЕАЛЬНОГО состояния roundVideoContainer
+     * СРАЗУ ПОСЛЕ того, как scaleX/Y фактически применены/доехали (не в момент
+     * onLayout, который может сработать раньше или позже — см. разбор в чате:
+     * именно расхождение между моментом onLayout и моментом реального scale
+     * создавало иллюзию "constant scale" в логах прошлой сессии).
+     */
+    private void logTargetPostScaleSettled(String phase, float target, boolean small) {
+        if (roundVideoMessageObject == null || roundVideoMessageObject.getId() != PotokDebugLog.TARGET_MESSAGE_ID) {
+            return;
+        }
+        PotokDebugLog.d("TARGETPOST", "FEED applyRoundVideoScale SETTLED[" + phase + "] msgId=" + roundVideoMessageObject.getId()
+            + " small=" + small + " target=" + target
+            + " realScaleX=" + roundVideoContainer.getScaleX() + " realScaleY=" + roundVideoContainer.getScaleY()
+            + " lpW=" + roundVideoContainer.getLayoutParams().width + " lpH=" + roundVideoContainer.getLayoutParams().height
+            + " containerW=" + roundVideoContainer.getWidth() + " containerH=" + roundVideoContainer.getHeight()
+            + " roundVideoOpened=" + roundVideoOpened);
     }
 
     /**
@@ -1684,6 +1713,15 @@ public class PotokFeedPostCell extends LinearLayout {
      * мест, дёргающих плеер по одному и тому же поводу.
      */
     public void setRoundVideoOpenVisual(boolean opened, boolean animated) {
+        // ⚠️ TARGETPOST — безусловно, каждый вызов открытия/закрытия визуала
+        // конкретно этого поста, ДО применения scale (чтобы видеть исходное
+        // состояние контейнера перед изменением).
+        if (roundVideoMessageObject != null && roundVideoMessageObject.getId() == PotokDebugLog.TARGET_MESSAGE_ID) {
+            PotokDebugLog.d("TARGETPOST", "FEED setRoundVideoOpenVisual msgId=" + roundVideoMessageObject.getId()
+                + " opened=" + opened + " animated=" + animated
+                + " containerW(before)=" + roundVideoContainer.getWidth() + " containerH(before)=" + roundVideoContainer.getHeight()
+                + " scaleX(before)=" + roundVideoContainer.getScaleX() + " scaleY(before)=" + roundVideoContainer.getScaleY());
+        }
         roundVideoOpened = opened;
         applyRoundVideoScale(!opened, animated);
         if (opened) {

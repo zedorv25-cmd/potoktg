@@ -336,6 +336,11 @@ public class PotokFeedPostCell extends LinearLayout {
     // pivot в (0,0), чтобы не гонять relayout всей RecyclerView-ячейки на лету.
     private int roundVideoSmallSize;
     private int roundVideoBigSize;
+    // ⚠️ ТЕСТОВЫЙ ТУМБЛЕР (эта сессия, диагностика обрезки кружка): true —
+    // круглая маска ПОЛНОСТЬЮ отключена (setRoundRadius(0)), картинка/видео
+    // рисуется квадратом. Нужен только для одной проверочной сборки — потом
+    // вернуть false. См. комментарий в конструкторе у roundVideoContainer.
+    private static final boolean DEBUG_DISABLE_ROUND_MASK = false;
 
     // ⚠️ ЕДИНЫЙ источник правды для размера большого кружка — раньше формула
     // жила только здесь, а плавающий контейнер в PotokFeedFragment.java
@@ -702,6 +707,30 @@ public class PotokFeedPostCell extends LinearLayout {
         roundVideoContainer.setVisibility(GONE);
         roundVideoContainer.setPivotX(0);
         roundVideoContainer.setPivotY(0);
+        // ⚠️ ФИКС (эта сессия, причина "обрезки/полумесяца" маленького кружка):
+        // roundVideoImage ниже ВСЕГДА создаётся большим (roundVideoBigSize),
+        // а visual-уменьшение до маленького делается через setScaleX/Y НА
+        // ЭТОМ контейнере (см. applyRoundVideoScale). Но FrameLayout по
+        // умолчанию (clipChildren=true) обрезает детей по СВОИМ НЕтрансфор-
+        // мированным границам — а они в маленьком состоянии = roundVideoSmallSize,
+        // что сильно МЕНЬШЕ размера ребёнка (roundVideoBigSize). Получается:
+        // видна только верхняя левая "лужа" от большой круглой картинки, чей
+        // геометрический центр (roundVideoBigSize/2) остаётся ДАЛЕКО за
+        // пределами этого маленького окна — отсюда "полумесяц" вместо круга.
+        // Отключаем clipChildren — контейнер больше НЕ режет ребёнка по своим
+        // (малым) границам ДО scale; итоговый видимый размер всё равно
+        // корректно даёт setScaleX/Y (984 * (200/984) = 200px на экране).
+        roundVideoContainer.setClipChildren(false);
+        roundVideoContainer.setClipToPadding(false);
+        // ⚠️ ТЕСТОВЫЙ ТУМБЛЕР (по просьбе пользователя, для диагностики):
+        // при true — полностью отключает круглую маску (setRoundRadius(0))
+        // у roundVideoImage. Позволяет проверить сборкой: станет ли видео
+        // ровным КВАДРАТОМ (без урезанного полумесяца) при выключенной маске.
+        // Если да — подтверждает что дело именно в геометрии клиппинга
+        // (что и есть, судя по анализу выше), а не в декодере/повороте кадра.
+        if (DEBUG_DISABLE_ROUND_MASK) {
+            PotokDebugLog.d("ROUNDVID_MASK", "DEBUG_DISABLE_ROUND_MASK=true — круглая маска ОТКЛЮЧЕНА для теста");
+        }
         // ⚠️ НЕ WRAP_CONTENT: WRAP_CONTENT меряется по фактическим LayoutParams
         // детей (roundVideoImage/roundVideoDownloadButton), которые ВСЕГДА
         // roundVideoBigSize x roundVideoBigSize (см. ниже, это нужно для чёткой
@@ -723,7 +752,7 @@ public class PotokFeedPostCell extends LinearLayout {
         addView(roundVideoContainer, roundVideoContainerLp);
 
         roundVideoImage = new BackupImageView(context);
-        roundVideoImage.getImageReceiver().setRoundRadius(roundVideoBigSize / 2);
+        roundVideoImage.getImageReceiver().setRoundRadius(DEBUG_DISABLE_ROUND_MASK ? 0 : roundVideoBigSize / 2);
         roundVideoContainer.addView(roundVideoImage, new FrameLayout.LayoutParams(roundVideoBigSize, roundVideoBigSize));
 
         // Кнопка/кольцо загрузки для ещё не скачанного файла — тот же самый

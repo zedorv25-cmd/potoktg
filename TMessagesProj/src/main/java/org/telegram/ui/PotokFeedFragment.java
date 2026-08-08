@@ -1959,6 +1959,44 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 + " aspectFrameMeasuredH=" + roundVideoAspectRatioFrameLayout.getMeasuredHeight());
             MediaController.getInstance().setTextureView(roundVideoTextureView, roundVideoAspectRatioFrameLayout, roundVideoPlayerContainer, true);
             roundVideoTextureRegisteredForMessageId = playing.getId();
+
+            // ⚠️ ФИКС (эта сессия): раньше матрица трансформации SurfaceTexture
+            // логировалась ТОЛЬКО внутри onLayoutChangeListener, который сам
+            // залогирован только при ИЗМЕНЕНИИ w/h контейнера. Т.к. контейнер
+            // всегда 984x984 (не меняется между разными видео) — после первого
+            // раза этот лог больше НИКОГДА не срабатывал, хотя проблема crop
+            // могла проявляться заново при каждом новом видео. Здесь — читаем
+            // матрицу безусловно, привязано к КАЖДОМУ новому messageId, а не
+            // к изменению размера. Два захода (200мс и 800мс) — на случай если
+            // SurfaceTexture ещё не готов (isAvailable()==false) на первом.
+            final int loggedMessageId = playing.getId();
+            for (long delayMs : new long[]{200, 800}) {
+                roundVideoPlayerContainer.postDelayed(() -> {
+                    if (roundVideoTextureView == null || roundVideoTextureRegisteredForMessageId != loggedMessageId) return;
+                    int outlineW = roundVideoPlayerContainer.getWidth();
+                    int outlineH = roundVideoPlayerContainer.getHeight();
+                    int tvW = roundVideoTextureView.getWidth();
+                    int tvH = roundVideoTextureView.getHeight();
+                    if (roundVideoTextureView.isAvailable()) {
+                        try {
+                            android.graphics.SurfaceTexture st = roundVideoTextureView.getSurfaceTexture();
+                            float[] m = st != null ? new float[16] : null;
+                            if (st != null) st.getTransformMatrix(m);
+                            PotokDebugLog.d("ROUNDVID_CROP", "delayed(" + delayMs + "ms) matrix check messageId=" + loggedMessageId
+                                + " outlineW=" + outlineW + " outlineH=" + outlineH
+                                + " textureViewW=" + tvW + " textureViewH=" + tvH
+                                + " matrix=" + (m == null ? "null(surfaceTexture null)" : java.util.Arrays.toString(m)));
+                        } catch (Throwable t) {
+                            PotokDebugLog.d("ROUNDVID_CROP", "delayed(" + delayMs + "ms) matrix read failed messageId=" + loggedMessageId + ": " + t);
+                        }
+                    } else {
+                        PotokDebugLog.d("ROUNDVID_CROP", "delayed(" + delayMs + "ms) matrix check messageId=" + loggedMessageId
+                            + " outlineW=" + outlineW + " outlineH=" + outlineH
+                            + " textureViewW=" + tvW + " textureViewH=" + tvH
+                            + " surfaceNotAvailableYet=true");
+                    }
+                }, delayMs);
+            }
         }
 
         PotokFeedPostCell foundCell = null;

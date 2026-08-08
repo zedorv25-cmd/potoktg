@@ -35,6 +35,14 @@ import java.util.Locale;
  */
 public class PotokDebugLog {
 
+    // ⚠️ ТОЧЕЧНАЯ ДИАГНОСТИКА ОДНОГО КОНКРЕТНОГО ПОСТА (по прямому требованию
+    // пользователя): id сообщения, для которого во всех местах ниже (см. тег
+    // TARGETPOST в PotokFeedPostCell.java / ImageReceiver.java / MediaController.java /
+    // ChatMessageCell.java) идёт БЕЗУСЛОВНАЯ запись на каждый реальный вызов —
+    // без гейтов "если изменилось". Поменять здесь id — и точечное логирование
+    // сразу переключится на другой пост, без правок в остальных файлах.
+    public static volatile long TARGET_MESSAGE_ID = 968L;
+
     private static final int MAX_LINES = 4000;
     private static final ArrayDeque<String> lines = new ArrayDeque<>();
     private static final SimpleDateFormat fmt = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US);

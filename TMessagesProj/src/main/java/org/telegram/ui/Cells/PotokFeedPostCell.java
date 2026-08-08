@@ -1244,6 +1244,20 @@ public class PotokFeedPostCell extends LinearLayout {
             boolean sameRoundVideo = roundVideoMessageObject != null && roundVideoMessageObject.getId() == roundVideoMo.getId();
             roundVideoMessageObject = roundVideoMo;
             roundVideoContainer.setVisibility(VISIBLE);
+            // ⚠️ ДИАГНОСТИКА (ROUNDVID_SEEK, глубокий уровень): локальный флаг ячейки
+            // roundVideoOpened — ОТДЕЛЬНОЕ состояние от реального плеера в
+            // MediaController. Если ячейка пересоздаётся (уход с ленты и возврат)
+            // sameRoundVideo=false сбросит roundVideoOpened=false, ДАЖЕ ЕСЛИ видео
+            // физически всё ещё играет — вот и рассинхрон, из-за которого зона
+            // isPointInsideRoundVideo() считается по маленькому (закрытому) размеру,
+            // хотя на экране видно большое (открытое, играющее) видео.
+            {
+                boolean actuallyPlaying = MediaController.getInstance().isPlayingMessage(roundVideoMo);
+                PotokDebugLog.d("ROUNDVID_SEEK", "bind roundVideo id=" + roundVideoMo.getId()
+                    + " sameRoundVideo=" + sameRoundVideo + " roundVideoOpened(before)=" + roundVideoOpened
+                    + " mediaControllerIsPlayingThisMessage=" + actuallyPlaying
+                    + " cellInstance=@" + System.identityHashCode(this));
+            }
             if (!sameRoundVideo) {
                 // Новый пост (не повторный bind того же самого ViewHolder'а) —
                 // сбрасываем и автоплей, и состояние "открыт" (новый кружок всегда

@@ -4130,6 +4130,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
     }
 
     private boolean checkRoundSeekbar(MotionEvent event) {
+        boolean isTargetPost = currentMessageObject != null && currentMessageObject.getId() == PotokDebugLog.TARGET_MESSAGE_ID;
         if (currentMessageObject != null && currentMessageObject.isRoundVideo() && event.getAction() == MotionEvent.ACTION_DOWN) {
             // ⚠️ ДИАГНОСТИКА (ROUNDVID_SEEK_CHAT): вход в перемотку блокируется прямо
             // тут, если isPlayingMessage/isMessagePaused не те, что визуально на экране —
@@ -4138,11 +4139,33 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
                 + MediaController.getInstance().isPlayingMessage(currentMessageObject)
                 + " isMessagePaused=" + MediaController.getInstance().isMessagePaused());
         }
+        // ⚠️ TARGETPOST — безусловно, КАЖДЫЙ вызов checkRoundSeekbar для целевого
+        // поста в канале (не только ACTION_DOWN) — сюда падает и залипание в начале
+        // (если isMessagePaused неверный на момент касания — функция выйдет по gate
+        // ниже и жест просто ничего не сделает, следующая строка это покажет).
+        if (isTargetPost) {
+            PotokDebugLog.d("TARGETPOST", "CHAT checkRoundSeekbar ENTRY msgId=" + currentMessageObject.getId()
+                + " action=" + event.getAction()
+                + " isPlayingMessage=" + MediaController.getInstance().isPlayingMessage(currentMessageObject)
+                + " isMessagePaused=" + MediaController.getInstance().isMessagePaused()
+                + " roundSeekbarTouched(before)=" + roundSeekbarTouched
+                + " audioProgress=" + currentMessageObject.audioProgress);
+        }
         if (!MediaController.getInstance().isPlayingMessage(currentMessageObject) || !MediaController.getInstance().isMessagePaused()) {
+            if (isTargetPost) {
+                PotokDebugLog.d("TARGETPOST", "CHAT checkRoundSeekbar GATE-BLOCKED msgId=" + currentMessageObject.getId()
+                    + " — жест проигнорирован (либо не играет этот msg, либо не на паузе)");
+            }
             return false;
         }
         int x = (int) getEventX(event);
         int y = (int) getEventY(event);
+        if (isTargetPost) {
+            PotokDebugLog.d("TARGETPOST", "CHAT checkRoundSeekbar coords msgId=" + currentMessageObject.getId()
+                + " x=" + x + " y=" + y + " seekbarRoundX=" + seekbarRoundX + " seekbarRoundY=" + seekbarRoundY
+                + " photoImageCenterX=" + photoImage.getCenterX() + " photoImageCenterY=" + photoImage.getCenterY()
+                + " photoImageWidth=" + photoImage.getImageWidth());
+        }
 
         if (event.getAction() == MotionEvent.ACTION_DOWN) {
             if (x >= seekbarRoundX - dp(20) && x <= seekbarRoundX + dp(20) && y >= seekbarRoundY - dp(20) && y <= seekbarRoundY + dp(20)) {

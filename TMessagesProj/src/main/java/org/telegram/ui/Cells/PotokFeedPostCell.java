@@ -2291,6 +2291,22 @@ public class PotokFeedPostCell extends LinearLayout {
             && screenY >= carouselScreenLocation[1] && screenY <= carouselScreenLocation[1] + carouselView.getHeight();
     }
 
+    /**
+     * ⚠️ TARGETPOST/CLIP_CHECK — реальные экранные границы видимой (с учётом
+     * scale) области кружка, для сверки с границами listView в
+     * PotokFeedFragment.onScrolled(). Возвращает null, если кружка нет/скрыт.
+     * Не связано с isPointInsideRoundVideo ниже (тот — под hit-test жеста,
+     * этот — под диагностику клиппинга), но использует тот же расчёт visibleW/H.
+     */
+    public int[] getRoundVideoVisibleScreenBoundsForLog() {
+        if (roundVideoContainer == null || roundVideoContainer.getVisibility() != VISIBLE) return null;
+        int[] loc = new int[2];
+        roundVideoContainer.getLocationOnScreen(loc);
+        float visibleW = roundVideoContainer.getWidth() * roundVideoContainer.getScaleX();
+        float visibleH = roundVideoContainer.getHeight() * roundVideoContainer.getScaleY();
+        return new int[]{loc[0], loc[1], loc[0] + Math.round(visibleW), loc[1] + Math.round(visibleH)};
+    }
+
     public boolean isPointInsideRoundVideo(float screenX, float screenY) {
         if (roundVideoContainer == null || roundVideoContainer.getVisibility() != VISIBLE) return false;
         roundVideoContainer.getLocationOnScreen(roundVideoScreenLocation);

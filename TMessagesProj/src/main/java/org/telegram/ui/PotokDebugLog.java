@@ -41,7 +41,7 @@ public class PotokDebugLog {
     // ChatMessageCell.java) идёт БЕЗУСЛОВНАЯ запись на каждый реальный вызов —
     // без гейтов "если изменилось". Поменять здесь id — и точечное логирование
     // сразу переключится на другой пост, без правок в остальных файлах.
-    public static volatile long TARGET_MESSAGE_ID = 968L;
+    public static volatile long TARGET_MESSAGE_ID = 972L;
 
     private static final int MAX_LINES = 4000;
     private static final ArrayDeque<String> lines = new ArrayDeque<>();

@@ -1323,10 +1323,38 @@ public class PotokFeedPostCell extends LinearLayout {
                 roundVideoAutoplayTried = false;
                 roundVideoOpened = false;
             }
+            // ⚠️ THEORYCHECK (пост 972) — теория залипания при переиспользовании
+            // ViewHolder: applyRoundVideoScale() ниже меняет и scale, и реальные
+            // LayoutParams СИНХРОННО, но requestLayout() из setLayoutParams()
+            // выполняется АСИНХРОННО (следующий проход layout, не в этом кадре).
+            // Значит getWidth()/getHeight() контейнера сразу ПОСЛЕ вызова могут ещё
+            // отдавать СТАРЫЙ размер (от предыдущего поста, который был в этой же
+            // переиспользованной ячейке) — а именно эти getWidth()/getHeight() читает
+            // ImageReceiver при построении realImageW/H (см. THEORYCHECK SHADER_PIVOT
+            // выше). Если старый и новый посты имеют разное соотношение сторон
+            // видео — это ровно та рассинхронизация, что запускает асимметричную
+            // ветку в ImageReceiver и сдвигает pivot scale. Логируем ДО и СРАЗУ
+            // ПОСЛЕ applyRoundVideoScale(), без гейта на "изменилось", чтобы
+            // поймать именно это несовпадение по времени.
+            if (!sameRoundVideo && roundVideoMo.getId() == PotokDebugLog.THEORY_VIEWHOLDER_MSGID) {
+                PotokDebugLog.d("THEORYCHECK", "VIEWHOLDER_REUSE_BEFORE msgId=" + roundVideoMo.getId()
+                    + " cellInstance=@" + System.identityHashCode(this)
+                    + " staleContainerW=" + roundVideoContainer.getWidth() + " staleContainerH=" + roundVideoContainer.getHeight()
+                    + " staleScaleX=" + roundVideoContainer.getScaleX() + " staleScaleY=" + roundVideoContainer.getScaleY()
+                    + " staleLpW=" + roundVideoContainer.getLayoutParams().width + " staleLpH=" + roundVideoContainer.getLayoutParams().height);
+            }
             // Применяем масштаб БЕЗ анимации при биндe — анимация нужна только
             // на осознанный тап пользователя (см. openRoundVideo/closeRoundVideo),
             // а не при переиспользовании ViewHolder'а на новый пост.
             applyRoundVideoScale(!roundVideoOpened, false);
+            if (!sameRoundVideo && roundVideoMo.getId() == PotokDebugLog.THEORY_VIEWHOLDER_MSGID) {
+                PotokDebugLog.d("THEORYCHECK", "VIEWHOLDER_REUSE_AFTER msgId=" + roundVideoMo.getId()
+                    + " cellInstance=@" + System.identityHashCode(this)
+                    + " nowContainerW=" + roundVideoContainer.getWidth() + " nowContainerH=" + roundVideoContainer.getHeight()
+                    + " nowScaleX=" + roundVideoContainer.getScaleX() + " nowScaleY=" + roundVideoContainer.getScaleY()
+                    + " nowLpW=" + roundVideoContainer.getLayoutParams().width + " nowLpH=" + roundVideoContainer.getLayoutParams().height
+                    + " LAYOUT_NOT_YET_APPLIED=" + (roundVideoContainer.getLayoutParams().width != roundVideoContainer.getWidth()));
+            }
 
             TLRPC.Document document = roundVideoMo.getDocument();
             if (document != null) {

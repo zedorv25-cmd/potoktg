@@ -144,6 +144,36 @@ public class PotokFeedPostCell extends LinearLayout {
         }
     }
 
+    // ⚠️ ФИКС (карусель: свайп на медиа читался как долгое нажатие и открывал
+    // канал вместо смены медиа): carouselView (см. ниже, вложенный RecyclerView)
+    // при реальном горизонтальном свайпе вызывает getParent().requestDisallow
+    // InterceptTouchEvent(true) — это carouselView.onInterceptTouchEvent, ветка
+    // ACTION_MOVE, dx>dy. По семантике Android этот вызов НЕ просто уведомление:
+    // он взводит флаг FLAG_DISALLOW_INTERCEPT на предке (то есть на этой самой
+    // ячейке), из-за чего Android ПЕРЕСТАЁТ вызывать onInterceptTouchEvent этой
+    // ячейки на остаток жеста — а именно там (см. ACTION_MOVE выше) стоит проверка
+    // "палец ушёл далеко -> cancelPendingLongPress()". При быстром свайпе она
+    // просто не успевала сработать ни разу, таймер long-press продолжал тикать
+    // независимо от свайпа и через системный long-press timeout стрелял как
+    // настоящее удержание — а поскольку исходная точка касания иногда попадала
+    // чуть за пределы isPointInsideCarousel() (край карусели/отступы), onMedia
+    // оказывался false, и вместо смены медиа открывался канал (экран чата).
+    //
+    // Фикс: перехватываем сам вызов requestDisallowInterceptTouchEvent — раз
+    // ДОЧЕРНИЙ view настолько уверен в жесте, что явно просит родителя не
+    // вмешиваться, значит это точно не удержание на месте, и наш таймер долгого
+    // нажатия отменяем немедленно, не дожидаясь ACTION_MOVE в onInterceptTouchEvent.
+    // super() вызывается всегда, чтобы поведение для остальных предков (listView,
+    // ViewPagerFixed) осталось ТОЧНО таким же, как было — мы только читаем сигнал,
+    // не меняем сам факт и момент его дальнейшей передачи наверх.
+    @Override
+    public void requestDisallowInterceptTouchEvent(boolean disallowIntercept) {
+        if (disallowIntercept) {
+            cancelPendingLongPress();
+        }
+        super.requestDisallowInterceptTouchEvent(disallowIntercept);
+    }
+
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
         switch (ev.getActionMasked()) {

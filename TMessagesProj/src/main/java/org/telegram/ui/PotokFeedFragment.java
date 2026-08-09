@@ -418,6 +418,20 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         });
         frameLayout.requestApplyInsets();
         listView.setClipToPadding(false);
+        // ФИКС теории "внешний слой обрезает видеокружок в закрытом состоянии":
+        // setClipToPadding(false) выше отключает клип ТОЛЬКО по паддингу (тому,
+        // что резервирует место под ActionBar сверху и таббар снизу — см. комментарий
+        // над listView.setPadding()). Это НЕ то же самое, что clipChildren — отдельный
+        // флаг ViewGroup, который у RecyclerView по умолчанию true и обрезает детей
+        // строго по СОБСТВЕННЫМ пиксельным границам listView, независимо от паддинга.
+        // roundVideoContainer сидит близко к верхнему краю карточки поста
+        // (topMargin=10dp) — когда пост при скролле частично уезжает за верхнюю
+        // границу listView (под ActionBar/мини-плеер) или за нижнюю (под таббар),
+        // clipChildren=true режет кружок ровно по этой линии — визуально это и есть
+        // "полумесяц". clipToPadding(false) без парного clipChildren(false) не решает
+        // проблему до конца, т.к. clipChildren трогает границы самого view, а не
+        // паддинга. НЕ ПОДТВЕРЖДЕНО тестом на живом баге — см. CLIP_CHECK-лог ниже.
+        listView.setClipChildren(false);
 
         // --- Мини-плеер сверху ленты ---
         // РЕАЛЬНЫЙ компонент Telegram, не свой: тот же org.telegram.ui.Components.
@@ -620,6 +634,32 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 } else if (!shouldShow && scrollToTopButton.getVisibility() == View.VISIBLE) {
                     scrollToTopButton.animate().alpha(0f).setDuration(150)
                         .withEndAction(() -> scrollToTopButton.setVisibility(View.GONE)).start();
+                }
+                // ⚠️ TARGETPOST/CLIP_CHECK — проверка теории "listView.clipChildren
+                // режет кружок по своей верхней/нижней границе". Пишется БЕЗУСЛОВНО
+                // на каждый onScrolled, пока целевой пост присутствует среди
+                // attached-детей listView (не троттлится — скролл-тестов немного,
+                // объём терпимый). Сверяет реальные экранные Y кружка (уже с учётом
+                // scale) против экранных Y самого listView (0/height listView на
+                // экране = ровно та линия, где обрежет clipChildren).
+                for (int a = 0; a < listView.getChildCount(); a++) {
+                    View child = listView.getChildAt(a);
+                    if (!(child instanceof PotokFeedPostCell)) continue;
+                    PotokFeedPostCell cell = (PotokFeedPostCell) child;
+                    if (cell.getRoundVideoMessageId() != PotokDebugLog.TARGET_MESSAGE_ID) continue;
+                    int[] bounds = cell.getRoundVideoVisibleScreenBoundsForLog();
+                    if (bounds == null) continue;
+                    int[] listLoc = new int[2];
+                    listView.getLocationOnScreen(listLoc);
+                    int listTop = listLoc[1];
+                    int listBottom = listLoc[1] + listView.getHeight();
+                    boolean clippedTop = bounds[1] < listTop;
+                    boolean clippedBottom = bounds[3] > listBottom;
+                    PotokDebugLog.d("TARGETPOST", "CLIP_CHECK msgId=" + PotokDebugLog.TARGET_MESSAGE_ID
+                            + " circleTop=" + bounds[1] + " circleBottom=" + bounds[3]
+                            + " listViewTop=" + listTop + " listViewBottom=" + listBottom
+                            + " CLIPPED_BY_TOP=" + clippedTop + " CLIPPED_BY_BOTTOM=" + clippedBottom
+                            + " clipChildren=" + listView.getClipChildren());
                 }
                 // Пост, докрутившийся до видимой области экрана, считается
                 // просмотренным — засчитываем это как прочтение в чате канала.

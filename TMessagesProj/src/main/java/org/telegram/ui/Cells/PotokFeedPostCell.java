@@ -1635,12 +1635,24 @@ public class PotokFeedPostCell extends LinearLayout {
                     .setDuration(250)
                     .setInterpolator(new android.view.animation.DecelerateInterpolator())
                     .setUpdateListener(anim -> {
+                        // ⚠️ ФИКС (см. чат — гипотеза "полумесяц" от обрезки outline
+                        // самой ячейки, не маски круга): setClipToOutline(true) на
+                        // PotokFeedPostCell обрезает ВСЁ содержимое по (0,0,getWidth(),
+                        // getHeight()) ячейки. LayoutParams меняются рывком (см. комментарий
+                        // выше), а scale анимируется плавно 250мс — Android формально
+                        // ДОЛЖЕН сам инвалидировать outline при изменении размера ячейки,
+                        // но на промежуточных кадрах анимации transform'а (не layout'а)
+                        // это не гарантировано на всех версиях/устройствах. Форсируем
+                        // инвалидацию на каждый кадр анимации — дёшево, не может сломать
+                        // ничего, что уже работало.
+                        invalidateOutline();
                         if (onRoundVideoVisualScaleChanged != null) onRoundVideoVisualScaleChanged.run();
                     })
                     .withEndAction(() -> {
                         if (small) {
                             setRoundVideoContainerLayoutSize(roundVideoSmallSize);
                         }
+                        invalidateOutline();
                         logTargetPostScaleSettled("animated end-action", target, small);
                         if (onRoundVideoVisualScaleChanged != null) onRoundVideoVisualScaleChanged.run();
                     })
@@ -1651,6 +1663,7 @@ public class PotokFeedPostCell extends LinearLayout {
             if (small) {
                 setRoundVideoContainerLayoutSize(roundVideoSmallSize);
             }
+            invalidateOutline();
             logTargetPostScaleSettled("non-animated", target, small);
             if (onRoundVideoVisualScaleChanged != null) onRoundVideoVisualScaleChanged.run();
         }
@@ -1667,12 +1680,23 @@ public class PotokFeedPostCell extends LinearLayout {
         if (roundVideoMessageObject == null || roundVideoMessageObject.getId() != PotokDebugLog.TARGET_MESSAGE_ID) {
             return;
         }
+        // ⚠️ Ключевая проверка гипотезы "полумесяц из-за outline-обрезки САМОЙ
+        // ЯЧЕЙКИ" (setClipToOutline(true) на PotokFeedPostCell, см. чат): если
+        // right/bottom контейнера кружка выходят ЗА cellW/cellH — вот прямое
+        // доказательство, а не догадка.
+        int containerLeft = roundVideoContainer.getLeft();
+        int containerTop = roundVideoContainer.getTop();
+        int containerRight = containerLeft + Math.round(roundVideoContainer.getWidth() * roundVideoContainer.getScaleX());
+        int containerBottom = containerTop + Math.round(roundVideoContainer.getHeight() * roundVideoContainer.getScaleY());
         PotokDebugLog.d("TARGETPOST", "FEED applyRoundVideoScale SETTLED[" + phase + "] msgId=" + roundVideoMessageObject.getId()
             + " small=" + small + " target=" + target
             + " realScaleX=" + roundVideoContainer.getScaleX() + " realScaleY=" + roundVideoContainer.getScaleY()
             + " lpW=" + roundVideoContainer.getLayoutParams().width + " lpH=" + roundVideoContainer.getLayoutParams().height
             + " containerW=" + roundVideoContainer.getWidth() + " containerH=" + roundVideoContainer.getHeight()
-            + " roundVideoOpened=" + roundVideoOpened);
+            + " roundVideoOpened=" + roundVideoOpened
+            + " containerVisualBounds=[" + containerLeft + "," + containerTop + "," + containerRight + "," + containerBottom + "]"
+            + " cellW=" + getWidth() + " cellH=" + getHeight()
+            + " OVERFLOWS_CELL=" + (containerRight > getWidth() || containerBottom > getHeight() || containerLeft < 0 || containerTop < 0));
     }
 
     /**

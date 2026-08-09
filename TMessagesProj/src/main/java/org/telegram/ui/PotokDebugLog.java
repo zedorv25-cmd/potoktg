@@ -43,6 +43,17 @@ public class PotokDebugLog {
     // сразу переключится на другой пост, без правок в остальных файлах.
     public static volatile long TARGET_MESSAGE_ID = 972L;
 
+    // ⚠️ ПАРАЛЛЕЛЬНАЯ ПРОВЕРКА 5 ТЕОРИЙ ПО ОБРЕЗКЕ КРУЖКА — по прямому
+    // требованию пользователя, каждая теория проверяется на СВОЁМ отдельном
+    // посте одновременно, тег лога у каждой — THEORYCHECK (кроме №5, у неё
+    // отдельный тег BLACKPAUSE, т.к. это другая проблема — канал, не лента).
+    // Все пять работают независимо друг от друга и от TARGET_MESSAGE_ID выше.
+    public static volatile long THEORY_SHADER_PIVOT_MSGID = 973L;   // теория пользователя: postScale в ImageReceiver крутится вокруг центра drawRegion, а не центра маски-круга
+    public static volatile long THEORY_SWIPEREFRESH_MSGID = 967L;   // теория: swipeRefreshLayout (обёртка над listView) обрезает своим clipChildren
+    public static volatile long THEORY_OVERLAY_MSGID = 968L;        // теория: сверху рисуется оверлей (miniPlayerGapBlur/miniPlayerContainer), перекрывающий часть круга
+    public static volatile long THEORY_VIEWHOLDER_MSGID = 972L;     // теория: устаревшее/залипшее состояние контейнера при переиспользовании ViewHolder
+    public static volatile long THEORY_BLACKPAUSE_MSGID = 974L;     // ОТДЕЛЬНАЯ проблема (канал): кружок чернеет на паузе и не отходит после play
+
     private static final int MAX_LINES = 4000;
     private static final ArrayDeque<String> lines = new ArrayDeque<>();
     private static final SimpleDateFormat fmt = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US);

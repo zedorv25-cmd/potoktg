@@ -371,6 +371,21 @@ public class PotokFeedPostCell extends LinearLayout {
     // рисуется квадратом. Нужен только для одной проверочной сборки — потом
     // вернуть false. См. комментарий в конструкторе у roundVideoContainer.
     private static final boolean DEBUG_DISABLE_ROUND_MASK = false;
+    // ⚠️ ТЕСТОВЫЙ ТУМБЛЕР №2 (эта сессия, диагностика обрезки "полумесяц"):
+    // true — roundVideoImage создаётся НЕ квадратным roundVideoBigSize x
+    // roundVideoBigSize, а ШИРОКИМ прямоугольником (ширина поста x
+    // roundVideoBigSize), roundRadius при этом НЕ меняется (остаётся
+    // roundVideoBigSize/2). Результат должен выглядеть как "таблетка"
+    // (круг с растянутым плоским верхом/низом... нет, растянутым по ширине
+    // с круглыми боками) — если ПРАВЫЙ край при этом перестаёт обрезаться
+    // прямой линией (т.е. скруглённый бок теперь виден целиком), значит
+    // крой физически привязан к старой ширине imageW=roundVideoBigSize и
+    // проблема именно в drawDrawable()/маске ImageReceiver. Если обрезка
+    // остаётся на ТОМ ЖЕ абсолютном месте несмотря на увеличенную ширину —
+    // значит режет что-то ДРУГОЕ, не связанное с imageW этого View (внешний
+    // слой/оверлей/ячейка). ТОЛЬКО для одной проверочной сборки, потом
+    // вернуть false.
+    private static final boolean DEBUG_WIDEN_MASK_TO_POST_WIDTH = true;
 
     // ⚠️ ЕДИНЫЙ источник правды для размера большого кружка — раньше формула
     // жила только здесь, а плавающий контейнер в PotokFeedFragment.java
@@ -783,7 +798,19 @@ public class PotokFeedPostCell extends LinearLayout {
 
         roundVideoImage = new BackupImageView(context);
         roundVideoImage.getImageReceiver().setRoundRadius(DEBUG_DISABLE_ROUND_MASK ? 0 : roundVideoBigSize / 2);
-        roundVideoContainer.addView(roundVideoImage, new FrameLayout.LayoutParams(roundVideoBigSize, roundVideoBigSize));
+        // ⚠️ DEBUG_WIDEN_MASK_TO_POST_WIDTH: см. комментарий у объявления флага
+        // выше. Ширина ребёнка временно = ширина поста (та же формула, что
+        // roundVideoMaxByColumn в getCorrectedRoundVideoBigSize()), высота и
+        // roundRadius НЕ трогаем — это ТОЛЬКО про то, привязана ли обрезка к
+        // ширине этого конкретного View или нет.
+        int debugWideImageWidth = DEBUG_WIDEN_MASK_TO_POST_WIDTH
+                ? (AndroidUtilities.displaySize.x - dp(16) - dp(16))
+                : roundVideoBigSize;
+        if (DEBUG_WIDEN_MASK_TO_POST_WIDTH) {
+            PotokDebugLog.d("ROUNDVID_MASK", "DEBUG_WIDEN_MASK_TO_POST_WIDTH=true — roundVideoImage width="
+                + debugWideImageWidth + " (было " + roundVideoBigSize + "), height/roundRadius без изменений");
+        }
+        roundVideoContainer.addView(roundVideoImage, new FrameLayout.LayoutParams(debugWideImageWidth, roundVideoBigSize));
 
         // ⚠️ ДИАГНОСТИКА (ROUNDVID_MASK, новый узел этой сессии — UI layout):
         // реальные значения контейнера/картинки закрытого маленького кружка

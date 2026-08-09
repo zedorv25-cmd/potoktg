@@ -3902,6 +3902,21 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                                 + " pipSwitchingState=" + pipSwitchingState
                                 + " videoPlayerIsPlaying=" + (videoPlayer != null && videoPlayer.isPlaying()));
                         }
+                        // ⚠️ BLACKPAUSE (пост 974) — теория (из прошлой сессии, ещё не
+                        // подтверждена данными): pipSwitchingState==1 тут отдаёт surface
+                        // в pipRoundVideoView (плавающее окно), а НЕ обратно в currentTextureView
+                        // самой ячейки канала. Если это срабатывает на обычную паузу (а не на
+                        // реальный уход в PiP), видео дальше рендерится в невидимый/чужой
+                        // pipRoundVideoView — в ячейке остаётся чёрный круг. Логируем БЕЗ
+                        // гейтов, какая именно ветка (2/1/photoViewer/none) сработала.
+                        if (playingMessageObject.getId() == PotokDebugLog.THEORY_BLACKPAUSE_MSGID) {
+                            PotokDebugLog.d("BLACKPAUSE", "onSurfaceDestroyed msgId=" + playingMessageObject.getId()
+                                + " pipSwitchingState=" + pipSwitchingState
+                                + " isPaused=" + isPaused
+                                + " pipRoundVideoView=" + (pipRoundVideoView == null ? "null" : "@" + System.identityHashCode(pipRoundVideoView))
+                                + " currentTextureView=" + (currentTextureView == null ? "null" : "@" + System.identityHashCode(currentTextureView))
+                                + " videoPlayerIsPlaying=" + (videoPlayer != null && videoPlayer.isPlaying()));
+                        }
                     }
                     if (videoPlayer == null) {
                         return false;
@@ -3918,6 +3933,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                                 currentTextureView.setSurfaceTexture(surfaceTexture);
                             }
                             videoPlayer.setTextureView(currentTextureView);
+                        }
+                        if (playingMessageObject != null && playingMessageObject.getId() == PotokDebugLog.THEORY_BLACKPAUSE_MSGID) {
+                            PotokDebugLog.d("BLACKPAUSE", "onSurfaceDestroyed BRANCH_TAKEN=pipSwitchingState2(->currentTextureView) msgId=" + playingMessageObject.getId());
                         }
                         pipSwitchingState = 0;
                         return true;
@@ -3937,6 +3955,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                                 }
                                 videoPlayer.setTextureView(pipRoundVideoView.getTextureView());
                             }
+                        }
+                        if (playingMessageObject != null && playingMessageObject.getId() == PotokDebugLog.THEORY_BLACKPAUSE_MSGID) {
+                            PotokDebugLog.d("BLACKPAUSE", "onSurfaceDestroyed BRANCH_TAKEN=pipSwitchingState1(->pipRoundVideoView, НЕ currentTextureView) msgId=" + playingMessageObject.getId()
+                                + " — если это была обычная пауза, а не уход в PiP, вот тут и уходит surface из ячейки канала");
                         }
                         pipSwitchingState = 0;
                         return true;
@@ -4486,6 +4508,15 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
         if (audioPlayer == null && videoPlayer == null || messageObject == null || playingMessageObject == null || !isSamePlayingMessage(messageObject)) {
             return false;
         }
+        // ⚠️ BLACKPAUSE (пост 974) — точка входа тапа "пауза". Пишем состояние
+        // ДО videoPlayer.pause(), чтобы видеть, с чего всё началось перед
+        // onSurfaceDestroyed/pipSwitchingState-веткой чуть ниже по стеку.
+        if (messageObject.getId() == PotokDebugLog.THEORY_BLACKPAUSE_MSGID) {
+            PotokDebugLog.d("BLACKPAUSE", "pauseMessage ENTRY msgId=" + messageObject.getId()
+                + " pipSwitchingState(before)=" + pipSwitchingState
+                + " isPaused(before)=" + isPaused
+                + " videoPlayerNotNull=" + (videoPlayer != null));
+        }
         stopProgressTimer();
         try {
             if (audioPlayer != null) {
@@ -4538,6 +4569,21 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
     private boolean resumeAudio(MessageObject messageObject) {
         if (audioPlayer == null && videoPlayer == null || messageObject == null || playingMessageObject == null || !isSamePlayingMessage(messageObject)) {
             return false;
+        }
+        // ⚠️ BLACKPAUSE (пост 974) — теория: этот метод (тап "play" после паузы)
+        // просто вызывает videoPlayer.play() дальше по коду, но НИГДЕ не
+        // восстанавливает currentTextureView, если pipSwitchingState-ветка в
+        // onSurfaceDestroyed (см. BLACKPAUSE-логи там) успела перекинуть surface
+        // в pipRoundVideoView. Если так — видео продолжает играть, но НЕ в ту
+        // текстуру, что видна в ячейке канала, отсюда и "чёрный круг не уходит
+        // даже после play". Логируем состояние ИМЕННО в момент тапа play.
+        if (messageObject.getId() == PotokDebugLog.THEORY_BLACKPAUSE_MSGID) {
+            PotokDebugLog.d("BLACKPAUSE", "resumeAudio(play tap) ENTRY msgId=" + messageObject.getId()
+                + " pipSwitchingState=" + pipSwitchingState
+                + " pipRoundVideoView=" + (pipRoundVideoView == null ? "null" : "@" + System.identityHashCode(pipRoundVideoView))
+                + " currentTextureView=" + (currentTextureView == null ? "null" : "@" + System.identityHashCode(currentTextureView))
+                + " currentTextureViewHasSurface=" + (currentTextureView != null && currentTextureView.getSurfaceTexture() != null)
+                + " videoPlayerNotNull=" + (videoPlayer != null));
         }
 
         try {

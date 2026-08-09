@@ -1521,7 +1521,31 @@ public class ImageReceiver implements NotificationCenter.NotificationCenterDeleg
                                     + " scaleW=" + scaleW + " scaleH=" + scaleH + " scale=" + scale
                                     + " shaderMatrix=" + shaderMatrix);
                             }
-                            shaderMatrix.postScale(postScale, postScale, drawRegion.centerX(), drawRegion.centerY());
+                            // ⚠️ ФИКС теории пользователя (пост 973): раньше postScale крутился
+                            // вокруг центра drawRegion, а не центра маски-круга (roundRect). В
+                            // симметричном случае (scaleW≈scaleH) центры совпадали и бага не было
+                            // видно, но в асимметричной ветке чуть выше (bitmapW/scaleH > realImageW
+                            // или наоборот) drawRegion строится СО СДВИГОМ от центра roundRect —
+                            // и scale вокруг чужого центра сдвигал картинку внутри уже правильно
+                            // нарисованного круга, оставляя пустой сегмент с одной стороны —
+                            // визуально это и есть "полумесяц". Теперь опора scale — центр САМОЙ
+                            // МАСКИ (roundRect), а не центр области кадра (drawRegion).
+                            // ⚠️ THEORYCHECK (пост 973) — безусловно, без гейтов: пишем оба центра
+                            // и их расхождение НА КАЖДЫЙ кадр отрисовки целевого поста, чтобы
+                            // подтвердить/опровергнуть саму теорию (был ли сдвиг реально ненулевым).
+                            if (roundVideoMsgId2 == PotokDebugLog.THEORY_SHADER_PIVOT_MSGID) {
+                                float pivotDx = drawRegion.centerX() - roundRect.centerX();
+                                float pivotDy = drawRegion.centerY() - roundRect.centerY();
+                                PotokDebugLog.d("THEORYCHECK", "SHADER_PIVOT msgId=" + roundVideoMsgId2
+                                    + " drawRegionCenter=(" + drawRegion.centerX() + "," + drawRegion.centerY() + ")"
+                                    + " roundRectCenter=(" + roundRect.centerX() + "," + roundRect.centerY() + ")"
+                                    + " pivotDx=" + pivotDx + " pivotDy=" + pivotDy
+                                    + " PIVOT_WAS_OFFSET=" + (Math.abs(pivotDx) > 0.5f || Math.abs(pivotDy) > 0.5f)
+                                    + " bitmapW=" + bitmapW + " bitmapH=" + bitmapH
+                                    + " realImageW=" + realImageW + " realImageH=" + realImageH
+                                    + " scaleW=" + scaleW + " scaleH=" + scaleH);
+                            }
+                            shaderMatrix.postScale(postScale, postScale, roundRect.centerX(), roundRect.centerY());
                         }
                         if (legacyShader != null) {
                             legacyShader.setLocalMatrix(shaderMatrix);

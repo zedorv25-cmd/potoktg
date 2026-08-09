@@ -661,6 +661,56 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                             + " CLIPPED_BY_TOP=" + clippedTop + " CLIPPED_BY_BOTTOM=" + clippedBottom
                             + " clipChildren=" + listView.getClipChildren());
                 }
+                // ⚠️ THEORYCHECK (пост 967) — теория: swipeRefreshLayout, который
+                // ОБОРАЧИВАЕТ listView, тоже ViewGroup со своим clipChildren=true
+                // по умолчанию, который никогда не трогали. Сверяем экранные
+                // границы кружка против экранных границ именно swipeRefreshLayout
+                // (не listView — это разные view, у swipeRefreshLayout свои
+                // границы, обычно совпадают с listView, но не обязаны).
+                for (int a = 0; a < listView.getChildCount(); a++) {
+                    View child = listView.getChildAt(a);
+                    if (!(child instanceof PotokFeedPostCell)) continue;
+                    PotokFeedPostCell cell = (PotokFeedPostCell) child;
+                    if (cell.getRoundVideoMessageId() != PotokDebugLog.THEORY_SWIPEREFRESH_MSGID) continue;
+                    int[] bounds = cell.getRoundVideoVisibleScreenBoundsForLog();
+                    if (bounds == null || swipeRefreshLayout == null) continue;
+                    int[] srlLoc = new int[2];
+                    swipeRefreshLayout.getLocationOnScreen(srlLoc);
+                    int srlTop = srlLoc[1];
+                    int srlBottom = srlLoc[1] + swipeRefreshLayout.getHeight();
+                    boolean clippedTop = bounds[1] < srlTop;
+                    boolean clippedBottom = bounds[3] > srlBottom;
+                    PotokDebugLog.d("THEORYCHECK", "SWIPEREFRESH_CLIP msgId=" + PotokDebugLog.THEORY_SWIPEREFRESH_MSGID
+                            + " circleTop=" + bounds[1] + " circleBottom=" + bounds[3]
+                            + " swipeRefreshTop=" + srlTop + " swipeRefreshBottom=" + srlBottom
+                            + " CLIPPED_BY_TOP=" + clippedTop + " CLIPPED_BY_BOTTOM=" + clippedBottom
+                            + " swipeRefreshClipChildren=" + swipeRefreshLayout.getClipChildren());
+                }
+                // ⚠️ THEORYCHECK (пост 968) — теория: сверху рисуется оверлей
+                // (miniPlayerGapBlur — блюр-полоса под мини-плеер, добавлен ПОСЛЕ
+                // swipeRefreshLayout в frameLayout.addView, значит рисуется ПОВЕРХ
+                // ленты по z-order), который может перекрывать часть круга, если
+                // пост оказывается рядом с верхом экрана. Проверяем пересечение
+                // прямоугольников экранных координат круга и оверлея.
+                for (int a = 0; a < listView.getChildCount(); a++) {
+                    View child = listView.getChildAt(a);
+                    if (!(child instanceof PotokFeedPostCell)) continue;
+                    PotokFeedPostCell cell = (PotokFeedPostCell) child;
+                    if (cell.getRoundVideoMessageId() != PotokDebugLog.THEORY_OVERLAY_MSGID) continue;
+                    int[] bounds = cell.getRoundVideoVisibleScreenBoundsForLog();
+                    if (bounds == null || miniPlayerGapBlur == null) continue;
+                    int[] overlayLoc = new int[2];
+                    miniPlayerGapBlur.getLocationOnScreen(overlayLoc);
+                    int overlayTop = overlayLoc[1];
+                    int overlayBottom = overlayLoc[1] + miniPlayerGapBlur.getHeight();
+                    boolean intersects = bounds[1] < overlayBottom && bounds[3] > overlayTop
+                            && miniPlayerGapBlur.getVisibility() == View.VISIBLE;
+                    PotokDebugLog.d("THEORYCHECK", "OVERLAY_CHECK msgId=" + PotokDebugLog.THEORY_OVERLAY_MSGID
+                            + " circleTop=" + bounds[1] + " circleBottom=" + bounds[3]
+                            + " overlayTop=" + overlayTop + " overlayBottom=" + overlayBottom
+                            + " overlayVisibility=" + miniPlayerGapBlur.getVisibility()
+                            + " INTERSECTS_OVERLAY=" + intersects);
+                }
                 // Пост, докрутившийся до видимой области экрана, считается
                 // просмотренным — засчитываем это как прочтение в чате канала.
                 checkVisibleFeedItemsRead();

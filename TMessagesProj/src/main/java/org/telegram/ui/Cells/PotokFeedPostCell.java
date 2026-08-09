@@ -385,7 +385,7 @@ public class PotokFeedPostCell extends LinearLayout {
     // значит режет что-то ДРУГОЕ, не связанное с imageW этого View (внешний
     // слой/оверлей/ячейка). ТОЛЬКО для одной проверочной сборки, потом
     // вернуть false.
-    private static final boolean DEBUG_WIDEN_MASK_TO_POST_WIDTH = true;
+    private static final boolean DEBUG_WIDEN_MASK_TO_POST_WIDTH = false;
 
     // ⚠️ ЕДИНЫЙ источник правды для размера большого кружка — раньше формула
     // жила только здесь, а плавающий контейнер в PotokFeedFragment.java
@@ -1109,6 +1109,38 @@ public class PotokFeedPostCell extends LinearLayout {
         MessageObject messageObject = messages.get(0);
         currentMessage = messageObject;
         cancelPendingLongPress();
+
+        // ⚠️ ФИКС (эта сессия, по прямому требованию пользователя, БЕЗ поиска
+        // точной причины числа 648 в логах маски): roundVideoBigSize раньше
+        // считался ОДИН РАЗ в конструкторе ячейки. Если ячейка была создана
+        // рано (до того как экран/displaySize успели корректно измериться),
+        // roundVideoBigSize мог навсегда застрять маленьким (648 вместо 984)
+        // для этой конкретной переиспользуемой ViewHolder-ячейки, даже если
+        // сама ячейка потом показывает разные посты. Пересчитываем и, если
+        // значение изменилось, ПЕРЕЗАЛИВАЕМ LayoutParams/roundRadius кружка
+        // на каждый показ поста — так застрявшее маленькое значение больше
+        // не может пережить весь жизненный цикл ячейки.
+        int correctedRoundVideoBigSize = getCorrectedRoundVideoBigSize();
+        if (correctedRoundVideoBigSize != roundVideoBigSize && correctedRoundVideoBigSize > 0) {
+            PotokDebugLog.d("ROUNDVID_MASK", "setPost: roundVideoBigSize CORRECTED from " + roundVideoBigSize
+                + " to " + correctedRoundVideoBigSize + " msgId=" + messageObject.getId());
+            roundVideoBigSize = correctedRoundVideoBigSize;
+            roundVideoImage.getImageReceiver().setRoundRadius(DEBUG_DISABLE_ROUND_MASK ? 0 : roundVideoBigSize / 2);
+            ViewGroup.LayoutParams imgLp = roundVideoImage.getLayoutParams();
+            if (imgLp != null) {
+                imgLp.width = roundVideoBigSize;
+                imgLp.height = roundVideoBigSize;
+                roundVideoImage.setLayoutParams(imgLp);
+            }
+            if (roundVideoDownloadButton != null) {
+                ViewGroup.LayoutParams btnLp = roundVideoDownloadButton.getLayoutParams();
+                if (btnLp != null) {
+                    btnLp.width = roundVideoBigSize;
+                    btnLp.height = roundVideoBigSize;
+                    roundVideoDownloadButton.setLayoutParams(btnLp);
+                }
+            }
+        }
 
         // Сброс состояния при переиспользовании
         isExpanded = false;

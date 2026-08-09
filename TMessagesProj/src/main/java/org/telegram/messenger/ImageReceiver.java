@@ -1464,16 +1464,52 @@ public class ImageReceiver implements NotificationCenter.NotificationCenterDeleg
                     }
                     float scale = 1.0f / Math.min(scaleW, scaleH);
                     roundRect.set(imageX + sideClip, imageY + sideClip, imageX + imageW - sideClip, imageY + imageH - sideClip);
+                    // ⚠️ TARGETPOST — безусловно: состояние маски (roundRect) ДО того, как
+                    // асимметричная ветка ниже (если сработает) пересчитает drawRegion.
+                    // Это то самое "ДО рисования", которого раньше не было в логах.
+                    if (isRoundVideo) {
+                        long __targetLogMsgId = currentParentObject instanceof MessageObject ? ((MessageObject) currentParentObject).getId() : 0;
+                        if (__targetLogMsgId == PotokDebugLog.TARGET_MESSAGE_ID) {
+                            PotokDebugLog.d("TARGETPOST", "ImageReceiver.roundRect BEFORE_ASYMMETRIC_BRANCH msgId=" + __targetLogMsgId
+                                + " roundRect=" + roundRect + " scale=" + scale
+                                + " scaleW=" + scaleW + " scaleH=" + scaleH + " scaleDiff=" + Math.abs(scaleW - scaleH)
+                                + " bitmapW=" + bitmapW + " bitmapH=" + bitmapH
+                                + " realImageW=" + realImageW + " realImageH=" + realImageH
+                                + " imageX=" + imageX + " imageY=" + imageY + " imageW=" + imageW + " imageH=" + imageH
+                                + " sideClip=" + sideClip);
+                        }
+                    }
                     if (Math.abs(scaleW - scaleH) > 0.0005f) {
                         if (bitmapW / scaleH > realImageW) {
                             bitmapW /= scaleH;
                             drawRegion.set(imageX - (bitmapW - realImageW) / 2, imageY, imageX + (bitmapW + realImageW) / 2, imageY + realImageH);
+                            if (isRoundVideo) {
+                                long __targetLogMsgId2 = currentParentObject instanceof MessageObject ? ((MessageObject) currentParentObject).getId() : 0;
+                                if (__targetLogMsgId2 == PotokDebugLog.TARGET_MESSAGE_ID) {
+                                    PotokDebugLog.d("TARGETPOST", "ImageReceiver.asymmetricBranch=WIDE(bitmapW/scaleH>realImageW) msgId=" + __targetLogMsgId2
+                                        + " drawRegion=" + drawRegion);
+                                }
+                            }
                         } else {
                             bitmapH /= scaleW;
                             drawRegion.set(imageX, imageY - (bitmapH - realImageH) / 2, imageX + realImageW, imageY + (bitmapH + realImageH) / 2);
+                            if (isRoundVideo) {
+                                long __targetLogMsgId3 = currentParentObject instanceof MessageObject ? ((MessageObject) currentParentObject).getId() : 0;
+                                if (__targetLogMsgId3 == PotokDebugLog.TARGET_MESSAGE_ID) {
+                                    PotokDebugLog.d("TARGETPOST", "ImageReceiver.asymmetricBranch=TALL(else) msgId=" + __targetLogMsgId3
+                                        + " drawRegion=" + drawRegion);
+                                }
+                            }
                         }
                     } else {
                         drawRegion.set(imageX, imageY, imageX + realImageW, imageY + realImageH);
+                        if (isRoundVideo) {
+                            long __targetLogMsgId4 = currentParentObject instanceof MessageObject ? ((MessageObject) currentParentObject).getId() : 0;
+                            if (__targetLogMsgId4 == PotokDebugLog.TARGET_MESSAGE_ID) {
+                                PotokDebugLog.d("TARGETPOST", "ImageReceiver.asymmetricBranch=SYMMETRIC msgId=" + __targetLogMsgId4
+                                    + " drawRegion=" + drawRegion);
+                            }
+                        }
                     }
                     if (isVisible) {
                         shaderMatrix.reset();
@@ -1578,6 +1614,15 @@ public class ImageReceiver implements NotificationCenter.NotificationCenterDeleg
 
                         roundPaint.setAlpha(alpha);
 
+                        long __targetLogMsgId5 = isRoundVideo && currentParentObject instanceof MessageObject ? ((MessageObject) currentParentObject).getId() : 0;
+                        boolean __targetLogGate = isRoundVideo && __targetLogMsgId5 == PotokDebugLog.TARGET_MESSAGE_ID;
+                        if (__targetLogGate) {
+                            PotokDebugLog.d("TARGETPOST", "ImageReceiver DRAW_BEFORE msgId=" + __targetLogMsgId5
+                                + " isRoundRect=" + isRoundRect + " useRoundRadius=" + useRoundRadius
+                                + " roundRadius0=" + (roundRadius.length > 0 ? roundRadius[0] : -1)
+                                + " roundRect=" + roundRect + " canvasNull=" + (canvas == null)
+                                + " shaderMatrix=" + shaderMatrix);
+                        }
                         if (isRoundRect && useRoundRadius) {
                             try {
                                 if (canvas != null) {
@@ -1586,14 +1631,28 @@ public class ImageReceiver implements NotificationCenter.NotificationCenterDeleg
                                             AndroidUtilities.rectTmp.set(roundRect);
                                             AndroidUtilities.rectTmp.inset(-(drawRegion.width() * ReactionLastFrame.LAST_FRAME_SCALE - drawRegion.width()) / 2f, -(drawRegion.height() * ReactionLastFrame.LAST_FRAME_SCALE - drawRegion.height()) / 2f);
                                             canvas.drawRect(AndroidUtilities.rectTmp, roundPaint);
+                                            if (__targetLogGate) {
+                                                PotokDebugLog.d("TARGETPOST", "ImageReceiver DRAW_AFTER msgId=" + __targetLogMsgId5 + " path=drawRect(reactionLastFrame) rect=" + AndroidUtilities.rectTmp);
+                                            }
                                         } else {
                                             canvas.drawRect(roundRect, roundPaint);
+                                            if (__targetLogGate) {
+                                                PotokDebugLog.d("TARGETPOST", "ImageReceiver DRAW_AFTER msgId=" + __targetLogMsgId5 + " path=drawRect(roundRadius0==0) rect=" + roundRect);
+                                            }
                                         }
                                     } else {
                                         canvas.drawRoundRect(roundRect, roundRadius[0], roundRadius[0], roundPaint);
+                                        if (__targetLogGate) {
+                                            PotokDebugLog.d("TARGETPOST", "ImageReceiver DRAW_AFTER msgId=" + __targetLogMsgId5 + " path=drawRoundRect rect=" + roundRect + " radius=" + roundRadius[0]);
+                                        }
                                     }
+                                } else if (__targetLogGate) {
+                                    PotokDebugLog.d("TARGETPOST", "ImageReceiver DRAW_SKIPPED msgId=" + __targetLogMsgId5 + " reason=canvas_is_null");
                                 }
                             } catch (Exception e) {
+                                if (__targetLogGate) {
+                                    PotokDebugLog.d("TARGETPOST", "ImageReceiver DRAW_EXCEPTION msgId=" + __targetLogMsgId5 + " ex=" + e);
+                                }
                                 if (backgroundThreadDrawHolder == null) {
                                     onBitmapException(bitmapDrawable);
                                 }
@@ -1609,6 +1668,11 @@ public class ImageReceiver implements NotificationCenter.NotificationCenterDeleg
                             roundPath.close();
                             if (canvas != null) {
                                 canvas.drawPath(roundPath, roundPaint);
+                                if (__targetLogGate) {
+                                    PotokDebugLog.d("TARGETPOST", "ImageReceiver DRAW_AFTER msgId=" + __targetLogMsgId5 + " path=drawPath(roundPath) rect=" + roundRect);
+                                }
+                            } else if (__targetLogGate) {
+                                PotokDebugLog.d("TARGETPOST", "ImageReceiver DRAW_SKIPPED msgId=" + __targetLogMsgId5 + " reason=canvas_is_null(path-branch)");
                             }
                         }
                     }

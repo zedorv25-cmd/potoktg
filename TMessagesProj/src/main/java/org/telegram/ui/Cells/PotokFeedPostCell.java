@@ -789,7 +789,16 @@ public class PotokFeedPostCell extends LinearLayout {
         // ⚠️ roundVideoSmallSize/roundVideoBigSize уже в ПИКСЕЛЯХ (через dp() выше),
         // поэтому LayoutParams собираем напрямую, а не через LayoutHelper.createLinear
         // (тот сам конвертирует int-параметры из dp в px — двойная конвертация).
-        LinearLayout.LayoutParams roundVideoContainerLp = new LinearLayout.LayoutParams(roundVideoSmallSize, roundVideoSmallSize);
+        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ: ширина контейнера
+        // больше НЕ фиксированный маленький roundVideoSmallSize, а вся
+        // доступная ширина поста (та же формула roundVideoMaxByColumn, что
+        // уже используется в getCorrectedRoundVideoBigSize() для самого
+        // кружка). Высота контейнера НЕ меняется (остаётся roundVideoSmallSize) —
+        // это НЕ ширина/высота самого кружка (roundVideoImage/roundVideoBigSize
+        // не трогаются), это только место, доступное контейнеру, чтобы кружок
+        // мог рисоваться полным кругом без обрезки прямыми краями контейнера.
+        int roundVideoContainerWidth = AndroidUtilities.displaySize.x - dp(16) - dp(16);
+        LinearLayout.LayoutParams roundVideoContainerLp = new LinearLayout.LayoutParams(roundVideoContainerWidth, roundVideoSmallSize);
         roundVideoContainerLp.gravity = Gravity.START;
         roundVideoContainerLp.leftMargin = dp(8);
         roundVideoContainerLp.topMargin = dp(10);
@@ -1824,8 +1833,12 @@ public class PotokFeedPostCell extends LinearLayout {
     private void setRoundVideoContainerLayoutSize(int size) {
         ViewGroup.LayoutParams lp = roundVideoContainer.getLayoutParams();
         if (lp == null) return;
-        if (lp.width == size && lp.height == size) return;
-        lp.width = size;
+        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ: ширина контейнера
+        // больше НЕ переключается вместе с высотой — она зафиксирована на
+        // всю ширину поста в конструкторе. Здесь меняем ТОЛЬКО высоту
+        // (small/big), иначе этот вызов на каждое открытие/закрытие кружка
+        // сбрасывал бы ширину обратно в квадрат и сносил бы правку.
+        if (lp.height == size) return;
         lp.height = size;
         roundVideoContainer.setLayoutParams(lp);
     }

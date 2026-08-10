@@ -789,16 +789,18 @@ public class PotokFeedPostCell extends LinearLayout {
         // ⚠️ roundVideoSmallSize/roundVideoBigSize уже в ПИКСЕЛЯХ (через dp() выше),
         // поэтому LayoutParams собираем напрямую, а не через LayoutHelper.createLinear
         // (тот сам конвертирует int-параметры из dp в px — двойная конвертация).
-        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ: ширина контейнера
-        // больше НЕ фиксированный маленький roundVideoSmallSize, а вся
-        // доступная ширина поста (та же формула roundVideoMaxByColumn, что
-        // уже используется в getCorrectedRoundVideoBigSize() для самого
-        // кружка). Высота контейнера НЕ меняется (остаётся roundVideoSmallSize) —
-        // это НЕ ширина/высота самого кружка (roundVideoImage/roundVideoBigSize
-        // не трогаются), это только место, доступное контейнеру, чтобы кружок
-        // мог рисоваться полным кругом без обрезки прямыми краями контейнера.
+        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ: контейнер больше НЕ
+        // фиксированный маленький roundVideoSmallSize ни по ширине, ни по
+        // высоте — теперь это большой квадрат на всю доступную ширину поста
+        // (та же формула roundVideoMaxByColumn, что уже используется в
+        // getCorrectedRoundVideoBigSize() для самого кружка), фиксированный,
+        // без переключения между small/big состояниями (см. setRoundVideoContainerLayoutSize
+        // ниже — теперь no-op). Это НЕ ширина/высота самого кружка
+        // (roundVideoImage/roundVideoBigSize не трогаются) — это только
+        // место, доступное контейнеру, чтобы кружок мог рисоваться полным
+        // кругом без обрезки прямыми краями контейнера.
         int roundVideoContainerWidth = AndroidUtilities.displaySize.x - dp(16) - dp(16);
-        LinearLayout.LayoutParams roundVideoContainerLp = new LinearLayout.LayoutParams(roundVideoContainerWidth, roundVideoSmallSize);
+        LinearLayout.LayoutParams roundVideoContainerLp = new LinearLayout.LayoutParams(roundVideoContainerWidth, roundVideoContainerWidth);
         roundVideoContainerLp.gravity = Gravity.START;
         roundVideoContainerLp.leftMargin = dp(8);
         roundVideoContainerLp.topMargin = dp(10);
@@ -1831,16 +1833,11 @@ public class PotokFeedPostCell extends LinearLayout {
      * applyRoundVideoScale().
      */
     private void setRoundVideoContainerLayoutSize(int size) {
-        ViewGroup.LayoutParams lp = roundVideoContainer.getLayoutParams();
-        if (lp == null) return;
-        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ: ширина контейнера
-        // больше НЕ переключается вместе с высотой — она зафиксирована на
-        // всю ширину поста в конструкторе. Здесь меняем ТОЛЬКО высоту
-        // (small/big), иначе этот вызов на каждое открытие/закрытие кружка
-        // сбрасывал бы ширину обратно в квадрат и сносил бы правку.
-        if (lp.height == size) return;
-        lp.height = size;
-        roundVideoContainer.setLayoutParams(lp);
+        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ: контейнер теперь
+        // ВСЕГДА фиксированного большого размера (и по ширине, и по высоте,
+        // см. конструктор) — реальные LayoutParams больше не переключаются
+        // между small/big. Функция теперь ничего не делает, оставлена как
+        // no-op, чтобы не переписывать все места её вызова.
     }
 
     /**
@@ -1904,7 +1901,6 @@ public class PotokFeedPostCell extends LinearLayout {
      */
     private void openRoundVideo() {
         if (roundVideoMessageObject == null || roundVideoOpened) return;
-        performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP, android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
         setRoundVideoOpenVisual(true, true);
         MediaController.getInstance().playMessage(roundVideoMessageObject, false);
     }

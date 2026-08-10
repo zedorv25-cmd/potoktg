@@ -2041,6 +2041,41 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private void updateRoundVideoTexturePosition() {
         if (roundVideoPlayerContainer == null || listView == null || fragmentView == null) return;
         MessageObject playing = MediaController.getInstance().getPlayingMessageObject();
+        // ⚠️ ФИКС (эта сессия, причина рассинхрона кружков на Канале после
+        // захода в Ленту): подписка на messagePlayingDidStart/
+        // PlayStateChanged/DidReset снимается только в onFragmentDestroy(),
+        // а не при уходе со вкладки — значит Лента продолжает получать ЭТИ
+        // ГЛОБАЛЬНЫЕ уведомления, даже когда реально видна не она, а Канал
+        // (ChatActivity, свой независимый TextureView). Раньше здесь любое
+        // играющее round-видео (playing!=null) считалось "моё" и Лента
+        // безусловно перетягивала общий MediaController.currentTextureView
+        // СЕБЕ — даже если это видео физически открыто и показывается на
+        // Канале. В результате Канал продолжал рисовать свой UI (полосу,
+        // реагировать на тап), но реальный видеопоток уже принадлежал
+        // скрытому контейнеру Ленты — отсюда "тап не ставит на паузу" /
+        // "полоса не двигается" именно после связки Канал→Лента→Канал.
+        // Теперь: считаем видео "своим" ТОЛЬКО если оно реально принадлежит
+        // одной из СЕЙЧАС прикреплённых ячеек Ленты (roundVideoMessageObject
+        // совпадает) — иначе ведём себя как playing==null (не претендуем на
+        // текстуру вообще), и её сохраняет тот экран, который её реально
+        // открыл.
+        boolean belongsToFeed = false;
+        if (playing != null && playing.isRoundVideo()) {
+            int count = listView.getChildCount();
+            for (int a = 0; a < count; a++) {
+                View child = listView.getChildAt(a);
+                if (child instanceof PotokFeedPostCell) {
+                    MessageObject cellRoundVideo = ((PotokFeedPostCell) child).getRoundVideoMessageObject();
+                    if (cellRoundVideo != null && cellRoundVideo.getId() == playing.getId()) {
+                        belongsToFeed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!belongsToFeed) {
+            playing = null;
+        }
         if (playing == null || !playing.isRoundVideo()) {
             // ⚠️ ФИКС: не GONE — см. комментарий у roundVideoHiddenTranslationY.
             roundVideoPlayerContainer.setTranslationY(roundVideoHiddenTranslationY);

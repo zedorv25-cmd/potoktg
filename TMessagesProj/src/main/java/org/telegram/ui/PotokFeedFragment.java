@@ -1892,8 +1892,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                         // закрытого кружка теперь целиком на OnClickListener самой
                         // ячейки (см. комментарий у ACTION_DOWN выше) — эта ветка
                         // сюда для закрытого состояния больше не доходит вообще.
-                        roundVideoActiveCell.performHapticFeedback(
-                                android.view.HapticFeedbackConstants.KEYBOARD_TAP, android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
                         if (MediaController.getInstance().isPlayingMessage(mo) && !MediaController.getInstance().isMessagePaused()) {
                             MediaController.getInstance().pauseMessage(mo);
                         } else {
@@ -1960,6 +1958,16 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         private final RectF ringRect = new RectF();
         private final Paint ringPaint;
         private final Paint handlePaint;
+        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ: раньше переход inset
+        // (тонкая полоса играя -> жирная на паузе) происходил мгновенным
+        // скачком в одном кадре (см. старый комментарий ниже про "без анимации
+        // перехода — не критично"). Теперь плавно анимируем 0..1 прогресс
+        // перехода через ValueAnimator, а не boolean-скачок — onDraw больше не
+        // читает paused напрямую для расчёта inset/радиуса ручки, только
+        // текущее анимированное значение pausedTransition.
+        private float pausedTransition = 0f;
+        private android.animation.ValueAnimator pausedTransitionAnimator;
+        private boolean lastPausedState = false;
 
         RoundVideoRingView(Context context) {
             super(context);
@@ -1974,32 +1982,50 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             setWillNotDraw(false);
         }
 
+        private void animatePausedTransition(boolean paused) {
+            if (paused == lastPausedState && pausedTransitionAnimator != null && pausedTransitionAnimator.isRunning()) return;
+            lastPausedState = paused;
+            if (pausedTransitionAnimator != null) pausedTransitionAnimator.cancel();
+            float target = paused ? 1f : 0f;
+            pausedTransitionAnimator = android.animation.ValueAnimator.ofFloat(pausedTransition, target);
+            pausedTransitionAnimator.setDuration(200);
+            pausedTransitionAnimator.setInterpolator(new android.view.animation.DecelerateInterpolator());
+            pausedTransitionAnimator.addUpdateListener(anim -> {
+                pausedTransition = (float) anim.getAnimatedValue();
+                invalidate();
+            });
+            pausedTransitionAnimator.start();
+        }
+
         @Override
         protected void onDraw(Canvas canvas) {
             if (roundVideoActiveCell == null || !roundVideoActiveCell.isRoundVideoOpened()) return;
             MessageObject mo = MediaController.getInstance().getPlayingMessageObject();
             if (mo == null || !mo.isRoundVideo() || !MediaController.getInstance().isPlayingMessage(mo)) return;
             boolean paused = MediaController.getInstance().isMessagePaused();
+            if (paused != lastPausedState) animatePausedTransition(paused);
             // ⚠️ ФИКС (эта сессия): раньше инсет был фиксированным (~1dp) вне
             // зависимости от паузы — кольцо всегда лепилось прямо к краю круга.
             // В оригинале (drawRoundProgress, ChatMessageCell) инсет динамический:
             // ~1.5dp играя, и + до 16dp когда на паузе (место под "тень"-подложку
-            // и увеличенную ручку). 1:1 переносим саму логику (без анимации
-            // перехода — она нам не критична), пропорции — те же.
+            // и увеличенную ручку). 1:1 переносим саму логику, но inset теперь
+            // плавно анимирован через pausedTransition (0..1), а не boolean-скачок.
             float baseInset = org.telegram.messenger.AndroidUtilities.dpf2(1.5f);
-            float pausedInset = paused ? org.telegram.messenger.AndroidUtilities.dp(16) : 0;
+            float pausedInset = org.telegram.messenger.AndroidUtilities.dp(16) * pausedTransition;
             float inset = baseInset + pausedInset;
             ringRect.set(inset, inset, getWidth() - inset, getHeight() - inset);
             float sweep = 360 * mo.audioProgress;
             canvas.drawArc(ringRect, -90, sweep, false, ringPaint);
-            if (paused) {
+            if (pausedTransition > 0.01f) {
                 // ⚠️ ФИКС "точка-ручка как лилипут": в оригинале радиус ручки на
                 // паузе — dp(3) + dp(5) (без активного касания) = dp(8), а не dp(4).
+                // Радиус и прозрачность ручки тоже плавно следуют pausedTransition.
                 double angleRad = Math.toRadians(sweep - 90);
                 float radius = ringRect.width() / 2f;
                 float handleX = ringRect.centerX() + radius * (float) Math.cos(angleRad);
                 float handleY = ringRect.centerY() + radius * (float) Math.sin(angleRad);
-                canvas.drawCircle(handleX, handleY, org.telegram.messenger.AndroidUtilities.dp(8), handlePaint);
+                handlePaint.setAlpha(Math.round(255 * pausedTransition));
+                canvas.drawCircle(handleX, handleY, org.telegram.messenger.AndroidUtilities.dp(8) * pausedTransition, handlePaint);
             }
         }
     }

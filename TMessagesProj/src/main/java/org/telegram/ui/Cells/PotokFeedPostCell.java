@@ -1860,27 +1860,27 @@ public class PotokFeedPostCell extends LinearLayout {
      * LinearLayout-пост реально резервирует под кружок по вертикали. См.
      * комментарий в applyRoundVideoScale().
      */
+    // ⚠️ ФИКС РЕГРЕССИИ (эта сессия, часть 2): чистое "high size = точно под
+    // кружок" ловило обрезку ("полумесяц") обратно. Причина — не в цифрах
+    // (roundVideoSmallSize/roundVideoBigSize совпадают точно математически),
+    // а в том, что setLayoutParams() запускает requestLayout() АСИНХРОННО
+    // (реальный пересчёт высоты ячейки — на следующий проход layout, не в
+    // этом кадре), а внешняя рамка карточки (setClipToOutline(true) на самой
+    // PotokFeedPostCell, см. конструктор) обрезает контент строго по РЕАЛЬНОЙ
+    // текущей высоте ячейки В МОМЕНТ ОТРИСОВКИ. Из-за этого зазора "тик в
+    // тик" ненадёжен — на отдельных кадрах/устройствах видимый круг чуть
+    // опережает ещё не подъехавшую высоту ячейки и обрезается снизу.
+    // Решение: не бить точно в ноль, а дать высоте небольшой технический
+    // запас (ROUND_VIDEO_HEIGHT_SAFETY_MARGIN), который гарантированно
+    // покрывает эту рассинхронизацию. Пустое место при этом остаётся —
+    // но это несколько dp вместо прежних десятков/сотен px.
+    private static final int ROUND_VIDEO_HEIGHT_SAFETY_MARGIN = dp(6);
+
     private void setRoundVideoContainerLayoutSize(int size) {
-        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ (эта сессия): ширина
-        // контейнера НЕ трогается здесь вообще (остаётся фиксированной на всю
-        // ширину поста, см. конструктор) — меняется ТОЛЬКО высота, синхронно
-        // с текущим small/big состоянием (roundVideoSmallSize/roundVideoBigSize).
-        // Это убирает пустое место СНИЗУ кружка в маленьком состоянии.
-        // ⚠️ Почему это безопасно и не вернёт обрезку ("полумесяц"): scaleX/Y
-        // в applyRoundVideoScale() — это visual-трансформ ВСЕГО контейнера
-        // (и его детей) относительно pivot(0,0), он применяется ПОВЕРХ layout'а
-        // и НЕ зависит от значений LayoutParams.width/height контейнера —
-        // видимый размер кружка на экране определяется ТОЛЬКО произведением
-        // roundVideoBigSize (реальный неизменный размер roundVideoImage) на
-        // текущий scale-коэффициент. LayoutParams.height контейнера влияет
-        // ТОЛЬКО на то, сколько места резервирует родительский LinearLayout
-        // поста — на видимый размер/обрезку самого кружка не влияет вообще.
-        // clipChildren на контейнере остаётся false (фикс прошлой сессии) —
-        // даже если height окажется меньше видимого содержимого в какой-то
-        // промежуточный момент, обрезки не будет.
+        int targetHeight = (size == roundVideoSmallSize) ? size + ROUND_VIDEO_HEIGHT_SAFETY_MARGIN : size;
         ViewGroup.LayoutParams lp = roundVideoContainer.getLayoutParams();
-        if (lp != null && lp.height != size) {
-            lp.height = size;
+        if (lp != null && lp.height != targetHeight) {
+            lp.height = targetHeight;
             roundVideoContainer.setLayoutParams(lp);
         }
     }

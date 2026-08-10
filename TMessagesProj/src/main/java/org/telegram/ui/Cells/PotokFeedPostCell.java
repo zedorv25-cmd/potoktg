@@ -646,7 +646,29 @@ public class PotokFeedPostCell extends LinearLayout {
                     case MotionEvent.ACTION_DOWN:
                         startX = e.getX();
                         startY = e.getY();
-                        getParent().requestDisallowInterceptTouchEvent(false);
+                        // ⚠️ ФИКС (эта сессия): быстрый свайп по медиа открывал экран
+                        // Чатов вместо смены медиа в карусели. Причина: раньше здесь
+                        // стояло requestDisallowInterceptTouchEvent(false) — карусель
+                        // сама же СРАЗУ разрешала родителю (в итоге ViewPagerFixed)
+                        // перехватить жест, и блокировала перехват (true) только ПОСЛЕ
+                        // того, как в ACTION_MOVE набегал повышенный порог (dirSlop) и
+                        // направление определялось как горизонтальное. На медленном
+                        // свайпе мелкие MOVE-дельты давали карусели время среагировать
+                        // первой. На быстром свайпе первый же MOVE мог сразу дать
+                        // большую дельту — родитель успевал перехватить событие на
+                        // этом же MOVE раньше, чем оно вообще доходило до обработки
+                        // здесь (Android присылает ACTION_CANCEL, дальнейшие события
+                        // карусель больше не получает).
+                        // Это событие в принципе не может прийти сюда, если палец не
+                        // лёг физически в границы этой RecyclerView (карусель — не вся
+                        // карточка поста), поэтому блокировать родителя сразу здесь
+                        // безопасно и не затрагивает свайпы ВНЕ медиа (там
+                        // PotokFeedPostCell по-прежнему вообще не трогает
+                        // requestDisallowInterceptTouchEvent — см. комментарий в начале
+                        // класса). Вертикальный скролл, начавшийся на медиа,
+                        // по-прежнему освобождается обратно в ACTION_MOVE ниже (dy>dx
+                        // -> false), это не менялось.
+                        getParent().requestDisallowInterceptTouchEvent(true);
                         break;
                     case MotionEvent.ACTION_MOVE:
                         float dx = Math.abs(e.getX() - startX);
@@ -789,16 +811,22 @@ public class PotokFeedPostCell extends LinearLayout {
         // ⚠️ roundVideoSmallSize/roundVideoBigSize уже в ПИКСЕЛЯХ (через dp() выше),
         // поэтому LayoutParams собираем напрямую, а не через LayoutHelper.createLinear
         // (тот сам конвертирует int-параметры из dp в px — двойная конвертация).
-        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ: контейнер больше НЕ
-        // фиксированный маленький roundVideoSmallSize ни по ширине, ни по
-        // высоте — теперь это большой квадрат на всю доступную ширину поста
-        // (та же формула roundVideoMaxByColumn, что уже используется в
-        // getCorrectedRoundVideoBigSize() для самого кружка), фиксированный,
-        // без переключения между small/big состояниями (см. setRoundVideoContainerLayoutSize
-        // ниже — теперь no-op). Это НЕ ширина/высота самого кружка
-        // (roundVideoImage/roundVideoBigSize не трогаются) — это только
-        // место, доступное контейнеру, чтобы кружок мог рисоваться полным
-        // кругом без обрезки прямыми краями контейнера.
+        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ: ширина контейнера
+        // больше НЕ фиксированный маленький roundVideoSmallSize — теперь это
+        // всегда полная доступная ширина поста (та же формула
+        // roundVideoMaxByColumn, что уже используется в
+        // getCorrectedRoundVideoBigSize() для самого кружка) и она НЕ
+        // переключается между small/big состояниями. ⚠️ ПРАВКА (эта сессия,
+        // повторное требование пользователя): высота контейнера, в отличие
+        // от ширины, ОСТАЁТСЯ адаптивной — переключается между
+        // roundVideoSmallSize/roundVideoBigSize синхронно с состоянием кружка,
+        // см. setRoundVideoContainerLayoutSize() ниже (вызывается из
+        // applyRoundVideoScale()). Стартовое значение height здесь (=ширина)
+        // временное — оно будет скорректировано первым же вызовом
+        // applyRoundVideoScale() при setPost()/bind. Это НЕ ширина/высота
+        // самого кружка (roundVideoImage/roundVideoBigSize не трогаются) —
+        // это только место, доступное контейнеру, чтобы кружок мог рисоваться
+        // полным кругом без обрезки прямыми краями контейнера.
         int roundVideoContainerWidth = AndroidUtilities.displaySize.x - dp(16) - dp(16);
         LinearLayout.LayoutParams roundVideoContainerLp = new LinearLayout.LayoutParams(roundVideoContainerWidth, roundVideoContainerWidth);
         roundVideoContainerLp.gravity = Gravity.START;
@@ -1828,16 +1856,33 @@ public class PotokFeedPostCell extends LinearLayout {
     }
 
     /**
-     * Меняет реальные (не transform) LayoutParams roundVideoContainer — то,
-     * что LinearLayout-пост реально резервирует под кружок. См. комментарий в
-     * applyRoundVideoScale().
+     * Меняет реальные (не transform) LayoutParams.height контейнера — то, что
+     * LinearLayout-пост реально резервирует под кружок по вертикали. См.
+     * комментарий в applyRoundVideoScale().
      */
     private void setRoundVideoContainerLayoutSize(int size) {
-        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ: контейнер теперь
-        // ВСЕГДА фиксированного большого размера (и по ширине, и по высоте,
-        // см. конструктор) — реальные LayoutParams больше не переключаются
-        // между small/big. Функция теперь ничего не делает, оставлена как
-        // no-op, чтобы не переписывать все места её вызова.
+        // ⚠️ ПРАВКА ПО ПРЯМОМУ ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ (эта сессия): ширина
+        // контейнера НЕ трогается здесь вообще (остаётся фиксированной на всю
+        // ширину поста, см. конструктор) — меняется ТОЛЬКО высота, синхронно
+        // с текущим small/big состоянием (roundVideoSmallSize/roundVideoBigSize).
+        // Это убирает пустое место СНИЗУ кружка в маленьком состоянии.
+        // ⚠️ Почему это безопасно и не вернёт обрезку ("полумесяц"): scaleX/Y
+        // в applyRoundVideoScale() — это visual-трансформ ВСЕГО контейнера
+        // (и его детей) относительно pivot(0,0), он применяется ПОВЕРХ layout'а
+        // и НЕ зависит от значений LayoutParams.width/height контейнера —
+        // видимый размер кружка на экране определяется ТОЛЬКО произведением
+        // roundVideoBigSize (реальный неизменный размер roundVideoImage) на
+        // текущий scale-коэффициент. LayoutParams.height контейнера влияет
+        // ТОЛЬКО на то, сколько места резервирует родительский LinearLayout
+        // поста — на видимый размер/обрезку самого кружка не влияет вообще.
+        // clipChildren на контейнере остаётся false (фикс прошлой сессии) —
+        // даже если height окажется меньше видимого содержимого в какой-то
+        // промежуточный момент, обрезки не будет.
+        ViewGroup.LayoutParams lp = roundVideoContainer.getLayoutParams();
+        if (lp != null && lp.height != size) {
+            lp.height = size;
+            roundVideoContainer.setLayoutParams(lp);
+        }
     }
 
     /**

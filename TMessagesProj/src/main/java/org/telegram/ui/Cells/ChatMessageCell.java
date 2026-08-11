@@ -5951,7 +5951,23 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
             if (buttonState != -1) {
                 didPressButton(true, false);
             } else {
-                if (!MediaController.getInstance().isPlayingMessage(currentMessageObject) || MediaController.getInstance().isMessagePaused()) {
+                // ⚠️ ДИАГНОСТИКА (ROUNDVID_CHANNEL_TAP, не влияет на поведение):
+                // проблема "последний кружок в канале не ставится на паузу" пока
+                // не подтверждена по логам — гипотеза в том, что isPlayingMessage()
+                // здесь возвращает false для тапнутого сообщения, хотя оно физически
+                // играет, и тап уходит в ветку needPlayMessage() вместо pauseMessage()
+                // (это и дало бы симптом "дёргает вперёд" вместо паузы). Логируем
+                // САМО состояние перед веткой, ничего не меняя в логике.
+                boolean isPlaying = MediaController.getInstance().isPlayingMessage(currentMessageObject);
+                boolean isPaused = MediaController.getInstance().isMessagePaused();
+                MessageObject curPlaying = MediaController.getInstance().getPlayingMessageObject();
+                PotokDebugLog.d("ROUNDVID_CHANNEL_TAP", "tap msgId=" + currentMessageObject.getId()
+                    + " dialogId=" + currentMessageObject.getDialogId()
+                    + " isPlayingMessage=" + isPlaying + " isMessagePaused=" + isPaused
+                    + " willBranch=" + (!isPlaying || isPaused ? "PLAY" : "PAUSE")
+                    + " mediaControllerPlayingMsgId=" + (curPlaying != null ? curPlaying.getId() : -1)
+                    + " mediaControllerPlayingDialogId=" + (curPlaying != null ? curPlaying.getDialogId() : -1));
+                if (!isPlaying || isPaused) {
                     delegate.needPlayMessage(this, currentMessageObject, false);
                 } else {
                     MediaController.getInstance().pauseMessage(currentMessageObject);

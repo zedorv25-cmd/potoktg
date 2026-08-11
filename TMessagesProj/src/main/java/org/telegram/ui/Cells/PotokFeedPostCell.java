@@ -900,8 +900,18 @@ public class PotokFeedPostCell extends LinearLayout {
         // на Document, а не PhotoSize. Единственный интерактивный элемент,
         // который остаётся ЗДЕСЬ, в ячейке — до скачивания плавающий видео-слой
         // фрагмента вообще не показывается, конфликтовать не с чем.
+        // ⚠️ ФИКС (эта сессия): раньше кнопка ВСЕГДА создавалась физически
+        // большого размера (roundVideoBigSize), пока roundVideoImage тоже была
+        // всегда физически большой (см. коммент выше про старую обрезку) — оба
+        // совпадали, смещения не было видно. Теперь roundVideoImage реально
+        // меняет физический размер (setRoundVideoImageRealSize), а кнопка — нет.
+        // Оба лежат в одном FrameLayout без gravity=CENTER (якорь left-top), из-за
+        // чего физически большая кнопка внутри физически маленького контейнера
+        // визуально "уезжает" вправо-вниз от центра маленького кружка. Стартуем
+        // кнопку с тем же маленьким размером, что и картинку — и держим их
+        // синхронизированными дальше в setRoundVideoImageRealSize().
         roundVideoDownloadButton = new RoundVideoDownloadButton(context);
-        roundVideoContainer.addView(roundVideoDownloadButton, new FrameLayout.LayoutParams(roundVideoBigSize, roundVideoBigSize));
+        roundVideoContainer.addView(roundVideoDownloadButton, new FrameLayout.LayoutParams(roundVideoSmallSize, roundVideoSmallSize));
         roundVideoContainer.setOnClickListener(v -> {
             if (roundVideoMessageObject == null) return;
             if (!roundVideoMessageObject.mediaExists) {
@@ -1946,6 +1956,18 @@ public class PotokFeedPostCell extends LinearLayout {
             roundVideoImage.setLayoutParams(lp);
         }
         roundVideoImage.getImageReceiver().setRoundRadius(DEBUG_DISABLE_ROUND_MASK ? 0 : size / 2);
+        // ⚠️ ФИКС (эта сессия): держим roundVideoDownloadButton синхронизированной
+        // с реальным физическим размером картинки — иначе кнопка (см. коммент у
+        // её создания выше) остаётся большой в маленьком контейнере и визуально
+        // смещается от центра кружка вправо-вниз.
+        if (roundVideoDownloadButton != null) {
+            FrameLayout.LayoutParams btnLp = (FrameLayout.LayoutParams) roundVideoDownloadButton.getLayoutParams();
+            if (btnLp != null) {
+                btnLp.width = size;
+                btnLp.height = size;
+                roundVideoDownloadButton.setLayoutParams(btnLp);
+            }
+        }
     }
 
     /**

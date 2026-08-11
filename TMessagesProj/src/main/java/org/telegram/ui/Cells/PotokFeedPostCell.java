@@ -855,20 +855,23 @@ public class PotokFeedPostCell extends LinearLayout {
         addView(roundVideoContainer, roundVideoContainerLp);
 
         roundVideoImage = new BackupImageView(context);
-        roundVideoImage.getImageReceiver().setRoundRadius(DEBUG_DISABLE_ROUND_MASK ? 0 : roundVideoBigSize / 2);
-        // ⚠️ DEBUG_WIDEN_MASK_TO_POST_WIDTH: см. комментарий у объявления флага
-        // выше. Ширина ребёнка временно = ширина поста (та же формула, что
-        // roundVideoMaxByColumn в getCorrectedRoundVideoBigSize()), высота и
-        // roundRadius НЕ трогаем — это ТОЛЬКО про то, привязана ли обрезка к
-        // ширине этого конкретного View или нет.
-        int debugWideImageWidth = DEBUG_WIDEN_MASK_TO_POST_WIDTH
-                ? (AndroidUtilities.displaySize.x - dp(16) - dp(16))
-                : roundVideoBigSize;
-        if (DEBUG_WIDEN_MASK_TO_POST_WIDTH) {
-            PotokDebugLog.d("ROUNDVID_MASK", "DEBUG_WIDEN_MASK_TO_POST_WIDTH=true — roundVideoImage width="
-                + debugWideImageWidth + " (было " + roundVideoBigSize + "), height/roundRadius без изменений");
-        }
-        roundVideoContainer.addView(roundVideoImage, new FrameLayout.LayoutParams(debugWideImageWidth, roundVideoBigSize));
+        // ⚠️ ФИКС (эта сессия, часть 2, реальная причина обрезки после 3
+        // неудачных попыток чинить только высоту контейнера): раньше картинка
+        // ВСЕГДА была физически большого размера (roundVideoBigSize) — "маленькое"
+        // состояние достигалось ТОЛЬКО визуальным сжатием контейнера (scaleX/Y).
+        // Если это визуальное сжатие хоть раз не применялось корректно к моменту
+        // отрисовки — картинка оставалась физически большой внутри маленького
+        // контейнера, отсюда обрезка. Теперь в состоянии покоя (не во время
+        // анимации открытия/закрытия) картинка получает РЕАЛЬНЫЙ размер, который
+        // совпадает с текущим состоянием — маленький физически маленький, большой
+        // физически большой — обрезка становится невозможна в принципе, не просто
+        // маловероятна. Анимация открытия/закрытия по-прежнему использует scale
+        // (см. applyRoundVideoScale) — это НЕ трогается, только конечное состояние.
+        // setRoundVideoImageRealSize() читает/меняет LayoutParams, поэтому view
+        // сперва добавляется в родителя с правильным маленьким размером напрямую,
+        // а сразу следом та же функция ставит совпадающую маску (roundRadius).
+        roundVideoContainer.addView(roundVideoImage, new FrameLayout.LayoutParams(roundVideoSmallSize, roundVideoSmallSize));
+        setRoundVideoImageRealSize(roundVideoSmallSize);
 
         // ⚠️ ДИАГНОСТИКА (ROUNDVID_MASK, новый узел этой сессии — UI layout):
         // реальные значения контейнера/картинки закрытого маленького кружка
@@ -1805,6 +1808,22 @@ public class PotokFeedPostCell extends LinearLayout {
             setRoundVideoContainerLayoutSize(roundVideoBigSize);
         }
         if (animated) {
+            // ⚠️ (эта сессия, часть 2): картинка в состоянии покоя теперь РЕАЛЬНО
+            // маленькая (см. setRoundVideoImageRealSize) — но сама 250мс-анимация
+            // всегда работает через scale относительно БОЛЬШОГО реального размера
+            // (это не менялось). Поэтому прямо перед стартом анимации, если
+            // картинка сейчас реально маленькая, физически переключаем её на
+            // большую И одновременно ставим scale = тому же самому визуальному
+            // соотношению, что и было — то есть ничего не дёргается на экране,
+            // просто меняется способ, которым достигается тот же самый видимый
+            // размер (transform поверх большой картинки вместо реально маленькой).
+            if (roundVideoImage.getLayoutParams() != null
+                    && roundVideoImage.getLayoutParams().width != roundVideoBigSize) {
+                float compensation = roundVideoSmallSize / (float) roundVideoBigSize;
+                setRoundVideoImageRealSize(roundVideoBigSize);
+                roundVideoContainer.setScaleX(compensation);
+                roundVideoContainer.setScaleY(compensation);
+            }
             roundVideoContainer.animate()
                     .scaleX(target).scaleY(target)
                     .setDuration(250)
@@ -1827,14 +1846,26 @@ public class PotokFeedPostCell extends LinearLayout {
                         if (small) {
                             setRoundVideoContainerLayoutSize(roundVideoSmallSize);
                         }
+                        // ⚠️ (эта сессия, часть 2): анимация доехала — фиксируем
+                        // реальный размер картинки под итоговое состояние и сбрасываем
+                        // scale в 1. Состояние покоя больше не зависит от transform'а —
+                        // обрезка после этого невозможна, даже если что-то пойдёт не
+                        // так с scale в будущем.
+                        setRoundVideoImageRealSize(small ? roundVideoSmallSize : roundVideoBigSize);
+                        roundVideoContainer.setScaleX(1f);
+                        roundVideoContainer.setScaleY(1f);
                         invalidateOutline();
                         logTargetPostScaleSettled("animated end-action", target, small);
                         if (onRoundVideoVisualScaleChanged != null) onRoundVideoVisualScaleChanged.run();
                     })
                     .start();
         } else {
-            roundVideoContainer.setScaleX(target);
-            roundVideoContainer.setScaleY(target);
+            // ⚠️ (эта сессия, часть 2): не анимированный путь (первый bind ячейки)
+            // — сразу ставим реальный совпадающий размер картинки и scale=1, без
+            // промежуточного transform'а вообще.
+            setRoundVideoImageRealSize(small ? roundVideoSmallSize : roundVideoBigSize);
+            roundVideoContainer.setScaleX(1f);
+            roundVideoContainer.setScaleY(1f);
             if (small) {
                 setRoundVideoContainerLayoutSize(roundVideoSmallSize);
             }
@@ -1898,6 +1929,23 @@ public class PotokFeedPostCell extends LinearLayout {
             lp.height = size;
             roundVideoContainer.setLayoutParams(lp);
         }
+    }
+
+    /**
+     * ⚠️ НОВОЕ (эта сессия, часть 2): реальный (не просто визуально-scale'нутый)
+     * размер картинки кружка + маски под него. Не трогает scaleX/Y контейнера —
+     * это отдельная забота вызывающего кода (applyRoundVideoScale), чтобы не
+     * смешивать «реальный размер картинки» и «текущий визуальный transform»
+     * в одном месте.
+     */
+    private void setRoundVideoImageRealSize(int size) {
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) roundVideoImage.getLayoutParams();
+        if (lp != null) {
+            lp.width = size;
+            lp.height = size;
+            roundVideoImage.setLayoutParams(lp);
+        }
+        roundVideoImage.getImageReceiver().setRoundRadius(DEBUG_DISABLE_ROUND_MASK ? 0 : size / 2);
     }
 
     /**

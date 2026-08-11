@@ -828,7 +828,26 @@ public class PotokFeedPostCell extends LinearLayout {
         // это только место, доступное контейнеру, чтобы кружок мог рисоваться
         // полным кругом без обрезки прямыми краями контейнера.
         int roundVideoContainerWidth = AndroidUtilities.displaySize.x - dp(16) - dp(16);
-        LinearLayout.LayoutParams roundVideoContainerLp = new LinearLayout.LayoutParams(roundVideoContainerWidth, roundVideoContainerWidth);
+        // ⚠️ ФИКС (эта сессия, часть 2, реальная причина постоянного пустого
+        // места под маленьким кружком, а не гонка по кадру): раньше здесь
+        // height стартовал с БОЛЬШОГО значения (=roundVideoContainerWidth,
+        // квадрат на всю ширину поста) как "временная заглушка", которую
+        // должен был поправить более поздний вызов
+        // setRoundVideoContainerLayoutSize() внутри applyRoundVideoScale()
+        // при первом bind(). Но для СВЕЖЕСОЗДАННОЙ (не переиспользованной)
+        // ячейки этот более поздний setLayoutParams()/requestLayout() не
+        // гарантированно успевает подействовать на ТОТ ЖЕ проход разметки
+        // списка, которым RecyclerView сразу же измеряет высоту этой ячейки —
+        // а следующего повторного прохода может не быть, если ячейка потом
+        // просто стоит на экране без пересоздания. В итоге пост навсегда
+        // резервирует БОЛЬШОЕ место, хотя кружок показывается маленьким.
+        // Теперь height стартует СРАЗУ с правильного маленького значения —
+        // ровно там, где заканчивается видимый маленький кружок — без
+        // расчёта на "открытое" состояние: при открытии кружка пост
+        // подрастает динамически через тот же setRoundVideoContainerLayoutSize(),
+        // а не имеет место под открытое состояние предзарезервированным
+        // заранее.
+        LinearLayout.LayoutParams roundVideoContainerLp = new LinearLayout.LayoutParams(roundVideoContainerWidth, roundVideoSmallSize);
         roundVideoContainerLp.gravity = Gravity.START;
         roundVideoContainerLp.leftMargin = dp(8);
         roundVideoContainerLp.topMargin = dp(10);
@@ -1860,27 +1879,23 @@ public class PotokFeedPostCell extends LinearLayout {
      * LinearLayout-пост реально резервирует под кружок по вертикали. См.
      * комментарий в applyRoundVideoScale().
      */
-    // ⚠️ ФИКС РЕГРЕССИИ (эта сессия, часть 2): чистое "high size = точно под
-    // кружок" ловило обрезку ("полумесяц") обратно. Причина — не в цифрах
-    // (roundVideoSmallSize/roundVideoBigSize совпадают точно математически),
-    // а в том, что setLayoutParams() запускает requestLayout() АСИНХРОННО
-    // (реальный пересчёт высоты ячейки — на следующий проход layout, не в
-    // этом кадре), а внешняя рамка карточки (setClipToOutline(true) на самой
-    // PotokFeedPostCell, см. конструктор) обрезает контент строго по РЕАЛЬНОЙ
-    // текущей высоте ячейки В МОМЕНТ ОТРИСОВКИ. Из-за этого зазора "тик в
-    // тик" ненадёжен — на отдельных кадрах/устройствах видимый круг чуть
-    // опережает ещё не подъехавшую высоту ячейки и обрезается снизу.
-    // Решение: не бить точно в ноль, а дать высоте небольшой технический
-    // запас (ROUND_VIDEO_HEIGHT_SAFETY_MARGIN), который гарантированно
-    // покрывает эту рассинхронизацию. Пустое место при этом остаётся —
-    // но это несколько dp вместо прежних десятков/сотен px.
-    private static final int ROUND_VIDEO_HEIGHT_SAFETY_MARGIN = dp(6);
-
+    // ⚠️ ИСТОРИЯ ФИКСА (эта сессия, часть 2): попытка "6dp технического
+    // запаса" здесь не помогла — экран не изменился вообще, что доказало:
+    // дело не в микро-гонке по кадру. Настоящая причина оказалась в
+    // конструкторе — там LayoutParams.height начинался с БОЛЬШОГО значения
+    // и полагался на этот метод, чтобы поправить его позже при первом
+    // bind(); для свежесозданной ячейки эта поздняя правка не гарантированно
+    // успевала до того, как RecyclerView уже посчитал итоговую высоту поста
+    // на первый проход разметки — и БОЛЬШОЕ место оставалось зарезервированным
+    // навсегда. Теперь конструктор стартует сразу с правильного маленького
+    // значения (см. roundVideoContainerLp), поэтому здесь высота меняется
+    // без какого-либо дополнительного запаса — ровно на то число, которое
+    // передано (roundVideoSmallSize/roundVideoBigSize), без побочных
+    // добавок.
     private void setRoundVideoContainerLayoutSize(int size) {
-        int targetHeight = (size == roundVideoSmallSize) ? size + ROUND_VIDEO_HEIGHT_SAFETY_MARGIN : size;
         ViewGroup.LayoutParams lp = roundVideoContainer.getLayoutParams();
-        if (lp != null && lp.height != targetHeight) {
-            lp.height = targetHeight;
+        if (lp != null && lp.height != size) {
+            lp.height = size;
             roundVideoContainer.setLayoutParams(lp);
         }
     }

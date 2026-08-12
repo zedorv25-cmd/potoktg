@@ -114,6 +114,17 @@ public class FilterTabsView extends FrameLayout {
         void onPageReorder(int fromId, int toId);
 
         boolean canPerformActions();
+
+        /**
+         * Список фильтров, который реально переставляется при drag-реордере
+         * вкладок (swapElements/moveElementToStart). Для обычных папок — это
+         * настоящий MessagesController.getDialogFilters(). В режиме
+         * hasMainTabs (4 пресетные вкладки Потока) должен возвращаться
+         * getPotokMainTabsFilters() — те самые пресеты, а не реальные папки,
+         * иначе переставляются не те данные и позиция визуально меняется,
+         * а контент за ней — нет.
+         */
+        ArrayList<MessagesController.DialogFilter> getReorderableFilters();
     }
 
     public class Tab {
@@ -1836,7 +1847,7 @@ public class FilterTabsView extends FrameLayout {
             if (idx1 < 0 || idx2 < 0 || idx1 >= count || idx2 >= count) {
                 return;
             }
-            ArrayList<MessagesController.DialogFilter> filters = MessagesController.getInstance(UserConfig.selectedAccount).getDialogFilters();
+            ArrayList<MessagesController.DialogFilter> filters = delegate.getReorderableFilters();
             MessagesController.DialogFilter filter1 = filters.get(idx1);
             MessagesController.DialogFilter filter2 = filters.get(idx2);
             int temp = filter1.order;
@@ -1890,7 +1901,7 @@ public class FilterTabsView extends FrameLayout {
             if (theIndex < 0 || theIndex >= count) {
                 return;
             }
-            ArrayList<MessagesController.DialogFilter> filters = MessagesController.getInstance(UserConfig.selectedAccount).getDialogFilters();
+            ArrayList<MessagesController.DialogFilter> filters = delegate.getReorderableFilters();
             int temp = positionToStableId.get(theIndex),
                 temp2 = tabs.get(theIndex).id;
             for (int i = theIndex - 1; i >= 0; --i) {

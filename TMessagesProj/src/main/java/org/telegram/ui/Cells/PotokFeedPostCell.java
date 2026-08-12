@@ -1175,6 +1175,39 @@ public class PotokFeedPostCell extends LinearLayout {
 
     private long lastSetPostStackLogTime = 0; // ВРЕМЕННОЕ поле для диагностики двоения кадров
 
+    /**
+     * Формат времени публикации в шапке поста Ленты:
+     * сегодня — только время ("11:45"); вчера — "вчера в 11:45";
+     * раньше — дата и время ("10.08.2026 11:45").
+     * Текст "вчера" хардкодится напрямую (как и другие русские строки в
+     * Ленте), чтобы не зависеть от языкового пакета.
+     */
+    private static String formatPotokFeedHeaderTime(int date) {
+        try {
+            long dateMs = date * 1000L;
+            java.util.Calendar rightNow = java.util.Calendar.getInstance();
+            int day = rightNow.get(java.util.Calendar.DAY_OF_YEAR);
+            int year = rightNow.get(java.util.Calendar.YEAR);
+            rightNow.setTimeInMillis(dateMs);
+            int dateDay = rightNow.get(java.util.Calendar.DAY_OF_YEAR);
+            int dateYear = rightNow.get(java.util.Calendar.YEAR);
+
+            String timePart = LocaleController.getInstance().getFormatterDay().format(new java.util.Date(dateMs));
+
+            if (dateDay == day && dateYear == year) {
+                return timePart;
+            } else if (dateYear == year && dateDay + 1 == day) {
+                return "вчера в " + timePart;
+            } else {
+                String datePart = LocaleController.getInstance().getFormatterYearMax().format(new java.util.Date(dateMs));
+                return datePart + " " + timePart;
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+            return LocaleController.formatDate(date);
+        }
+    }
+
     public void setPost(ArrayList<MessageObject> messages, TLRPC.Chat channel) {
         if (messages == null || messages.isEmpty()) return;
         // ВРЕМЕННАЯ диагностика двоения кадров (см. переписку с пользователем):
@@ -1245,7 +1278,7 @@ public class PotokFeedPostCell extends LinearLayout {
         avatarDrawable.setInfo(channel);
         avatarView.setForUserOrChat(channel, avatarDrawable);
         titleView.setText(channel != null ? channel.title : "");
-        timeView.setText(LocaleController.formatDate(messageObject.messageOwner.date));
+        timeView.setText(formatPotokFeedHeaderTime(messageObject.messageOwner.date));
 
         // Текст / caption
         CharSequence caption = findPostCaption(messages, messageObject);

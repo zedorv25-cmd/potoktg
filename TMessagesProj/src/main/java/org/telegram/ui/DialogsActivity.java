@@ -6881,17 +6881,24 @@ public boolean onTouchEvent(MotionEvent ev) {
                 filterTabsView.removeTabs();
                 for (int a = 0, N = filters.size(); a < N; a++) {
                     // Иконки вместо текста — только для 4 пресетных вкладок Потока (hasMainTabs).
-                    // getPotokActiveDialogFilters() в этом режиме всегда возвращает фиксированный
-                    // порядок [Чаты, Непрочитанные, Группы, Траф], поэтому индекс a однозначно
-                    // определяет иконку. Для настоящих папок (не hasMainTabs) iconRes остаётся 0,
-                    // и вкладка рисуется как раньше — обычным текстом.
+                    // ВАЖНО: иконка выбирается по IDENTITY фильтра (isDefault() / filter.id),
+                    // а НЕ по позиции a в массиве. Раньше было switch(a) в расчёте на то, что
+                    // getPotokActiveDialogFilters() всегда возвращает фиксированный порядок —
+                    // но после того как getPotokMainTabsFilters() стал персистентным и реально
+                    // поддерживает реордер (см. MessagesController), позиция a перестала совпадать
+                    // с конкретным фильтром. Определяем иконку по тому, что реально лежит в
+                    // filters.get(a), тогда иконка всегда следует за содержимым, а не за индексом.
                     int presetIconRes = 0;
                     if (hasMainTabs) {
-                        switch (a) {
-                            case 0: presetIconRes = R.drawable.potok_filter_chats; break;
-                            case 1: presetIconRes = R.drawable.potok_filter_unread; break;
-                            case 2: presetIconRes = R.drawable.potok_filter_groups; break;
-                            case 3: presetIconRes = R.drawable.potok_filter_traf; break;
+                        MessagesController.DialogFilter presetFilter = filters.get(a);
+                        if (presetFilter.isDefault()) {
+                            presetIconRes = R.drawable.potok_filter_chats;
+                        } else if (presetFilter.id == MessagesController.POTOK_FILTER_ID_UNREAD_CHANNELS) {
+                            presetIconRes = R.drawable.potok_filter_unread;
+                        } else if (presetFilter.id == MessagesController.POTOK_FILTER_ID_GROUPS) {
+                            presetIconRes = R.drawable.potok_filter_groups;
+                        } else if (presetFilter.id == MessagesController.POTOK_FILTER_ID_TRAF) {
+                            presetIconRes = R.drawable.potok_filter_traf;
                         }
                     }
                     if (filters.get(a).isDefault()) {

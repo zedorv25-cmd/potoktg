@@ -1078,12 +1078,46 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED)
         );
 
+        // ВРЕМЕННАЯ ДИАГНОСТИКА (тег FEED_MENU_DIAG): ловим баг "Обратная связь"
+        // не сразу видна в попапе. Логируем состояние сразу после measure() и,
+        // отдельно, после реального показа на экране (onGlobalLayout) — если
+        // счётчик subItems после показа окажется 4 вместо 5, значит пункт не
+        // попадает в дерево вида; если 5, но пункт не виден — дело в отрисовке/
+        // высоте попапа, а не в составе меню.
+        PotokDebugLog.log("FEED_MENU_DIAG", "после measure(): " + layout.getMeasuredWidth() + "x" + layout.getMeasuredHeight()
+            + " subItems=" + countActionBarMenuSubItems(layout));
+
+        layout.getViewTreeObserver().addOnGlobalLayoutListener(new android.view.ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                layout.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                PotokDebugLog.log("FEED_MENU_DIAG", "после показа на экране: " + layout.getWidth() + "x" + layout.getHeight()
+                    + " subItems=" + countActionBarMenuSubItems(layout));
+            }
+        });
+
         int[] location = new int[2];
         anchor.getLocationInWindow(location);
         int x = location[0] + anchor.getWidth() - layout.getMeasuredWidth();
         int y = location[1] + anchor.getHeight();
         threeDotsMenuWindow.showAtLocation(anchor, android.view.Gravity.LEFT | android.view.Gravity.TOP, x, y);
         ActionBarPopupWindow.startAnimation(layout);
+    }
+
+    // ВРЕМЕННАЯ ДИАГНОСТИКА (см. FEED_MENU_DIAG выше): рекурсивно считает
+    // видимые пункты ActionBarMenuSubItem во всём дереве вида попапа.
+    private static int countActionBarMenuSubItems(android.view.View view) {
+        int count = 0;
+        if (view instanceof ActionBarMenuSubItem) {
+            count++;
+        }
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                count += countActionBarMenuSubItems(group.getChildAt(i));
+            }
+        }
+        return count;
     }
 
     private void loadHistory(String key, TLRPC.Chat channel) {

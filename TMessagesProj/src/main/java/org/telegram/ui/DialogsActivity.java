@@ -3668,6 +3668,14 @@ public boolean onTouchEvent(MotionEvent ev) {
                 }
 
                 @Override
+                public ArrayList<MessagesController.DialogFilter> getReorderableFilters() {
+                    if (hasMainTabs) {
+                        return getMessagesController().getPotokMainTabsFilters();
+                    }
+                    return getMessagesController().getDialogFilters();
+                }
+
+                @Override
                 public void onPageScrolled(float progress) {
                     if (progress == 1 && viewPages[1].getVisibility() != View.VISIBLE && !searching) {
                         return;

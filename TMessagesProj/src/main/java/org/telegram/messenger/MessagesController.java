@@ -2054,6 +2054,17 @@ public class MessagesController extends BaseController implements NotificationCe
     private DialogFilter potokPresetGroups;
     private DialogFilter potokPresetTraf;
 
+    // ПЕРСИСТЕНТНЫЙ порядок 4 вкладок для hasMainTabs (см. ниже). Раньше
+    // getPotokMainTabsFilters() пересобирал новый ArrayList при каждом
+    // вызове — из-за этого перестановка вкладок через "Изменить порядок"
+    // (FilterTabsView.swapElements) переставляла элементы в одноразовом
+    // списке, который тут же выбрасывался, и порядок содержимого никогда
+    // фактически не менялся (хотя иконки на экране визуально менялись —
+    // это отдельный, уже персистентный список Tab-объектов внутри
+    // FilterTabsView). Теперь список — постоянное поле, и swapElements()
+    // реально мутирует то, что возвращается следующим вызовом.
+    private ArrayList<DialogFilter> potokMainTabsOrder;
+
     // Ровно 4 вкладки для верхнего таббара экрана "Чаты" в режиме hasMainTabs: реальный дефолтный
     // фильтр "Все чаты" (он всегда существует в dialogFilters) + 3 локальных пресета выше.
     // "Траф" сделан с пустыми flags: includesDialog() у такого фильтра всегда false => список пуст.
@@ -2084,14 +2095,22 @@ public class MessagesController extends BaseController implements NotificationCe
                 break;
             }
         }
-        ArrayList<DialogFilter> result = new ArrayList<>(4);
-        if (defaultFilter != null) {
-            result.add(defaultFilter);
+        if (potokMainTabsOrder == null) {
+            potokMainTabsOrder = new ArrayList<>(4);
+            if (defaultFilter != null) {
+                potokMainTabsOrder.add(defaultFilter);
+            }
+            potokMainTabsOrder.add(potokPresetUnreadChannels);
+            potokMainTabsOrder.add(potokPresetGroups);
+            potokMainTabsOrder.add(potokPresetTraf);
+        } else if (defaultFilter != null && !potokMainTabsOrder.contains(defaultFilter)) {
+            // Реальный "Все чаты" мог быть ещё не загружен на момент первого
+            // вызова (например, самый первый запуск, до ответа сервера) —
+            // как только появился, вставляем его в начало, не трогая уже
+            // сохранённый порядок остальных трёх вкладок.
+            potokMainTabsOrder.add(0, defaultFilter);
         }
-        result.add(potokPresetUnreadChannels);
-        result.add(potokPresetGroups);
-        result.add(potokPresetTraf);
-        return result;
+        return potokMainTabsOrder;
     }
 
     protected void processLoadedDialogFilters(ArrayList<DialogFilter> filters, TLRPC.messages_Dialogs pinnedDialogs, TLRPC.messages_Dialogs pinnedRemoteDialogs, ArrayList<TLRPC.User> users, ArrayList<TLRPC.Chat> chats, ArrayList<TLRPC.EncryptedChat> encryptedChats, int remote, Runnable onDone) {

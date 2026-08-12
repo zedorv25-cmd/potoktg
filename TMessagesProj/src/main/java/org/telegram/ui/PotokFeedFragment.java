@@ -2186,7 +2186,25 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             roundVideoPlayerContainer.setTranslationY(loc[1] - rootLoc[1]);
             roundVideoPlayerContainer.setVisibility(View.VISIBLE);
             MediaController.getInstance().setCurrentVideoVisible(true);
-            if (!roundVideoOpenedCached && MediaController.getInstance().isMessagePaused()) {
+            // ⚠️ ФИКС (эта сессия, баг "последний кружок на Канале не ставится
+            // на паузу"): раньше здесь проверялось ТОЛЬКО "это видео моё по id
+            // (belongsToFeed) + оно на паузе" — но belongsToFeed истинно для
+            // ЛЮБОГО поста, у которого просто ЕСТЬ ячейка в текущем списке
+            // Ленты, даже если сама Лента сейчас НЕ видна на экране (лежит под
+            // Каналом в стеке фрагментов, подписка на уведомления жива до
+            // onFragmentDestroy — см. комментарий у onFragmentCreate). Если тот
+            // же самый пост (тот же messageId) одновременно открыт в Канале и
+            // пользователь ставит его там на паузу — MediaController.pauseMessage()
+            // шлёт ОБЩЕЕ уведомление messagePlayingPlayStateChanged, оно долетает
+            // и сюда, Лента (ошибочно) решает "мой беззвучный автоплей вернулся
+            // в кадр после паузы" и тут же снова жмёт play — подтверждено логами
+            // ROUNDVID_PLAY: playWhenReady=false, затем через ~4мс playWhenReady=true
+            // на КАЖДЫЙ тап-паузу в Канале. Добавляем isPaused() (BaseFragment) —
+            // "Лента сейчас реально на экране (не под другим фрагментом)" — это
+            // возобновление имеет смысл ТОЛЬКО когда Лента и есть тот экран, на
+            // который видео "вернулось в кадр"; если сверху открыт Канал (или
+            // что угодно ещё), Лента не имеет права трогать общий плеер.
+            if (!roundVideoOpenedCached && !isPaused() && MediaController.getInstance().isMessagePaused()) {
                 // Маленький беззвучный автоплей вернулся в кадр после того, как
                 // был поставлен на паузу при уходе с экрана (см. ветку "не
                 // найдена" ниже) — возобновляем беззвучно, без нового bind().

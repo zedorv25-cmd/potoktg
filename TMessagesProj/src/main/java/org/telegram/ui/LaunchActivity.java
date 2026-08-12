@@ -9443,6 +9443,18 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                 touchStartedOnStories = false;
                 touchStartedOnMediaCarousel = false;
                 touchStartedOnRoundVideo = false;
+                // ⚠️ ФИКС (эта сессия, баг "pull-to-refresh открывает пост в
+                // канале"): гарантированная точка "палец физически покинул
+                // экран" — видит ЛЮБОЙ UP/CANCEL независимо от того, кто перехватил
+                // жест ниже (см. подробный комментарий у cancelPendingLongPress()
+                // в PotokFeedPostCell). Отменяем отложенные долгие нажатия во ВСЕХ
+                // видимых ячейках Ленты безусловно — если жест был настоящим
+                // долгим удержанием без перехвата, таймер к этому моменту либо уже
+                // сработал (палец всё ещё лежал на месте все 500мс, значит
+                // Activity ещё не получила бы UP/CANCEL раньше), либо это
+                // единственно верное место снять его на завершение обычного тапа/
+                // скролла/pull-to-refresh.
+                cancelPendingFeedLongPresses();
                 break;
        }
     }
@@ -9524,6 +9536,35 @@ private boolean isPointInsideRoundVideo(float x, float y) {
         }
     }
     return false;
+}
+
+// ⚠️ ФИКС (эта сессия, баг "pull-to-refresh открывает пост в канале") —
+// см. подробный комментарий у cancelPendingLongPress() в PotokFeedPostCell.
+// 1:1 по структуре с isPointInsideMediaCarousel/isPointInsideRoundVideo выше:
+// та же схема поиска видимых ячеек Ленты, только вместо проверки координат —
+// безусловно отменяем в них таймер долгого нажатия.
+private void cancelPendingFeedLongPresses() {
+    if (mainFragmentsStack == null || mainFragmentsStack.isEmpty() || !isOnMainScreen()) {
+        return;
+    }
+    BaseFragment top = mainFragmentsStack.get(mainFragmentsStack.size() - 1);
+    if (!(top instanceof MainTabsActivity)) {
+        return;
+    }
+    BaseFragment visible = ((MainTabsActivity) top).getCurrentVisibleFragment();
+    if (!(visible instanceof PotokFeedFragment)) {
+        return;
+    }
+    org.telegram.ui.Components.RecyclerListView listView = ((PotokFeedFragment) visible).getListView();
+    if (listView == null) {
+        return;
+    }
+    for (int i = 0; i < listView.getChildCount(); i++) {
+        View child = listView.getChildAt(i);
+        if (child instanceof org.telegram.ui.Cells.PotokFeedPostCell) {
+            ((org.telegram.ui.Cells.PotokFeedPostCell) child).cancelPendingLongPress();
+        }
+    }
 }
 
 private org.telegram.ui.Stories.DialogStoriesCell findCurrentDialogStoriesCell() {

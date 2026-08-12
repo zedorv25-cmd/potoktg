@@ -137,7 +137,22 @@ public class PotokFeedPostCell extends LinearLayout {
     // Допуск на естественное дрожание руки при удержании (не на настоящий скролл).
     private static final int LONG_PRESS_DRIFT_TOLERANCE_DP = 4;
 
-    private void cancelPendingLongPress() {
+    // ⚠️ ФИКС (эта сессия, баг "pull-to-refresh открывает пост в канале"):
+    // раньше был private, вызывался только изнутри onInterceptTouchEvent этой
+    // же ячейки. Проблема — после ACTION_CANCEL (родитель, например
+    // SwipeRefreshLayout, забрал жест) эта ячейка НИКОГДА не получает
+    // ACTION_UP для того же касания, значит обычный путь отмены таймера
+    // (case ACTION_UP ниже) физически не может сработать, а единственная
+    // оставшаяся защита (сверка позиции ячейки на экране в момент
+    // срабатывания таймера) не ловит именно pull-to-refresh — SwipeRefreshLayout
+    // при отпускании пальца быстро анимированно возвращает список на место,
+    // и к моменту срабатывания таймера (500мс) ячейка уже выглядит так, будто
+    // никуда не двигалась. Теперь публичный — чтобы LaunchActivity.dispatchTouchEvent
+    // (видит вообще ЛЮБОЙ ACTION_UP/CANCEL на уровне Activity, независимо от
+    // того, кто перехватил жест ниже) мог гарантированно отменить таймер в
+    // момент, когда палец физически покинул экран — что бы ни случилось
+    // между исходным ACTION_DOWN и этим моментом.
+    public void cancelPendingLongPress() {
         if (pendingLongPress != null) {
             longPressHandler.removeCallbacks(pendingLongPress);
             pendingLongPress = null;

@@ -3676,6 +3676,13 @@ public boolean onTouchEvent(MotionEvent ev) {
                 }
 
                 @Override
+                public void onFiltersOrderChanged() {
+                    if (hasMainTabs) {
+                        getMessagesController().savePotokMainTabsOrder();
+                    }
+                }
+
+                @Override
                 public void onPageScrolled(float progress) {
                     if (progress == 1 && viewPages[1].getVisibility() != View.VISIBLE && !searching) {
                         return;

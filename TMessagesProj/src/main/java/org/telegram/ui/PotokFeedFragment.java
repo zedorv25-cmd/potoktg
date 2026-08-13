@@ -70,6 +70,9 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     // Задача "В": сколько элементов до конца текущего списка должно остаться, чтобы
     // подгрузить следующую страницу истории по всем каналам, у которых она ещё есть.
     private static final int FEED_PAGINATION_THRESHOLD_ITEMS = 6;
+    // Насколько заранее (в элементах вниз от последнего видимого) проверяем дату
+    // каждого канала — см. maybeLoadMoreFeedHistory().
+    private static final int FEED_PAGINATION_LOOKAHEAD_ITEMS = 12;
     private static final String PREFS_NAME = "potok_feed_filter";
     private static final String PREFS_KEY_HIDDEN = "hidden_channels";
     // Автозагрузка медиа в ленте — по умолчанию включена для всех трёх типов (как и
@@ -232,6 +235,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     // "старой" страницы (ids в Telegram монотонно растут со временем, поэтому
     // offset_id=этот id корректно запрашивает сообщения СТАРШЕ уже загруженных).
     private final java.util.Map<String, Integer> channelOldestLoadedId = new java.util.HashMap<>();
+    // Дата (messageOwner.date) того же самого наименьшего загруженного сообщения —
+    // нужна отдельно от id, чтобы сравнивать "глубину" РАЗНЫХ каналов между собой
+    // по единой временной шкале (id одного канала не сопоставим по времени с id
+    // другого канала напрямую, а даты — сопоставимы).
+    private final java.util.Map<String, Integer> channelOldestLoadedDate = new java.util.HashMap<>();
     // false — последний ответ вернул меньше сообщений, чем запрашивали лимитом,
     // значит дальше у канала истории больше нет, догружать по нему нечего.
     private final java.util.Map<String, Boolean> channelHasMoreHistory = new java.util.HashMap<>();
@@ -658,16 +666,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                     scrollToTopButton.animate().alpha(0f).setDuration(150)
                         .withEndAction(() -> scrollToTopButton.setVisibility(View.GONE)).start();
                 }
-                // Задача "В" — пагинация: приближаемся к концу текущего списка вниз
-                // (скроллим ВНИЗ, dy>0 — вверх скроллить к своему же концу не может) —
-                // догружаем следующую страницу истории у всех каналов, у которых она
-                // ещё есть. loadMoreFeedHistory() сам не даст задвоить запрос по
-                // каналу, который уже в процессе загрузки (historyInFlight).
+                // Задача "В" — пагинация: см. подробный комментарий у
+                // maybeLoadMoreFeedHistory() — триггер теперь per-канал, не по
+                // концу всего объединённого списка.
                 if (dy > 0 && !items.isEmpty()) {
-                    int lastVisible = lm.findLastVisibleItemPosition();
-                    if (lastVisible != RecyclerView.NO_POSITION && lastVisible >= items.size() - FEED_PAGINATION_THRESHOLD_ITEMS) {
-                        loadMoreFeedHistory();
-                    }
+                    maybeLoadMoreFeedHistory(lm);
                 }
                 // ⚠️ TARGETPOST/CLIP_CHECK — проверка теории "listView.clipChildren
                 // режет кружок по своей верхней/нижней границе". Пишется БЕЗУСЛОВНО
@@ -1298,11 +1301,16 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             Collections.sort(raw, (a, b) -> Integer.compare(b.getId(), a.getId()));
 
             int oldestId = Integer.MAX_VALUE;
+            int oldestDate = Integer.MAX_VALUE;
             for (MessageObject mo : raw) {
-                oldestId = Math.min(oldestId, mo.getId());
+                if (mo.getId() < oldestId) {
+                    oldestId = mo.getId();
+                    oldestDate = mo.messageOwner.date;
+                }
             }
             if (!raw.isEmpty()) {
                 channelOldestLoadedId.put(key, oldestId);
+                channelOldestLoadedDate.put(key, oldestDate);
             }
 
             channelItems.put(key, buildChannelItems(raw, channel));
@@ -1312,13 +1320,28 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     }
 
     /**
-     * Задача "В": вызывается по мере приближения скролла к концу текущего списка
-     * (см. onScrolled ниже). Догружает следующую "старую" страницу СРАЗУ по всем
-     * каналам, у которых она ещё есть (а не по одному) — иначе каналы быстро
-     * расходятся по покрытым датам и симптом "перекос на один канал"
-     * воспроизводится заново, просто на странице 2 вместо страницы 1.
+     * Задача "В", реальный найденный баг первой версии фикса: порог подгрузки был
+     * привязан к концу ВСЕГО объединённого списка (items.size()). При 10+ каналах
+     * общий список большой, и "быстрый" канал (много постов в день) успевает
+     * исчерпать СВОЮ загруженную историю (например, покрывающую только последний
+     * день) задолго до того, как скролл дойдёт до конца общего списка (который всё
+     * ещё наполнен постами МЕДЛЕННЫХ каналов) — из-за этого для него подгрузка
+     * следующей страницы попросту не вызывалась вовремя, и лента теряла этот канал
+     * ровно в точке его глубины, хотя список в целом продолжался. Отсюда и
+     * симптом "сегодня — все каналы, начиная со вчера — только некоторые".
+     * Теперь триггер — по каждому каналу ОТДЕЛЬНО: сравниваем дату его САМОГО
+     * СТАРОГО загруженного поста с датой поста, до которого пользователь вот-вот
+     * доскроллит (позиция последнего видимого + запас) — если канал не "дотягивает"
+     * своей загруженной глубиной до этой точки, догружаем именно его, независимо
+     * от того, насколько длинный общий список за счёт других каналов.
      */
-    private void loadMoreFeedHistory() {
+    private void maybeLoadMoreFeedHistory(LinearLayoutManager lm) {
+        if (items.isEmpty()) return;
+        int lastVisible = lm.findLastVisibleItemPosition();
+        if (lastVisible == RecyclerView.NO_POSITION) return;
+        int lookaheadPos = Math.min(lastVisible + FEED_PAGINATION_LOOKAHEAD_ITEMS, items.size() - 1);
+        int frontierDate = postDate(items.get(lookaheadPos));
+        boolean nearGlobalEnd = lastVisible >= items.size() - FEED_PAGINATION_THRESHOLD_ITEMS;
         for (TLRPC.Chat channel : allChannels) {
             String key = String.valueOf(channel.id);
             if (hiddenChannelIds.contains(key)) continue;
@@ -1326,8 +1349,11 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             if (hasMore == null || !hasMore) continue; // ещё не грузился вообще, либо история кончилась
             if (historyInFlight.contains(key)) continue;
             Integer oldestId = channelOldestLoadedId.get(key);
-            if (oldestId == null) continue;
-            loadHistory(key, channel, oldestId);
+            Integer oldestDate = channelOldestLoadedDate.get(key);
+            if (oldestId == null || oldestDate == null) continue;
+            if (nearGlobalEnd || oldestDate >= frontierDate) {
+                loadHistory(key, channel, oldestId);
+            }
         }
     }
 
@@ -1437,6 +1463,16 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             // известны сразу после dispatchUpdatesTo), иначе findFirstVisibleItemPosition
             // ниже вернёт NO_POSITION.
             listView.post(this::checkVisibleFeedItemsRead);
+            // Задача "В": проверяем глубину каналов и без скролла — иначе канал,
+            // который "мелкий" уже на САМОМ ПЕРВОМ экране (без единого движения
+            // пальцем), никогда не догрузится, пока пользователь не начнёт
+            // скроллить (maybeLoadMoreFeedHistory иначе вызывается только из
+            // onScrolled, который до первого жеста скролла попросту не сработает).
+            listView.post(() -> {
+                if (listViewLayoutManager != null) {
+                    maybeLoadMoreFeedHistory(listViewLayoutManager);
+                }
+            });
         }
     }
 

@@ -55,6 +55,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
+import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -382,20 +383,17 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         listView = new RecyclerListView(context);
         listViewLayoutManager = new LinearLayoutManager(context);
         listView.setLayoutManager(listViewLayoutManager);
-        // Лента обновляется полным notifyDataSetChanged() (см. notifyWhenReady()) —
-        // при loadFeed() на КАЖДЫЙ реальный возврат на вкладку (в т.ч. возврат из
-        // комментариев или закрытие полноэкранного просмотра фото/видео, которые
-        // временно скрывают эту вкладку — см. комментарий у onBecomeFullyVisible()).
-        // Стандартный ItemAnimator RecyclerView по умолчанию (DefaultItemAnimator)
-        // на полный notifyDataSetChanged() запускает анимацию "сдвига" уже видимых
-        // элементов на их (по факту те же самые) позиции — именно это и davало
-        // видимое дёрганье постов на пару пикселей вверх-вниз, которое само
-        // прекращается, как только анимация доигрывает. Список не полагается на
-        // покадровые move/change-анимации между обновлениями (это полная
-        // перестройка данных, а не точечное изменение одного элемента), поэтому
-        // отключаем анимации переиспользования элементов целиком — так же, как это
-        // сделано в других местах Telegram для списков, которые часто обновляются
-        // целиком, а не точечно через DiffUtil.
+        // Лента обновляется через DiffUtil (см. notifyWhenReady()/FeedDiffCallback) —
+        // перебиндиваются только реально новые/пропавшие/изменившиеся посты, а не
+        // весь список целиком. Раньше здесь стоял полный notifyDataSetChanged(),
+        // который на КАЖДЫЙ реальный возврат на вкладку заставлял стандартный
+        // ItemAnimator (DefaultItemAnimator) запускать анимацию "сдвига" уже видимых
+        // элементов на их (по факту те же самые) позиции — именно это и давало
+        // видимое дёрганье постов на пару пикселей вверх-вниз. setItemAnimator(null)
+        // оставлен и после перехода на DiffUtil — он всё ещё не даёт анимировать
+        // move/change для позиций, которые DiffUtil определит как реально сдвинутые
+        // (например, если наверх ленты пришёл новый пост и все остальные сместились
+        // на 1 позицию) — такие сдвиги не должны анимироваться прыжком.
         listView.setItemAnimator(null);
         scrollHelper = new org.telegram.ui.Components.RecyclerAnimationScrollHelper(listView, listViewLayoutManager);
 
@@ -1078,6 +1076,41 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED)
         );
 
+        // Фикс обрезания попапа ("Обратная связь" не видна): layout.getMeasuredHeight()
+        // (977x1434 по диагностике FEED_MENU_DIAG) — это высота ВСЕХ страниц
+        // swipeBackLayout разом (главный список + оба скрытых подменю "Фильтр
+        // каналов"/"Настройки медиа" — так уже устроен ActionBarPopupWindowLayout,
+        // все addViewToSwipeBack()-страницы лежат в одном FrameLayout и участвуют в
+        // его измерении, даже когда не видны, это стандартный механизм под свайп-
+        // переключение между страницами). Но реально показывается ТОЛЬКО высота
+        // САМОГО ГЛАВНОГО списка (5 пунктов) — дальше что-то её ужимает (960x1254 на
+        // экране, см. диагностику), из-за чего последний пункт обрезается. Точная
+        // причина этого ужимания не найдена (проверено и исключено: ни наш y-clamp,
+        // ни нехватка места на экране — места было в избытке). Вместо дальнейшего
+        // копания — считаем нужную высоту НАПРЯМУЮ по трём известным страницам
+        // (главный список — суммой реально измеренных высот его 5 пунктов; оба
+        // подменю — их измеренной высотой), берём максимум и принудительно задаём
+        // popup-окну ТОЧНО эту высоту — тогда любая из трёх страниц гарантированно
+        // влезает целиком, независимо от того, что именно ужимало layout раньше.
+        int paddingVertical = layout.getPaddingTop() + layout.getPaddingBottom();
+        int mainMenuContentHeight = paddingVertical
+            + filterItem.getMeasuredHeight()
+            + markReadItem.getMeasuredHeight()
+            + mediaSettingsItem.getMeasuredHeight()
+            + clearCacheItem.getMeasuredHeight()
+            + feedbackItem.getMeasuredHeight();
+        // Окно должно вмещать не только главный список, но и оба подменю, которые
+        // открываются свайпом ВНУТРИ этого же окна ("Фильтр каналов" со списком
+        // каналов, "Настройки медиа") — иначе фикс обрезания главного списка мог бы
+        // просто перенести ту же обрезку на подменю. Берём максимум по всем трём.
+        int filterMenuHeight = paddingVertical + filterMenuView.getMeasuredHeight();
+        int mediaMenuHeight = paddingVertical + mediaMenuView.getMeasuredHeight();
+        int forcedPopupHeight = Math.max(mainMenuContentHeight, Math.max(filterMenuHeight, mediaMenuHeight));
+        threeDotsMenuWindow.setHeight(forcedPopupHeight);
+        PotokDebugLog.log("FEED_MENU_DIAG", "принудительная высота попапа: forcedPopupHeight=" + forcedPopupHeight
+            + " (mainMenu=" + mainMenuContentHeight + " filterMenu=" + filterMenuHeight + " mediaMenu=" + mediaMenuHeight
+            + " было измерено layout=" + layout.getMeasuredHeight() + ")");
+
         // ВРЕМЕННАЯ ДИАГНОСТИКА (тег FEED_MENU_DIAG): ловим баг "Обратная связь"
         // не сразу видна в попапе. Логируем состояние сразу после measure() и,
         // отдельно, после реального показа на экране (onGlobalLayout) — если
@@ -1114,7 +1147,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // FEED_MENU_DIAG. Прижимаем попап к нижней границе безопасной зоны, если
         // высоты не хватает, вместо того чтобы позволять системе его обрезать.
         int minY = AndroidUtilities.statusBarHeight;
-        int maxY = AndroidUtilities.displaySize.y - AndroidUtilities.navigationBarHeight - layout.getMeasuredHeight() - AndroidUtilities.dp(8);
+        int maxY = AndroidUtilities.displaySize.y - AndroidUtilities.navigationBarHeight - forcedPopupHeight - AndroidUtilities.dp(8);
         int yBeforeClamp = y;
         y = org.telegram.messenger.Utilities.clamp(y, maxY, minY);
 
@@ -1266,6 +1299,10 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     }
 
     private void rebuildAndShowAllItems() {
+        // Снимок СТАРОГО состояния items — нужен DiffUtil'у ниже, чтобы понять,
+        // какие посты реально не изменились (и их вьюхи/картинки не надо трогать),
+        // а какие — новые/пропавшие/изменившиеся (только их и перебиндить).
+        ArrayList<FeedItem> oldItems = new ArrayList<>(items);
         items.clear();
         for (java.util.Map.Entry<String, ArrayList<FeedItem>> entry : channelItems.entrySet()) {
             if (hiddenChannelIds.contains(entry.getKey())) continue;
@@ -1273,21 +1310,100 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         }
         // смешиваем посты разных каналов в одну ленту, свежие сверху
         Collections.sort(items, (a, b) -> Integer.compare(postDate(b), postDate(a)));
-        notifyWhenReady();
+        notifyWhenReady(oldItems);
     }
 
-    private void notifyWhenReady() {
+    /**
+     * Причина дёргания медиа при обновлении ленты (подтверждено логами VIDEOPLAY/
+     * ROUNDVID_MASK/GHOST — DETACH затем сразу ATTACH ОДНИХ И ТЕХ ЖЕ cellHash сразу
+     * после loadFeed(), с полным сбросом ImageReceiver в 1x1 и повторным onLayout
+     * кружка): полный notifyDataSetChanged() форсит RecyclerView перебиндить
+     * (onBindViewHolder) АБСОЛЮТНО ВСЕ видимые holder'ы, даже те посты, которые
+     * не изменились ни на бит — вьюха теряет и заново грузит/раскладывает картинку
+     * ради поста, у которого по факту не поменялось ничего.
+     * Заменено на DiffUtil: перебиндиваются только реально новые/пропавшие/
+     * изменившиеся посты (см. FeedDiffCallback), у неизменных постов их holder
+     * просто не трогается — картинка и раскладка кружка остаются как были.
+     */
+    private void notifyWhenReady(ArrayList<FeedItem> oldItems) {
         if (listView == null || listView.getAdapter() == null) {
             return;
         }
         if (listView.isComputingLayout()) {
-            listView.post(this::notifyWhenReady);
+            listView.post(() -> notifyWhenReady(oldItems));
         } else {
-            listView.getAdapter().notifyDataSetChanged();
+            DiffUtil.DiffResult diffResult = DiffUtil.calculateDiff(new FeedDiffCallback(oldItems, items));
+            diffResult.dispatchUpdatesTo(listView.getAdapter());
             // После обновления списка нужно дождаться прохода layout (позиции ещё не
-            // известны сразу после notifyDataSetChanged), иначе findFirstVisibleItemPosition
+            // известны сразу после dispatchUpdatesTo), иначе findFirstVisibleItemPosition
             // ниже вернёт NO_POSITION.
             listView.post(this::checkVisibleFeedItemsRead);
+        }
+    }
+
+    /**
+     * Identity поста — dialogId+id первого сообщения в группе: остаётся стабильным
+     * между перезагрузками (loadHistory() каждый раз строит НОВЫЕ объекты FeedItem/
+     * MessageObject даже для того же самого поста в Telegram, поэтому сравнивать
+     * по ссылке "==" нельзя — только по этому смысловому ключу).
+     */
+    private static String feedItemIdentityKey(FeedItem item) {
+        if (item == null || item.messages.isEmpty() || item.messages.get(0).messageOwner == null) {
+            return null;
+        }
+        MessageObject first = item.messages.get(0);
+        return first.getDialogId() + "_" + first.getId();
+    }
+
+    /**
+     * "Содержимое не изменилось" — тот же набор id сообщений в том же порядке и та
+     * же edit_date у каждого (правки подписи/медиа обязаны перебиндить пост,
+     * простое повторное появление в новом ответе messages.getHistory — нет).
+     */
+    private static class FeedDiffCallback extends DiffUtil.Callback {
+        private final ArrayList<FeedItem> oldList;
+        private final ArrayList<FeedItem> newList;
+
+        FeedDiffCallback(ArrayList<FeedItem> oldList, ArrayList<FeedItem> newList) {
+            this.oldList = oldList;
+            this.newList = newList;
+        }
+
+        @Override
+        public int getOldListSize() {
+            return oldList.size();
+        }
+
+        @Override
+        public int getNewListSize() {
+            return newList.size();
+        }
+
+        @Override
+        public boolean areItemsTheSame(int oldItemPosition, int newItemPosition) {
+            String oldKey = feedItemIdentityKey(oldList.get(oldItemPosition));
+            String newKey = feedItemIdentityKey(newList.get(newItemPosition));
+            return oldKey != null && oldKey.equals(newKey);
+        }
+
+        @Override
+        public boolean areContentsTheSame(int oldItemPosition, int newItemPosition) {
+            FeedItem oldItem = oldList.get(oldItemPosition);
+            FeedItem newItem = newList.get(newItemPosition);
+            if (oldItem.messages.size() != newItem.messages.size()) {
+                return false;
+            }
+            for (int i = 0; i < oldItem.messages.size(); i++) {
+                MessageObject oldMo = oldItem.messages.get(i);
+                MessageObject newMo = newItem.messages.get(i);
+                if (oldMo == null || newMo == null || oldMo.messageOwner == null || newMo.messageOwner == null) {
+                    return false;
+                }
+                if (oldMo.getId() != newMo.getId() || oldMo.messageOwner.edit_date != newMo.messageOwner.edit_date) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 

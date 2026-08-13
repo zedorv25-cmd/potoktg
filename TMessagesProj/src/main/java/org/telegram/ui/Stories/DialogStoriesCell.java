@@ -188,7 +188,7 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
     // Разрешение битмапа заведомо выше конечного размера вьюхи (90x22dp) — ImageView
     // со ScaleType.CENTER_INSIDE сам аккуратно впишет его без размытия на плотных
     // экранах.
-    private static Bitmap createTypefeedLogoBitmap(Context context) {
+    private static Bitmap createTypefeedLogoBitmap(Context context, String text) {
         // Вьюха-контейнер telegramLogoView — 90x22dp (см. addView ниже). Рендерим в
         // 2x от этого размера для чёткости на плотных экранах, ScaleType.CENTER_INSIDE
         // потом впишет обратно без искажений.
@@ -210,7 +210,7 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
         // по бокам, которые тоже "съедали" эффективный размер при вписывании в бокс.
         float textSize = targetH * 0.902f;
         paint.setTextSize(textSize);
-        float textWidth = paint.measureText("typefeed");
+        float textWidth = paint.measureText(text);
         final int hPad = dp(4);
         final int w = Math.round(textWidth) + hPad * 2;
         final int h = targetH;
@@ -219,8 +219,39 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
         Paint.FontMetrics fm = paint.getFontMetrics();
         float x = hPad;
         float y = h / 2f - (fm.ascent + fm.descent) / 2f;
-        canvas.drawText("typefeed", x, y, paint);
+        canvas.drawText(text, x, y, paint);
         return bitmap;
+    }
+
+    /**
+     * Новая задача: заголовок в этом (развёрнутом, со строкой историй) состоянии
+     * шапки рисуется НЕ через actionBar.getTitleTextView() (тот правится отдельно
+     * в DialogsActivity — виден только в свёрнутом состоянии шапки при скролле), а
+     * именно через telegramLogoView — картинку со словом "typefeed", запечённую
+     * тем же шрифтом заранее. Чтобы верхняя надпись при переключении вкладок
+     * Непрочитанные/Группы/Траф показывала их название, а не всегда "typefeed",
+     * перерисовываем эту картинку под нужный текст и одновременно раздвигаем
+     * ширину контейнера (иначе более длинный текст, чем "typefeed", просто
+     * сожмётся ScaleType.CENTER_INSIDE до нечитаемого размера в те же 90dp).
+     * title == null — вернуть дефолтный логотип "typefeed" (вкладка "Чаты").
+     */
+    public void applyPotokTabTitleOverride(CharSequence title) {
+        if (telegramLogoView == null) {
+            return;
+        }
+        String text = (title == null || title.length() == 0) ? "typefeed" : title.toString();
+        Bitmap bitmap = createTypefeedLogoBitmap(getContext(), text);
+        telegramLogoView.setImageBitmap(bitmap);
+        telegramLogoView.setColorFilter(getTextLogoColor(), PorterDuff.Mode.MULTIPLY);
+        ViewGroup.LayoutParams lp = telegramLogoView.getLayoutParams();
+        if (lp != null) {
+            // Битмап отрисован в 2x (см. targetH выше) ради чёткости — реальная
+            // display-ширина вьюхи должна быть вдвое меньше пиксельной ширины
+            // битмапа, точно так же, как высота вьюхи (22dp) вдвое меньше
+            // пиксельной высоты битмапа (targetH = dp(22)*2).
+            lp.width = bitmap.getWidth() / 2;
+            telegramLogoView.setLayoutParams(lp);
+        }
     }
     public DialogStoriesCell(@NonNull Context context, BaseFragment fragment, int currentAccount, int type) {
         super(context);
@@ -427,7 +458,7 @@ public class DialogStoriesCell extends FrameLayout implements NotificationCenter
         // рассчитанный именно на светлый/белый исходник, который перекрашивается
         // под тему. Если исходник вместо этого будет уже цветным, MULTIPLY даст
         // неправильный результат.
-        telegramLogoView.setImageBitmap(createTypefeedLogoBitmap(context));
+        telegramLogoView.setImageBitmap(createTypefeedLogoBitmap(context, "typefeed"));
         telegramLogoView.setColorFilter(getTextLogoColor(), PorterDuff.Mode.MULTIPLY);
         telegramLogoView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         telegramLogoView.setFocusableInTouchMode(true);

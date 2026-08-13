@@ -3695,6 +3695,13 @@ public boolean onTouchEvent(MotionEvent ev) {
                     switchToCurrentSelectedMode(true);
                     animatingForward = forward;
                     applyPotokMainTabsActionBarTitle(tab);
+                    // Видимая надпись в обычном (не свёрнутом скроллом) состоянии шапки
+                    // рисуется не через actionBar, а через dialogStoriesCell.telegramLogoView
+                    // (см. applyPotokTabTitleOverride() в DialogStoriesCell.java) — actionBar
+                    // выше нужен отдельно для свёрнутого состояния шапки при скролле вниз.
+                    if (hasMainTabs && dialogStoriesCell != null) {
+                        dialogStoriesCell.applyPotokTabTitleOverride(tab.isDefault ? null : tab.title);
+                    }
                 }
 
                 @Override

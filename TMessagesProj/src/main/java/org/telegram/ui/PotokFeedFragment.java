@@ -66,8 +66,10 @@ import androidx.recyclerview.widget.RecyclerView;
 public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.TabFragmentDelegate, NotificationCenter.NotificationCenterDelegate {
 
     private static final int MESSAGES_TO_LOAD_PER_CHANNEL = 30;
-    private static final int MAX_POSTS_PER_CHANNEL = 10;
     private static final int MAX_RECENT_SEARCH_CHANNELS = 10;
+    // Задача "В": сколько элементов до конца текущего списка должно остаться, чтобы
+    // подгрузить следующую страницу истории по всем каналам, у которых она ещё есть.
+    private static final int FEED_PAGINATION_THRESHOLD_ITEMS = 6;
     private static final String PREFS_NAME = "potok_feed_filter";
     private static final String PREFS_KEY_HIDDEN = "hidden_channels";
     // Автозагрузка медиа в ленте — по умолчанию включена для всех трёх типов (как и
@@ -210,6 +212,29 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     private final java.util.Map<String, TLRPC.Chat> resolvedChannels = new java.util.HashMap<>();
     // username -> посты этого канала, уже собранные в FeedItem (альбомы объединены)
     private final java.util.Map<String, ArrayList<FeedItem>> channelItems = new java.util.HashMap<>();
+    // Задача "В" (пагинация ленты). Раньше loadHistory() всегда запрашивал ТОЛЬКО
+    // самые свежие MESSAGES_TO_LOAD_PER_CHANNEL=30 сообщений (offset_id=0), и
+    // buildChannelItems() ДОПОЛНИТЕЛЬНО обрезал результат до 10 постов на канал —
+    // то есть весь канал жизни ленты был жёстко ограничен максимум 10 постами на
+    // канал без какой-либо возможности подгрузить более старые. Именно этим
+    // объяснялись все три симптома разом: календарные пропуски (канал с частыми
+    // постами исчерпывает свои 10 постов за день-два и просто пропадает из ленты
+    // дальше), "перекос на один канал" (только медленно постящие каналы всё ещё
+    // покрывают текущий диапазон дат, когда быстрые уже исчерпаны) и полностью
+    // пустая лента в конце (когда исчерпаны буквально все каналы, догружать
+    // больше было НЕЧЕМ — такого кода не существовало вообще).
+    // channelRawMessages — накопленный (постранично, через loadMoreFeedHistory())
+    // сырой список сообщений канала, из которого каждый раз пересобирается
+    // channelItems[key] — то есть глубина истории канала в ленте больше не
+    // ограничена жёстко, а растёт по мере скролла вниз.
+    private final java.util.Map<String, ArrayList<MessageObject>> channelRawMessages = new java.util.HashMap<>();
+    // Наименьший загруженный id сообщения канала — offset_id для следующей
+    // "старой" страницы (ids в Telegram монотонно растут со временем, поэтому
+    // offset_id=этот id корректно запрашивает сообщения СТАРШЕ уже загруженных).
+    private final java.util.Map<String, Integer> channelOldestLoadedId = new java.util.HashMap<>();
+    // false — последний ответ вернул меньше сообщений, чем запрашивали лимитом,
+    // значит дальше у канала истории больше нет, догружать по нему нечего.
+    private final java.util.Map<String, Boolean> channelHasMoreHistory = new java.util.HashMap<>();
     private final java.util.Set<String> historyInFlight = new java.util.HashSet<>();
     // Когда каждый канал последний раз реально успешно подгружался — нужно, чтобы
     // onBecomeFullyVisible() (срабатывает на КАЖДОЕ возвращение в ленту, в т.ч. из
@@ -633,6 +658,17 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                     scrollToTopButton.animate().alpha(0f).setDuration(150)
                         .withEndAction(() -> scrollToTopButton.setVisibility(View.GONE)).start();
                 }
+                // Задача "В" — пагинация: приближаемся к концу текущего списка вниз
+                // (скроллим ВНИЗ, dy>0 — вверх скроллить к своему же концу не может) —
+                // догружаем следующую страницу истории у всех каналов, у которых она
+                // ещё есть. loadMoreFeedHistory() сам не даст задвоить запрос по
+                // каналу, который уже в процессе загрузки (historyInFlight).
+                if (dy > 0 && !items.isEmpty()) {
+                    int lastVisible = lm.findLastVisibleItemPosition();
+                    if (lastVisible != RecyclerView.NO_POSITION && lastVisible >= items.size() - FEED_PAGINATION_THRESHOLD_ITEMS) {
+                        loadMoreFeedHistory();
+                    }
+                }
                 // ⚠️ TARGETPOST/CLIP_CHECK — проверка теории "listView.clipChildren
                 // режет кружок по своей верхней/нижней границе". Пишется БЕЗУСЛОВНО
                 // на каждый onScrolled, пока целевой пост присутствует среди
@@ -842,7 +878,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 return;
             }
         }
-        loadHistory(key, channel);
+        loadHistory(key, channel, 0);
     }
 
     private void loadRecentSearchChannels() {
@@ -1176,7 +1212,20 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         return count;
     }
 
-    private void loadHistory(String key, TLRPC.Chat channel) {
+    /**
+     * offsetId==0 — "верхняя" страница (первая загрузка канала и троттлящийся
+     * авто-рефреш из addChannelToFeed): подтягивает самые свежие сообщения.
+     * offsetId!=0 — "следующая старая" страница (см. loadMoreFeedHistory(),
+     * вызывается по мере скролла вниз): подтягивает сообщения СТАРШЕ offsetId.
+     * В обоих случаях результат не заменяет, а ДОПОЛНЯЕТ уже накопленный сырой
+     * список сообщений канала (channelRawMessages) — иначе троттлящийся
+     * авто-рефреш верхней страницы стирал бы все страницы, догруженные
+     * скроллом. Оговорка (сознательный компромисс, не баг): пост, удалённый в
+     * самом канале, из уже накопленного сырого списка сам по себе не пропадёт
+     * (лента их не запрашивает по отдельности) — это отдельная, не заявленная
+     * сейчас задача, если понадобится актуальность на удаление — фиксить отдельно.
+     */
+    private void loadHistory(String key, TLRPC.Chat channel, int offsetId) {
         if (historyInFlight.contains(key)) {
             return;
         }
@@ -1186,7 +1235,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         TLRPC.TL_messages_getHistory req = new TLRPC.TL_messages_getHistory();
         req.peer = getMessagesController().getInputPeer(dialogId);
         req.limit = MESSAGES_TO_LOAD_PER_CHANNEL;
-        req.offset_id = 0;
+        req.offset_id = offsetId;
         req.offset_date = 0;
         req.add_offset = 0;
         req.max_id = 0;
@@ -1210,7 +1259,7 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             getMessagesController().putUsers(res.users, false);
             getMessagesController().putChats(res.chats, false);
 
-            ArrayList<MessageObject> messageObjects = new ArrayList<>();
+            ArrayList<MessageObject> newMessages = new ArrayList<>();
             for (TLRPC.Message message : res.messages) {
                 // Служебные сообщения (TL_messageService) — это не посты канала, а
                 // системные строки вида "X закрепил(а) фотографию", "канал создан",
@@ -1220,12 +1269,66 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
                 if (message instanceof TLRPC.TL_messageService) {
                     continue;
                 }
-                messageObjects.add(new MessageObject(currentAccount, message, true, true));
+                newMessages.add(new MessageObject(currentAccount, message, true, true));
             }
-            channelItems.put(key, buildChannelItems(messageObjects, channel));
+
+            // "Больше истории нет" определяем по СЫРОМУ ответу (res.messages, ДО
+            // фильтрации служебных) относительно запрошенного лимита — иначе
+            // страница, целиком состоящая из отфильтрованных служебных сообщений,
+            // ошибочно выглядела бы как "конец истории", хотя на деле сообщения
+            // старше offsetId у канала ещё есть.
+            channelHasMoreHistory.put(key, res.messages.size() >= req.limit);
+
+            ArrayList<MessageObject> raw = channelRawMessages.get(key);
+            if (raw == null) {
+                raw = new ArrayList<>();
+                channelRawMessages.put(key, raw);
+            }
+            java.util.Set<Integer> knownIds = new java.util.HashSet<>();
+            for (MessageObject mo : raw) {
+                knownIds.add(mo.getId());
+            }
+            for (MessageObject mo : newMessages) {
+                if (mo.messageOwner != null && knownIds.add(mo.getId())) {
+                    raw.add(mo);
+                }
+            }
+            // Новее сверху — buildChannelItems() ожидает именно такой порядок
+            // (грузит альбомы подряд идущими сообщениями с одним grouped_id).
+            Collections.sort(raw, (a, b) -> Integer.compare(b.getId(), a.getId()));
+
+            int oldestId = Integer.MAX_VALUE;
+            for (MessageObject mo : raw) {
+                oldestId = Math.min(oldestId, mo.getId());
+            }
+            if (!raw.isEmpty()) {
+                channelOldestLoadedId.put(key, oldestId);
+            }
+
+            channelItems.put(key, buildChannelItems(raw, channel));
             lastChannelFetchTime.put(key, System.currentTimeMillis());
             scheduleRebuild();
         }));
+    }
+
+    /**
+     * Задача "В": вызывается по мере приближения скролла к концу текущего списка
+     * (см. onScrolled ниже). Догружает следующую "старую" страницу СРАЗУ по всем
+     * каналам, у которых она ещё есть (а не по одному) — иначе каналы быстро
+     * расходятся по покрытым датам и симптом "перекос на один канал"
+     * воспроизводится заново, просто на странице 2 вместо страницы 1.
+     */
+    private void loadMoreFeedHistory() {
+        for (TLRPC.Chat channel : allChannels) {
+            String key = String.valueOf(channel.id);
+            if (hiddenChannelIds.contains(key)) continue;
+            Boolean hasMore = channelHasMoreHistory.get(key);
+            if (hasMore == null || !hasMore) continue; // ещё не грузился вообще, либо история кончилась
+            if (historyInFlight.contains(key)) continue;
+            Integer oldestId = channelOldestLoadedId.get(key);
+            if (oldestId == null) continue;
+            loadHistory(key, channel, oldestId);
+        }
     }
 
     private ArrayList<FeedItem> buildChannelItems(ArrayList<MessageObject> messageObjects, TLRPC.Chat channel) {
@@ -1239,10 +1342,6 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             }
             long groupId = mo.messageOwner.grouped_id;
             boolean continuesCurrentGroup = groupId != 0 && currentItem != null && currentGroupId == groupId;
-
-            if (!continuesCurrentGroup && result.size() >= MAX_POSTS_PER_CHANNEL) {
-                break;
-            }
 
             if (continuesCurrentGroup) {
                 currentItem.messages.add(mo);

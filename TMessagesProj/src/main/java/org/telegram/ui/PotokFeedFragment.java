@@ -1091,8 +1091,12 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
             @Override
             public void onGlobalLayout() {
                 layout.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                int[] realLoc = new int[2];
+                layout.getLocationOnScreen(realLoc);
                 PotokDebugLog.log("FEED_MENU_DIAG", "после показа на экране: " + layout.getWidth() + "x" + layout.getHeight()
-                    + " subItems=" + countActionBarMenuSubItems(layout));
+                    + " subItems=" + countActionBarMenuSubItems(layout)
+                    + " realLoc=" + realLoc[0] + "," + realLoc[1]
+                    + " padding=" + layout.getPaddingTop() + "/" + layout.getPaddingBottom());
             }
         });
 
@@ -1111,7 +1115,13 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         // высоты не хватает, вместо того чтобы позволять системе его обрезать.
         int minY = AndroidUtilities.statusBarHeight;
         int maxY = AndroidUtilities.displaySize.y - AndroidUtilities.navigationBarHeight - layout.getMeasuredHeight() - AndroidUtilities.dp(8);
+        int yBeforeClamp = y;
         y = org.telegram.messenger.Utilities.clamp(y, maxY, minY);
+
+        PotokDebugLog.log("FEED_MENU_DIAG", "позиционирование: anchorLoc=" + location[0] + "," + location[1]
+            + " anchorH=" + anchor.getHeight() + " yBeforeClamp=" + yBeforeClamp + " minY=" + minY + " maxY=" + maxY
+            + " yAfterClamp=" + y + " displaySize=" + AndroidUtilities.displaySize.x + "x" + AndroidUtilities.displaySize.y
+            + " statusBar=" + AndroidUtilities.statusBarHeight + " navBar=" + AndroidUtilities.navigationBarHeight);
 
         threeDotsMenuWindow.showAtLocation(anchor, android.view.Gravity.LEFT | android.view.Gravity.TOP, x, y);
         ActionBarPopupWindow.startAnimation(layout);
@@ -2317,19 +2327,20 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
     // при закрытии PhotoViewer/системных диалогов/смене приложений, даже если
     // пользователь всё это время сидел на вкладке "Лента" и никуда с неё не
     // уходил. Из-за этого лента лишний раз дёргала messages.getHistory по всем
-    // каналам — та самая "лишняя трата ресурсов". onBecomeFullyVisible(), в
-    // отличие от onResume(), вызывается строго тогда, когда эта вкладка реально
-    // становится полностью видимой страницей пейджера (см. ViewPagerActivity.
-    // PageAdapter.setVisibility(), fragment.onBecomeFullyVisible() при
-    // newVisibility >= 1) — это и есть корректный третий триггер обновления
-    // ("вернулся в ленту с другого раздела"), не срабатывающий на посторонние
-    // события. Итого обновление ленты теперь строго по 3 триггерам: первый показ
-    // (createView() -> loadFeed(), см. выше), свайп-обновление (swipeRefreshLayout)
-    // и вот этот — реальный возврат на вкладку.
+    // каналам — та самая "лишняя трата ресурсов".
+    //
+    // ОБНОВЛЕНО по просьбе пользователя: раньше здесь ещё был третий триггер
+    // обновления — onBecomeFullyVisible() (реальный возврат на вкладку Ленты
+    // с другого раздела). Пользователь явно попросил убрать именно его: новые
+    // посты не должны появляться сами по себе при переключении между экранами,
+    // только (1) при первом открытии Ленты с нуля (createView() -> loadFeed(),
+    // см. выше) и (2) по ручному свайп-обновлению (swipeRefreshLayout, см.
+    // выше). Метод оставлен пустым (кроме super) на случай, если
+    // ViewPagerActivity/BaseFragment рассчитывает на его вызов для другой,
+    // не связанной с лентой логики видимости.
     @Override
     public void onBecomeFullyVisible() {
         super.onBecomeFullyVisible();
-        loadFeed();
     }
 
     /**

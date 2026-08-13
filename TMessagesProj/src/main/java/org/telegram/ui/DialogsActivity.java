@@ -280,6 +280,40 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     // объект Typeface, применённый один раз при создании actionBar — сравнивается
     // по ССЫЛКЕ (==), не по содержимому, потому что нас интересует именно факт
     // подмены объекта, а не визуальное сходство.
+    private android.graphics.Typeface potokMainTabsFont;
+
+    /**
+     * Новая задача: заголовок верхней шапки экрана Чатов при переключении между
+     * 3 доп. вкладками (Непрочитанные/Группы/Траф) должен показывать название
+     * вкладки вместо статичного "typefeed"; на вкладке "Чаты" (tab.isDefault) —
+     * остаётся "typefeed" как раньше, без подписи. Название берём из tab.title —
+     * это тот же CharSequence, что уже показан в самой вкладке таббара (см.
+     * DialogFilter.name в getPotokMainTabsFilters() — "Непрочитанные"/"Группы"/
+     * "Траф"), не дублируем строку заново. statusDrawable (эмодзи-статус
+     * аккаунта) оставляем во всех случаях — это данные аккаунта, не часть
+     * бренда "typefeed", не должны пропадать при переключении вкладок.
+     */
+    private void applyPotokMainTabsActionBarTitle(FilterTabsView.Tab tab) {
+        if (!hasMainTabs || actionBar == null) {
+            return;
+        }
+        CharSequence title = (tab == null || tab.isDefault) ? "typefeed" : tab.title;
+        actionBar.setTitle(title, statusDrawable);
+        if (actionBar.getTitleTextView() == null) {
+            return;
+        }
+        try {
+            if (potokMainTabsFont == null) {
+                potokMainTabsFont = android.graphics.Typeface.createFromAsset(ApplicationLoader.applicationContext.getAssets(), "fonts/avenir_black.ttf");
+            }
+            actionBar.getTitleTextView().setTypeface(potokMainTabsFont);
+            typefeedExpectedTypeface = potokMainTabsFont;
+            typefeedTypefaceMismatchLogged = false;
+        } catch (Exception e) {
+            PotokDebugLog.log("PotokFeedLogo", "applyPotokMainTabsActionBarTitle: fonts/avenir_black.ttf не найден в assets: " + e.getMessage());
+        }
+    }
+
     private android.graphics.Typeface typefeedExpectedTypeface;
     private boolean typefeedTypefaceMismatchLogged;
     private final int ADDITIONAL_LIST_HEIGHT_DP = Build.VERSION.SDK_INT >= 31 ? 48 : 0;
@@ -3660,6 +3694,7 @@ public boolean onTouchEvent(MotionEvent ev) {
                     showScrollbars(false);
                     switchToCurrentSelectedMode(true);
                     animatingForward = forward;
+                    applyPotokMainTabsActionBarTitle(tab);
                 }
 
                 @Override

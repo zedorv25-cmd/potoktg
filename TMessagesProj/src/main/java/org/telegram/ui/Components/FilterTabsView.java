@@ -125,6 +125,16 @@ public class FilterTabsView extends FrameLayout {
          * а контент за ней — нет.
          */
         ArrayList<MessagesController.DialogFilter> getReorderableFilters();
+
+        /**
+         * Вызывается сразу после того, как пользователь закончил
+         * перетаскивание вкладок (setIsEditing(false) с orderChanged==true).
+         * Для настоящих папок ничего дополнительно делать не нужно (порядок
+         * уже сохранён через MessagesStorage.saveDialogFiltersOrder() чуть
+         * выше). Нужен для hasMainTabs — сохранить порядок 4 пресетов на
+         * диск, иначе он переживает только текущий запуск процесса.
+         */
+        void onFiltersOrderChanged();
     }
 
     public class Tab {
@@ -1741,6 +1751,9 @@ public class FilterTabsView extends FrameLayout {
             ConnectionsManager.getInstance(UserConfig.selectedAccount).sendRequest(req, (response, error) -> {
             });
             orderChanged = false;
+            if (delegate != null) {
+                delegate.onFiltersOrderChanged();
+            }
         }
     }
 

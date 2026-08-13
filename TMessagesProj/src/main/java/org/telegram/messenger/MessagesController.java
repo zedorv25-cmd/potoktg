@@ -2097,12 +2097,38 @@ public class MessagesController extends BaseController implements NotificationCe
         }
         if (potokMainTabsOrder == null) {
             potokMainTabsOrder = new ArrayList<>(4);
-            if (defaultFilter != null) {
-                potokMainTabsOrder.add(defaultFilter);
+            // Восстанавливаем порядок, сохранённый в прошлый раз (см. savePotokMainTabsOrder()).
+            // Без этого при каждом холодном старте порядок пересобирался бы заново в
+            // фиксированной последовательности, и перестановка через "Изменить порядок"
+            // не переживала бы перезапуск приложения.
+            String saved = getMainSettings().getString(POTOK_MAIN_TABS_ORDER_PREF, null);
+            if (saved != null && saved.length() > 0) {
+                String[] parts = saved.split(",");
+                for (int a = 0; a < parts.length; a++) {
+                    try {
+                        DialogFilter f = potokFilterForOrderId(Integer.parseInt(parts[a].trim()), defaultFilter);
+                        if (f != null && !potokMainTabsOrder.contains(f)) {
+                            potokMainTabsOrder.add(f);
+                        }
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
             }
-            potokMainTabsOrder.add(potokPresetUnreadChannels);
-            potokMainTabsOrder.add(potokPresetGroups);
-            potokMainTabsOrder.add(potokPresetTraf);
+            // Если что-то не попало из сохранённого порядка (первый запуск без сохранёнки,
+            // сохранёнка неполная/битая, либо defaultFilter ещё не был загружен на момент
+            // сохранения) — довставляем недостающее в изначальном порядке по умолчанию.
+            if (defaultFilter != null && !potokMainTabsOrder.contains(defaultFilter)) {
+                potokMainTabsOrder.add(0, defaultFilter);
+            }
+            if (!potokMainTabsOrder.contains(potokPresetUnreadChannels)) {
+                potokMainTabsOrder.add(potokPresetUnreadChannels);
+            }
+            if (!potokMainTabsOrder.contains(potokPresetGroups)) {
+                potokMainTabsOrder.add(potokPresetGroups);
+            }
+            if (!potokMainTabsOrder.contains(potokPresetTraf)) {
+                potokMainTabsOrder.add(potokPresetTraf);
+            }
         } else if (defaultFilter != null && !potokMainTabsOrder.contains(defaultFilter)) {
             // Реальный "Все чаты" мог быть ещё не загружен на момент первого
             // вызова (например, самый первый запуск, до ответа сервера) —
@@ -2111,6 +2137,41 @@ public class MessagesController extends BaseController implements NotificationCe
             potokMainTabsOrder.add(0, defaultFilter);
         }
         return potokMainTabsOrder;
+    }
+
+    private DialogFilter potokFilterForOrderId(int id, DialogFilter defaultFilter) {
+        if (id == 0) {
+            return defaultFilter;
+        } else if (id == POTOK_FILTER_ID_UNREAD_CHANNELS) {
+            return potokPresetUnreadChannels;
+        } else if (id == POTOK_FILTER_ID_GROUPS) {
+            return potokPresetGroups;
+        } else if (id == POTOK_FILTER_ID_TRAF) {
+            return potokPresetTraf;
+        }
+        return null;
+    }
+
+    private static final String POTOK_MAIN_TABS_ORDER_PREF = "potokMainTabsOrder";
+
+    // Вызывается из DialogsActivity после того как пользователь закончил
+    // перетаскивание вкладок верхнего таббара Потока (аналог
+    // MessagesStorage.saveDialogFiltersOrder() для настоящих папок, но для
+    // пресетов — просто строка id через запятую в SharedPreferences,
+    // без похода на сервер, т.к. эти вкладки полностью локальные).
+    public void savePotokMainTabsOrder() {
+        if (potokMainTabsOrder == null) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int a = 0, N = potokMainTabsOrder.size(); a < N; a++) {
+            if (a != 0) {
+                sb.append(',');
+            }
+            DialogFilter f = potokMainTabsOrder.get(a);
+            sb.append(f.isDefault() ? 0 : f.id);
+        }
+        getMainSettings().edit().putString(POTOK_MAIN_TABS_ORDER_PREF, sb.toString()).apply();
     }
 
     protected void processLoadedDialogFilters(ArrayList<DialogFilter> filters, TLRPC.messages_Dialogs pinnedDialogs, TLRPC.messages_Dialogs pinnedRemoteDialogs, ArrayList<TLRPC.User> users, ArrayList<TLRPC.Chat> chats, ArrayList<TLRPC.EncryptedChat> encryptedChats, int remote, Runnable onDone) {

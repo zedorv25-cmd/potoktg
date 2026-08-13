@@ -1100,6 +1100,19 @@ public class PotokFeedFragment extends BaseFragment implements MainTabsActivity.
         anchor.getLocationInWindow(location);
         int x = location[0] + anchor.getWidth() - layout.getMeasuredWidth();
         int y = location[1] + anchor.getHeight();
+
+        // Фикс: если попап не влезает по высоте от точки открытия до низа экрана,
+        // PopupWindow раньше молча обрезал его по границе экрана (стандартное
+        // поведение при clippingEnabled=true), из-за чего последний пункт
+        // "Обратная связь" физически не попадал в видимую область — то, что
+        // выглядело как "пункт появляется через раз", было расхождением между
+        // measure() (1434) и реально влезающей высотой (1254), см. диагностику
+        // FEED_MENU_DIAG. Прижимаем попап к нижней границе безопасной зоны, если
+        // высоты не хватает, вместо того чтобы позволять системе его обрезать.
+        int minY = AndroidUtilities.statusBarHeight;
+        int maxY = AndroidUtilities.displaySize.y - AndroidUtilities.navigationBarHeight - layout.getMeasuredHeight() - AndroidUtilities.dp(8);
+        y = org.telegram.messenger.Utilities.clamp(y, maxY, minY);
+
         threeDotsMenuWindow.showAtLocation(anchor, android.view.Gravity.LEFT | android.view.Gravity.TOP, x, y);
         ActionBarPopupWindow.startAnimation(layout);
     }

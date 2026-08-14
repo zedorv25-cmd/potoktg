@@ -250,9 +250,9 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         frameLayout2.addView(textureView, LayoutHelper.createFrame(ICON_WIDTH_DP, ICON_HEIGHT_DP, Gravity.CENTER));
 
         typefeedMarkView = new ImageView(context);
-        typefeedMarkView.setImageResource(R.drawable.intro_typefeed_mark);
+        typefeedMarkView.setImageResource(R.drawable.intro_typefeed_circle);
         typefeedMarkView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        frameLayout2.addView(typefeedMarkView, LayoutHelper.createFrame(116, 116, Gravity.CENTER));
+        frameLayout2.addView(typefeedMarkView, LayoutHelper.createFrame(152, 152, Gravity.CENTER));
 
         textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override

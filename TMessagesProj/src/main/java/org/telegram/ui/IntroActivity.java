@@ -125,6 +125,60 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
 
     private boolean isOnLogout;
 
+    // Задача "анимация иконки на первой странице онбординга": прямые ссылки на
+    // ImageView иконок страниц 0 ("typefeed") и 1 ("Лента") — нужны, чтобы поверх
+    // обычного слайда ViewPager применить СВОЮ доп.трансформацию именно к ним (см.
+    // applyIntroFirstIconTransition()). Заголовок/описание этих же страниц и все
+    // остальные переходы (1->2, 2->3 и далее) эта логика не трогает вообще.
+    private ImageView introIconPage0;
+    private ImageView introIconPage1;
+
+    /**
+     * Переход между иконкой страницы 0 ("typefeed") и страницы 1 ("Лента").
+     * Стандартный слайд ViewPager для ВСЕЙ страницы (заголовок, описание, всё
+     * остальное) не трогаем вообще — он идёт как раньше, и переходы 1->2, 2->3 и
+     * далее эта логика вообще не затрагивает. Отдельно, поверх этого, отменяем
+     * СВОЙ собственный горизонтальный слайд ИМЕННО у двух иконок (переопределяя их
+     * translationX компенсирующим значением — визуально они остаются на месте по
+     * X, а не уезжают вместе со своей страницей) и вместо слайда запускаем свою
+     * анимацию: иконка страницы 0 целиком (подложка+полоски+текст — единым целым,
+     * так подтверждено) уезжает вверх и гаснет по прогрессу свайпа, иконка
+     * страницы 1 просто проявляется (fade-in) на том же самом месте, без бокового
+     * наезда — как у референса (Nekogram).
+     */
+    private void applyIntroFirstIconTransition(int position, float positionOffset) {
+        if (position != 0) {
+            // Свайп идёт где-то дальше (1->2 и т.д.) — обе иконки должны быть в
+            // своём обычном, устаканившемся состоянии, без наших переопределений.
+            if (introIconPage0 != null) {
+                introIconPage0.setTranslationX(0f);
+                introIconPage0.setTranslationY(0f);
+                introIconPage0.setAlpha(1f);
+            }
+            if (introIconPage1 != null) {
+                introIconPage1.setTranslationX(0f);
+                introIconPage1.setAlpha(1f);
+            }
+            return;
+        }
+        float progress = positionOffset; // 0..1 — именно свайп между страницей 0 и 1
+        int pageWidth = viewPager.getWidth();
+
+        if (introIconPage0 != null) {
+            // Компенсируем обычный слайд страницы 0 (она уезжает влево на
+            // progress*pageWidth) — иконка остаётся на месте по X, а не едет с ней.
+            introIconPage0.setTranslationX(progress * pageWidth);
+            introIconPage0.setTranslationY(-dp(ICON_HEIGHT_DP) * 0.35f * progress);
+            introIconPage0.setAlpha(1f - progress);
+        }
+        if (introIconPage1 != null) {
+            // Компенсируем обычный слайд страницы 1 (она по умолчанию въезжает
+            // СПРАВА) — иконка появляется на месте, без наезда сбоку.
+            introIconPage1.setTranslationX(-(1f - progress) * pageWidth);
+            introIconPage1.setAlpha(progress);
+        }
+    }
+
     @Override
     public boolean onFragmentCreate() {
         MessagesController.getGlobalMainSettings().edit().putLong("intro_crashed_time", System.currentTimeMillis()).apply();
@@ -249,6 +303,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             @Override
             public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {
                 bottomPages.setPageOffset(position, positionOffset);
+                applyIntroFirstIconTransition(position, positionOffset);
             }
 
             @Override
@@ -549,6 +604,11 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
 
             frameLayout.addView(iconView, LayoutHelper.createFrame(ICON_HEIGHT_DP, ICON_HEIGHT_DP, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
             iconView.setImageResource(introIcons[position % introIcons.length]);
+            if (position == 0) {
+                introIconPage0 = iconView;
+            } else if (position == 1) {
+                introIconPage1 = iconView;
+            }
 
             headerTextView.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
             headerTextView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 26);
@@ -573,6 +633,11 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         @Override
         public void destroyItem(ViewGroup container, int position, @NonNull Object object) {
             container.removeView((View) object);
+            if (position == 0) {
+                introIconPage0 = null;
+            } else if (position == 1) {
+                introIconPage1 = null;
+            }
         }
 
         @Override

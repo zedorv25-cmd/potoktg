@@ -101,6 +101,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
     private final int currentAccount = UserConfig.selectedAccount;
 
     private ViewPager viewPager;
+    private ImageView typefeedCircleBgView;
     private ImageView typefeedMarkView;
     private BottomPagesView bottomPages;
     private TextView switchLanguageTextView;
@@ -249,10 +250,15 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         TextureView textureView = new TextureView(context);
         frameLayout2.addView(textureView, LayoutHelper.createFrame(ICON_WIDTH_DP, ICON_HEIGHT_DP, Gravity.CENTER));
 
+        typefeedCircleBgView = new ImageView(context);
+        typefeedCircleBgView.setImageResource(R.drawable.intro_typefeed_ring_bg);
+        typefeedCircleBgView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        frameLayout2.addView(typefeedCircleBgView, LayoutHelper.createFrame(152, 152, Gravity.CENTER));
+
         typefeedMarkView = new ImageView(context);
-        typefeedMarkView.setImageResource(R.drawable.intro_typefeed_circle);
+        typefeedMarkView.setImageResource(R.drawable.intro_typefeed_mark);
         typefeedMarkView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        frameLayout2.addView(typefeedMarkView, LayoutHelper.createFrame(152, 152, Gravity.CENTER));
+        frameLayout2.addView(typefeedMarkView, LayoutHelper.createFrame(116, 116, Gravity.CENTER));
 
         textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
@@ -575,10 +581,20 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
     }
 
     private void applyTypefeedMarkTransition(float progress) {
+        progress = Math.max(0f, Math.min(1f, progress));
+
+        if (typefeedCircleBgView != null) {
+            // Stays perfectly still and fully opaque for the entire drag, so the
+            // native Telegram circle/plane underneath can never show through at
+            // any point of the swipe. It only disappears the instant page 0 has
+            // been fully left (progress reaches 1) — no fade, no partial reveal.
+            typefeedCircleBgView.setAlpha(1f);
+            typefeedCircleBgView.setVisibility(progress >= 1f ? View.GONE : View.VISIBLE);
+        }
+
         if (typefeedMarkView == null) {
             return;
         }
-        progress = Math.max(0f, Math.min(1f, progress));
         float alphaProgress = Math.min(1f, progress / 0.6f);
         typefeedMarkView.setTranslationY(-dp(ICON_HEIGHT_DP) * 0.35f * progress);
         typefeedMarkView.setAlpha(1f - alphaProgress);

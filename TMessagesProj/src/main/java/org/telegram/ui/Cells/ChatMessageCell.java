@@ -4130,42 +4130,11 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
     }
 
     private boolean checkRoundSeekbar(MotionEvent event) {
-        boolean isTargetPost = currentMessageObject != null && currentMessageObject.getId() == PotokDebugLog.TARGET_MESSAGE_ID;
-        if (currentMessageObject != null && currentMessageObject.isRoundVideo() && event.getAction() == MotionEvent.ACTION_DOWN) {
-            // ⚠️ ДИАГНОСТИКА (ROUNDVID_SEEK_CHAT): вход в перемотку блокируется прямо
-            // тут, если isPlayingMessage/isMessagePaused не те, что визуально на экране —
-            // это объяснило бы "пауза есть, а перемотки нет" без единой строчки жеста.
-            PotokDebugLog.d("ROUNDVID_SEEK_CHAT", "checkRoundSeekbar gate isPlayingMessage="
-                + MediaController.getInstance().isPlayingMessage(currentMessageObject)
-                + " isMessagePaused=" + MediaController.getInstance().isMessagePaused());
-        }
-        // ⚠️ TARGETPOST — безусловно, КАЖДЫЙ вызов checkRoundSeekbar для целевого
-        // поста в канале (не только ACTION_DOWN) — сюда падает и залипание в начале
-        // (если isMessagePaused неверный на момент касания — функция выйдет по gate
-        // ниже и жест просто ничего не сделает, следующая строка это покажет).
-        if (isTargetPost) {
-            PotokDebugLog.d("TARGETPOST", "CHAT checkRoundSeekbar ENTRY msgId=" + currentMessageObject.getId()
-                + " action=" + event.getAction()
-                + " isPlayingMessage=" + MediaController.getInstance().isPlayingMessage(currentMessageObject)
-                + " isMessagePaused=" + MediaController.getInstance().isMessagePaused()
-                + " roundSeekbarTouched(before)=" + roundSeekbarTouched
-                + " audioProgress=" + currentMessageObject.audioProgress);
-        }
         if (!MediaController.getInstance().isPlayingMessage(currentMessageObject) || !MediaController.getInstance().isMessagePaused()) {
-            if (isTargetPost) {
-                PotokDebugLog.d("TARGETPOST", "CHAT checkRoundSeekbar GATE-BLOCKED msgId=" + currentMessageObject.getId()
-                    + " — жест проигнорирован (либо не играет этот msg, либо не на паузе)");
-            }
             return false;
         }
         int x = (int) getEventX(event);
         int y = (int) getEventY(event);
-        if (isTargetPost) {
-            PotokDebugLog.d("TARGETPOST", "CHAT checkRoundSeekbar coords msgId=" + currentMessageObject.getId()
-                + " x=" + x + " y=" + y + " seekbarRoundX=" + seekbarRoundX + " seekbarRoundY=" + seekbarRoundY
-                + " photoImageCenterX=" + photoImage.getCenterX() + " photoImageCenterY=" + photoImage.getCenterY()
-                + " photoImageWidth=" + photoImage.getImageWidth());
-        }
 
         if (event.getAction() == MotionEvent.ACTION_DOWN) {
             if (x >= seekbarRoundX - dp(20) && x <= seekbarRoundX + dp(20) && y >= seekbarRoundY - dp(20) && y <= seekbarRoundY + dp(20)) {
@@ -5951,22 +5920,8 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
             if (buttonState != -1) {
                 didPressButton(true, false);
             } else {
-                // ⚠️ ДИАГНОСТИКА (ROUNDVID_CHANNEL_TAP, не влияет на поведение):
-                // проблема "последний кружок в канале не ставится на паузу" пока
-                // не подтверждена по логам — гипотеза в том, что isPlayingMessage()
-                // здесь возвращает false для тапнутого сообщения, хотя оно физически
-                // играет, и тап уходит в ветку needPlayMessage() вместо pauseMessage()
-                // (это и дало бы симптом "дёргает вперёд" вместо паузы). Логируем
-                // САМО состояние перед веткой, ничего не меняя в логике.
                 boolean isPlaying = MediaController.getInstance().isPlayingMessage(currentMessageObject);
                 boolean isPaused = MediaController.getInstance().isMessagePaused();
-                MessageObject curPlaying = MediaController.getInstance().getPlayingMessageObject();
-                PotokDebugLog.d("ROUNDVID_CHANNEL_TAP", "tap msgId=" + currentMessageObject.getId()
-                    + " dialogId=" + currentMessageObject.getDialogId()
-                    + " isPlayingMessage=" + isPlaying + " isMessagePaused=" + isPaused
-                    + " willBranch=" + (!isPlaying || isPaused ? "PLAY" : "PAUSE")
-                    + " mediaControllerPlayingMsgId=" + (curPlaying != null ? curPlaying.getId() : -1)
-                    + " mediaControllerPlayingDialogId=" + (curPlaying != null ? curPlaying.getDialogId() : -1));
                 if (!isPlaying || isPaused) {
                     delegate.needPlayMessage(this, currentMessageObject, false);
                 } else {

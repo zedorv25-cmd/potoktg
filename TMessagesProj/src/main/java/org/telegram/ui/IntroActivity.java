@@ -584,11 +584,16 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         progress = Math.max(0f, Math.min(1f, progress));
 
         if (typefeedCircleBgView != null) {
-            // Stays perfectly still and fully opaque for the entire drag, so the
-            // native Telegram circle/plane underneath can never show through at
-            // any point of the swipe. It only disappears the instant page 0 has
-            // been fully left (progress reaches 1) — no fade, no partial reveal.
-            typefeedCircleBgView.setAlpha(1f);
+            // Stays perfectly still and fully opaque while the wordmark is still
+            // visible/fading (progress up to ~0.6), so the native plane can never
+            // show through during that stretch. Only after the wordmark has fully
+            // faded does the circle itself start fading — by then the native GL
+            // blend has largely finished drawing over the plane, so the risk of a
+            // flash is minimal, and the next icon (Fast) reveals smoothly instead
+            // of popping in abruptly at the very end.
+            float circleFadeStart = 0.6f;
+            float circleAlpha = progress <= circleFadeStart ? 1f : 1f - (progress - circleFadeStart) / (1f - circleFadeStart);
+            typefeedCircleBgView.setAlpha(circleAlpha);
             typefeedCircleBgView.setVisibility(progress >= 1f ? View.GONE : View.VISIBLE);
         }
 

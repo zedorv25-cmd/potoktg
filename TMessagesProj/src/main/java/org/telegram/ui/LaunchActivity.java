@@ -9393,9 +9393,6 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                 // синхронизирован на ту же экранную позицию, так что проверка по ячейке
                 // корректно ловит касание и во время перемотки.
                 touchStartedOnRoundVideo = isPointInsideRoundVideo(swipeStartX, swipeStartY);
-                PotokDebugLog.d("ROUNDVID_SEEK", "LaunchActivity.dispatchTouchEvent ACTION_DOWN"
-                    + " x=" + swipeStartX + " y=" + swipeStartY
-                    + " touchStartedOnRoundVideo=" + touchStartedOnRoundVideo);
                 break;
             case MotionEvent.ACTION_MOVE:
                 float dx = event.getX() - swipeStartX;
@@ -9419,16 +9416,6 @@ public boolean dispatchTouchEvent(MotionEvent event) {
                     // у самого левого края экрана. На "Ленте" она ничем больше не занята — свайп
                     // вправо откуда угодно, как раньше было на "Чатах".
                     boolean shouldOpenDrawer = isOnFeedTab || (isOnChatsTab && swipeStartX <= AndroidUtilities.dp(24));
-                    // ⚠️ ДИАГНОСТИКА (ROUNDVID_SEEK): если этот лог когда-нибудь
-                    // покажет shouldOpenDrawer=true ОДНОВРЕМЕННО с
-                    // touchStartedOnRoundVideo=true — значит наше исключение выше
-                    // почему-то не остановило свайп (баг НЕ должен так делать, это
-                    // сюда просто не должно доходить при touchStartedOnRoundVideo=true,
-                    // но логируем на всякий случай для полной уверенности).
-                    PotokDebugLog.d("ROUNDVID_SEEK", "swipe threshold reached shouldOpenDrawer=" + shouldOpenDrawer
-                        + " touchStartedOnRoundVideo=" + touchStartedOnRoundVideo
-                        + " touchStartedOnMediaCarousel=" + touchStartedOnMediaCarousel
-                        + " isOnFeedTab=" + isOnFeedTab);
                     if (shouldOpenDrawer) {
                         openPotokDrawer();
                         event.setAction(MotionEvent.ACTION_CANCEL);

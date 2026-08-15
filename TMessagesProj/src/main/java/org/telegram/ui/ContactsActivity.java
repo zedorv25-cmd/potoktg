@@ -327,11 +327,8 @@ public class ContactsActivity extends BaseFragment implements FactorAnimator.Tar
         } else {
             actionBar.setTitle(getString(R.string.Contacts));
         }
-        // ВРЕМЕННЫЙ debug-инструмент для диагностики багов "непостоянный блюр" и
-        // "двоение кадров видео/GIF после fullscreen" — долгое нажатие на заголовок
-        // "Контакты" открывает диалог с последними записанными логами (см.
-        // PotokDebugLog). Убрать вместе с самим PotokDebugLog
-        // и всеми вызовами PotokDebugLog.d(...), как только причины багов найдены.
+        // Долгое нажатие на заголовок "Контакты" — просмотр буфера диагностических
+        // логов (см. PotokDebugLog).
         if (actionBar.getTitleTextView() != null) {
             actionBar.getTitleTextView().setOnLongClickListener(v -> {
                 showPotokDebugLogDialog(context);

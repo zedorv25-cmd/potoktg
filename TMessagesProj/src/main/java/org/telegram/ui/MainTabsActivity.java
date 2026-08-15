@@ -259,12 +259,8 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         tabs[INDEX_CONTACTS] = GlassTabView.createStaticTab(context, resourceProvider, R.drawable.potok_tab_contacts, R.string.PotokTabContacts);
         tabs[INDEX_CHATS].setOnLongClickListener(this::openFoldersSelector);
         tabs[INDEX_CONTACTS].setOnLongClickListener(v -> {
-            // Фикс "в логах видна только одна левая строка": жёсткий фильтр "Potok"
-            // отсеивал ВСЕ диагностические записи с тегами BLUR/GHOST (см.
-            // PotokFeedPostCell.java) — они не содержат подстроку "Potok" ни в теге,
-            // ни в тексте сообщения, поэтому getFiltered("Potok") их выбрасывал.
-            // Выжила только строка с тегом "PotokFeedLogo", которая формально
-            // содержит "Potok" в САМОМ ТЕГЕ. Показываем буфер целиком, без фильтра.
+            // Долгое нажатие на "Контакты" — просмотр буфера диагностических логов
+            // (см. PotokDebugLog.java) без фильтра.
             PotokDebugLog.showFiltered(context, null);
             return true;
         });
@@ -891,15 +887,7 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         fadeView.setVisibility(alpha > 0 ? View.VISIBLE : View.GONE);
     }
 
-    private int checkUiTabsPositionLogCounter = 0;
     private void checkUi_tabsPosition() {
-        checkUiTabsPositionLogCounter++;
-        if (checkUiTabsPositionLogCounter == 1 || checkUiTabsPositionLogCounter % 30 == 0) {
-            PotokDebugLog.d("TABHIDER", "checkUi_tabsPosition call #" + checkUiTabsPositionLogCounter
-                    + " animatorTabsVisible.isAnimating=" + animatorTabsVisible.isAnimating()
-                    + " factor=" + animatorTabsVisible.getFloatValue());
-        }
-
         final boolean isUpdateLayoutVisible = updateLayoutWrapper.isUpdateLayoutVisible();
         final int updateLayoutHeight = isUpdateLayoutVisible ? dp(UpdateLayoutWrapper.HEIGHT) : 0;
         final int normalY = -(updateLayoutHeight);
@@ -945,7 +933,6 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
     private class MainTabsActivityControllerImpl implements MainTabsActivityController {
         @Override
         public void setTabsVisible(boolean visible) {
-            PotokDebugLog.d("TABHIDER", "MainTabsActivity.setTabsVisible(" + visible + ") called");
             animatorTabsVisible.setValue(visible, true);
         }
     }
@@ -1012,13 +999,10 @@ private NotificationCenter.ObserversGroup globalObserversGroup;
         // отрисовки (вызывается из dispatchDraw), а теперь на этот же RenderNode подписаны
         // ДВА потребителя вместо одного — пилюля таббара и новый круглый остров "Лента").
         // Правка: пропускаем пересчёт, если размер фактически не изменился (при обычном
-        // скролле списка ширина/высота всего фрагмента не меняется вообще). Логи оставлены —
-        // если зависание не в этом методе, по хвосту лога будет видно, что здесь всё быстро
-        // и без повторов, и подозрение уйдёт на ViewPositionWatcher/BlurredBackgroundDrawable.
+        // скролле списка ширина/высота всего фрагмента не меняется вообще).
         if (width == blur3_lastWidth && height == blur3_lastHeight) {
             return;
         }
-        PotokDebugLog.d("BLUR3", "invalidateBlur size changed " + blur3_lastWidth + "x" + blur3_lastHeight + " -> " + width + "x" + height);
         blur3_lastWidth = width;
         blur3_lastHeight = height;
 

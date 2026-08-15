@@ -1395,23 +1395,6 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
         // ДИАГНОСТИКА "свайп вправо в архиве открывает шторку вместо возврата
         // назад": прошлый лог (внутри ACTION_MOVE-ветки, за несколькими условиями)
         // ни разу не сработал за несколько тестов — значит событие свайпа либо не
-        // доходит до onTouchEvent() этого класса вообще, либо обрывается на одном
-        // из внешних условий ДО того места. Логируем самый верх метода безусловно
-        // на ACTION_DOWN — минимум это покажет, доходит ли событие сюда в принципе
-        // и что показывают checkTransitionAnimation()/inActionMode/
-        // animationInProgress/predictiveBackInProgress/fragmentsStack.size() в
-        // момент свайпа в архиве.
-        if (ev != null && ev.getAction() == MotionEvent.ACTION_DOWN) {
-            BaseFragment topFrag = !fragmentsStack.isEmpty() ? fragmentsStack.get(fragmentsStack.size() - 1) : null;
-            PotokDebugLog.d("DRAWER", "ActionBarLayout.onTouchEvent ACTION_DOWN"
-                + " fragmentsStackSize=" + fragmentsStack.size()
-                + " topFragment=" + (topFrag != null ? topFrag.getClass().getSimpleName() : "null")
-                + " checkTransitionAnimation=" + checkTransitionAnimation()
-                + " inActionMode=" + inActionMode
-                + " animationInProgress=" + animationInProgress
-                + " predictiveBackInProgress=" + predictiveBackInProgress
-                + " allowSwipe=" + allowSwipe());
-        }
         if (!checkTransitionAnimation() && !inActionMode && !animationInProgress && !predictiveBackInProgress) {
             if (fragmentsStack.size() > 1 && allowSwipe()) {
                 if (ev != null && ev.getAction() == MotionEvent.ACTION_DOWN) {
@@ -1440,19 +1423,7 @@ public class ActionBarLayout extends FrameLayout implements INavigationLayout, F
                     velocityTracker.addMovement(ev);
                     if (!transitionAnimationInProgress && !inPreviewMode && maybeStartTracking && !startedTracking && dx >= AndroidUtilities.getPixelsInCM(0.4f, true) && Math.abs(dx) / 3 > dy) {
                         BaseFragment currentFragment = fragmentsStack.get(fragmentsStack.size() - 1);
-                        // ДИАГНОСТИКА "свайп вправо в архиве открывает шторку вместо
-                        // возврата назад": логируем оба условия, которые решают, начнётся
-                        // ли штатный свайп-назад по стеку фрагментов — canBeginSlide()
-                        // (переопределён в DialogsActivity) и findScrollingChild() (если
-                        // под пальцем на старте свайпа есть горизонтально скроллящийся
-                        // child — например строка чата со своим свайп-жестом
-                        // архивировать/закрепить — свайп-назад блокируется и событие
-                        // уходит куда-то ещё, предположительно на открытие шторки).
                         View scrollingChild = findScrollingChild(this, ev.getX(), ev.getY());
-                        PotokDebugLog.d("DRAWER", "swipe decision fragmentsStackSize=" + fragmentsStack.size()
-                            + " fragmentClass=" + currentFragment.getClass().getSimpleName()
-                            + " canBeginSlide=" + currentFragment.canBeginSlide()
-                            + " scrollingChild=" + (scrollingChild != null ? scrollingChild.getClass().getSimpleName() : "null"));
                         if (currentFragment.canBeginSlide() && scrollingChild == null) {
                             startedTrackingX = (int) ev.getX();
                             prepareForMoving();

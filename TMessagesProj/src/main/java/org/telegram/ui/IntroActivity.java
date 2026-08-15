@@ -313,6 +313,12 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {
                 bottomPages.setPageOffset(position, positionOffset);
 
+                if (position == 0) {
+                    // Page 0 is at least partially on screen (either leaving forward
+                    // or coming back into view on a reverse swipe) — make sure the
+                    // cover is up immediately, don't wait for a settle callback.
+                    setTypefeedCircleVisible(true);
+                }
                 applyTypefeedMarkTransition(position == 0 ? positionOffset : 1f);
 
                 float width = viewPager.getMeasuredWidth();
@@ -326,6 +332,9 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             @Override
             public void onPageSelected(int i) {
                 currentViewPagerPage = i;
+                // Authoritative "page settled" signal — only here do we ever hide
+                // the cover, never off computed swipe progress.
+                setTypefeedCircleVisible(i == 0);
             }
 
             @Override
@@ -584,17 +593,21 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         progress = Math.max(0f, Math.min(1f, progress));
 
         if (typefeedCircleBgView != null) {
-            // Stays perfectly still and fully opaque while the wordmark is still
-            // visible/fading (progress up to ~0.6), so the native plane can never
-            // show through during that stretch. Only after the wordmark has fully
-            // faded does the circle itself start fading — by then the native GL
-            // blend has largely finished drawing over the plane, so the risk of a
-            // flash is minimal, and the next icon (Fast) reveals smoothly instead
-            // of popping in abruptly at the very end.
-            float circleFadeStart = 0.6f;
-            float circleAlpha = progress <= circleFadeStart ? 1f : 1f - (progress - circleFadeStart) / (1f - circleFadeStart);
-            typefeedCircleBgView.setAlpha(circleAlpha);
-            typefeedCircleBgView.setVisibility(progress >= 1f ? View.GONE : View.VISIBLE);
+            // Deliberately NOT tied to the fade-out-near-the-end scheme used before.
+            // The native GL layer's own internal offset/page state does not reliably
+            // line up with this computed swipe progress at the exact moment the
+            // ViewPager commits to the next page (see diagnosis from the session),
+            // so any fade timed off "progress" risks uncovering whatever stale icon
+            // the native renderer happens to be showing at that instant. Instead the
+            // circle simply stays fully opaque and visible for as long as page 0 is
+            // at all on screen; it is only ever hidden from setTypefeedCircleVisible(),
+            // which fires off the ViewPager's own "page settled" callbacks, not off
+            // this per-frame scroll math. Trades a slightly less smooth reveal of the
+            // next icon for a guarantee the Telegram plane can never flash through.
+            typefeedCircleBgView.setAlpha(1f);
+            if (progress < 1f) {
+                typefeedCircleBgView.setVisibility(View.VISIBLE);
+            }
         }
 
         if (typefeedMarkView == null) {
@@ -604,6 +617,18 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         typefeedMarkView.setTranslationY(-dp(ICON_HEIGHT_DP) * 0.35f * progress);
         typefeedMarkView.setAlpha(1f - alphaProgress);
         typefeedMarkView.setVisibility(progress >= 1f ? View.GONE : View.VISIBLE);
+    }
+
+    private void setTypefeedCircleVisible(boolean visible) {
+        if (typefeedCircleBgView == null) {
+            return;
+        }
+        if (visible) {
+            typefeedCircleBgView.setAlpha(1f);
+            typefeedCircleBgView.setVisibility(View.VISIBLE);
+        } else {
+            typefeedCircleBgView.setVisibility(View.GONE);
+        }
     }
 
     private class IntroAdapter extends PagerAdapter {
@@ -667,6 +692,7 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             super.setPrimaryItem(container, position, object);
             bottomPages.setCurrentPage(position);
             currentViewPagerPage = position;
+            setTypefeedCircleVisible(position == 0);
         }
 
         @Override

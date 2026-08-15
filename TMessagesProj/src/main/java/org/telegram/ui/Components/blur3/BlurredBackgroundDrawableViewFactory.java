@@ -86,20 +86,9 @@ public class BlurredBackgroundDrawableViewFactory {
         }
 
         if (viewPositionWatcher != null && parent != null && view != null) {
-            final int[] potokLogCounter = {0};
             viewPositionWatcher.subscribe(view, parent, (v, pos) -> {
                 drawable.setSourceOffset(pos.left, pos.top);
                 view.invalidate();
-                // ДИАГНОСТИКА зависания при скролле (см. подробный комментарий в
-                // MainTabsActivity.blur3_invalidateBlur). Логируем не каждый раз (иначе сам лог
-                // станет узким местом при фликах в десятки кадров/сек) — только первый вызов и
-                // затем раз в 60 вызовов, этого достаточно, чтобы увидеть в хвосте лога, шёл ли
-                // этот callback непрерывно (много строк подряд перед зависанием) или прекратился.
-                potokLogCounter[0]++;
-                if (potokLogCounter[0] == 1 || potokLogCounter[0] % 60 == 0) {
-                    org.telegram.ui.PotokDebugLog.d("BLUR3", "onPositionChanged view=" + v.getClass().getSimpleName()
-                            + " offset=" + pos.left + "," + pos.top + " count=" + potokLogCounter[0]);
-                }
             }, multiwindow);
         }
 

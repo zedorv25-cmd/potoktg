@@ -313,12 +313,6 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {
                 bottomPages.setPageOffset(position, positionOffset);
 
-                if (position == 0) {
-                    // Page 0 is at least partially on screen (either leaving forward
-                    // or coming back into view on a reverse swipe) — make sure the
-                    // cover is up immediately, don't wait for a settle callback.
-                    setTypefeedCircleVisible(true);
-                }
                 applyTypefeedMarkTransition(position == 0 ? positionOffset : 1f);
 
                 float width = viewPager.getMeasuredWidth();
@@ -332,9 +326,6 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             @Override
             public void onPageSelected(int i) {
                 currentViewPagerPage = i;
-                // Authoritative "page settled" signal — only here do we ever hide
-                // the cover, never off computed swipe progress.
-                setTypefeedCircleVisible(i == 0);
             }
 
             @Override
@@ -593,21 +584,17 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         progress = Math.max(0f, Math.min(1f, progress));
 
         if (typefeedCircleBgView != null) {
-            // Deliberately NOT tied to the fade-out-near-the-end scheme used before.
-            // The native GL layer's own internal offset/page state does not reliably
-            // line up with this computed swipe progress at the exact moment the
-            // ViewPager commits to the next page (see diagnosis from the session),
-            // so any fade timed off "progress" risks uncovering whatever stale icon
-            // the native renderer happens to be showing at that instant. Instead the
-            // circle simply stays fully opaque and visible for as long as page 0 is
-            // at all on screen; it is only ever hidden from setTypefeedCircleVisible(),
-            // which fires off the ViewPager's own "page settled" callbacks, not off
-            // this per-frame scroll math. Trades a slightly less smooth reveal of the
-            // next icon for a guarantee the Telegram plane can never flash through.
-            typefeedCircleBgView.setAlpha(1f);
-            if (progress < 1f) {
-                typefeedCircleBgView.setVisibility(View.VISIBLE);
-            }
+            // The native page-0 icon (plane + blue circle) no longer renders
+            // anything (textures 21/22 are blank, see loadTexture calls) — so
+            // there is nothing left underneath that this view could ever
+            // uncover. It's safe to just fade it out along with the wordmark:
+            // our logo animates away first, and by the time it's fully gone
+            // (~0.6 progress) this circle is most of the way faded too, so the
+            // native Fast icon — which crossfades in on its own via
+            // Intro.setScrollOffset — has clean room to reveal itself smoothly
+            // instead of popping in against a still-opaque cover.
+            typefeedCircleBgView.setAlpha(1f - progress);
+            typefeedCircleBgView.setVisibility(progress >= 1f ? View.GONE : View.VISIBLE);
         }
 
         if (typefeedMarkView == null) {
@@ -617,18 +604,6 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         typefeedMarkView.setTranslationY(-dp(ICON_HEIGHT_DP) * 0.35f * progress);
         typefeedMarkView.setAlpha(1f - alphaProgress);
         typefeedMarkView.setVisibility(progress >= 1f ? View.GONE : View.VISIBLE);
-    }
-
-    private void setTypefeedCircleVisible(boolean visible) {
-        if (typefeedCircleBgView == null) {
-            return;
-        }
-        if (visible) {
-            typefeedCircleBgView.setAlpha(1f);
-            typefeedCircleBgView.setVisibility(View.VISIBLE);
-        } else {
-            typefeedCircleBgView.setVisibility(View.GONE);
-        }
     }
 
     private class IntroAdapter extends PagerAdapter {
@@ -692,7 +667,6 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             super.setPrimaryItem(container, position, object);
             bottomPages.setCurrentPage(position);
             currentViewPagerPage = position;
-            setTypefeedCircleVisible(position == 0);
         }
 
         @Override
@@ -866,15 +840,13 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
             loadTexture(R.drawable.intro_powerful_star, 18);
             loadTexture(R.drawable.intro_private_door, 19);
             loadTexture(R.drawable.intro_private_screw, 20);
-            loadTexture(R.drawable.intro_tg_plane, 21);
             loadTexture(v -> {
-                Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-                paint.setColor(ThemeColors.TELEGRAM_COLOR); // It's logo color, it should not be colored by the theme
                 int size = dp(ICON_HEIGHT_DP);
-                Bitmap bm = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-                Canvas c = new Canvas(bm);
-                c.drawCircle(size / 2f, size / 2f, size / 2f, paint);
-                return bm;
+                return Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            }, 21);
+            loadTexture(v -> {
+                int size = dp(ICON_HEIGHT_DP);
+                return Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
             }, 22);
             loadTexture(telegramMaskProvider, 23);
 

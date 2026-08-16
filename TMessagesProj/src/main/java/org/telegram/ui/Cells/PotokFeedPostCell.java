@@ -152,6 +152,18 @@ public class PotokFeedPostCell extends LinearLayout {
     // того, кто перехватил жест ниже) мог гарантированно отменить таймер в
     // момент, когда палец физически покинул экран — что бы ни случилось
     // между исходным ACTION_DOWN и этим моментом.
+    // ⚠️ ФИКС (найдено при разборе бага "долгое нажатие на медиа не открывает
+    // сетку"): carouselView вызывает getParent().requestDisallowInterceptTouchEvent(true)
+    // уже на ACTION_DOWN (см. её onInterceptTouchEvent ниже) — это защита от кражи
+    // жеста родителем при быстром свайпе, а НЕ признак подтверждённого движения.
+    // Но requestDisallowInterceptTouchEvent(boolean) ниже раньше трактовал ЛЮБОЙ
+    // такой вызов как "точно настоящий свайп" и отменял таймер долгого нажатия —
+    // то есть отменял его сразу на касании, ещё до единого пикселя движения.
+    // Пока этот флаг true — отмену пропускаем; выставляется carouselView только
+    // вокруг именно этого раннего DOWN-вызова, на подтверждённое движение (её же
+    // ACTION_MOVE, dirSlop) флаг не выставлен, и отмена там по-прежнему работает.
+    private boolean suppressLongPressCancelOnNextDisallow;
+
     public void cancelPendingLongPress() {
         if (pendingLongPress != null) {
             longPressHandler.removeCallbacks(pendingLongPress);
@@ -183,7 +195,7 @@ public class PotokFeedPostCell extends LinearLayout {
     // не меняем сам факт и момент его дальнейшей передачи наверх.
     @Override
     public void requestDisallowInterceptTouchEvent(boolean disallowIntercept) {
-        if (disallowIntercept) {
+        if (disallowIntercept && !suppressLongPressCancelOnNextDisallow) {
             cancelPendingLongPress();
         }
         super.requestDisallowInterceptTouchEvent(disallowIntercept);
@@ -683,7 +695,12 @@ public class PotokFeedPostCell extends LinearLayout {
                         // класса). Вертикальный скролл, начавшийся на медиа,
                         // по-прежнему освобождается обратно в ACTION_MOVE ниже (dy>dx
                         // -> false), это не менялось.
+                        // Ранний DOWN-захват — не подтверждённое движение, поэтому не
+                        // должен отменять таймер долгого нажатия (см. поле
+                        // suppressLongPressCancelOnNextDisallow и комментарий у него).
+                        suppressLongPressCancelOnNextDisallow = true;
                         getParent().requestDisallowInterceptTouchEvent(true);
+                        suppressLongPressCancelOnNextDisallow = false;
                         break;
                     case MotionEvent.ACTION_MOVE:
                         float dx = Math.abs(e.getX() - startX);

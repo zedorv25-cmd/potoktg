@@ -3636,6 +3636,8 @@ public boolean onTouchEvent(MotionEvent ev) {
 
                 @Override
                 public void onPageSelected(FilterTabsView.Tab tab, boolean forward) {
+                    PotokDebugLog.d("TABTITLE_SRC", "onPageSelected tab.id=" + tab.id + " tab.title=" + tab.title
+                        + " isDefault=" + tab.isDefault + " prevSelectedType=" + viewPages[0].selectedType);
                     if (viewPages[0].selectedType == tab.id) {
                         return;
                     }
@@ -3708,6 +3710,25 @@ public boolean onTouchEvent(MotionEvent ev) {
                         checkListLoad(viewPages[0]);
                         viewPages[0].dialogsAdapter.resume();
                         viewPages[1].dialogsAdapter.pause();
+                        // ФИКС (задача 1b, подпись верхнего таббара): свайп по КОНТЕНТУ
+                        // ленты между вкладками (в отличие от тапа по самой полоске
+                        // вкладок) идёт через prepareForMoving() -> onPageScrolled(),
+                        // полностью в обход FilterTabsViewDelegate.onPageSelected() — там
+                        // же обычно вызываются applyPotokMainTabsActionBarTitle() и
+                        // dialogStoriesCell.applyPotokTabTitleOverride(). Раньше здесь, в
+                        // момент завершения именно такого свайпа, заголовок никогда не
+                        // обновлялся. viewPages[0]/[1] только что поменялись местами —
+                        // selectedType уже точно соответствует новой активной вкладке.
+                        if (hasMainTabs) {
+                            FilterTabsView.Tab currentTab = filterTabsView.getTab(viewPages[0].selectedType);
+                            PotokDebugLog.d("TABTITLE_SRC", "onPageScrolled(progress=1) swap done selectedType="
+                                + viewPages[0].selectedType + " tab=" + (currentTab != null ? currentTab.title : "null")
+                                + " isDefault=" + (currentTab != null && currentTab.isDefault));
+                            applyPotokMainTabsActionBarTitle(currentTab);
+                            if (dialogStoriesCell != null) {
+                                dialogStoriesCell.applyPotokTabTitleOverride(currentTab == null || currentTab.isDefault ? null : currentTab.title);
+                            }
+                        }
                     }
                 }
 

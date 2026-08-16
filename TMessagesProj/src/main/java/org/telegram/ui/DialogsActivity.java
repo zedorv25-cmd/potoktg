@@ -310,7 +310,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             typefeedExpectedTypeface = potokMainTabsFont;
             typefeedTypefaceMismatchLogged = false;
         } catch (Exception e) {
-            PotokDebugLog.log("PotokFeedLogo", "applyPotokMainTabsActionBarTitle: fonts/avenir_black.ttf не найден в assets: " + e.getMessage());
+            // fonts/avenir_black.ttf не найден в assets — остаётся дефолтный шрифт.
         }
     }
 
@@ -1659,12 +1659,6 @@ public boolean onTouchEvent(MotionEvent ev) {
                 actionBar.getTitleTextView().setTypeface(typefeedExpectedTypeface);
                 if (!typefeedTypefaceMismatchLogged) {
                     typefeedTypefaceMismatchLogged = true;
-                    PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: РАСХОЖДЕНИЕ обнаружено в updateStoriesViewAlpha,"
-                            + " ожидался typeface=" + typefeedExpectedTypeface
-                            + ", реально БЫЛО на titleTextView=" + liveTypeface
-                            + ", titleTextView instance=" + System.identityHashCode(actionBar.getTitleTextView())
-                            + ", storyAlpha=" + alpha
-                            + " -> ФИКС: шрифт переприменён");
                 }
             }
         }
@@ -3122,18 +3116,6 @@ public boolean onTouchEvent(MotionEvent ev) {
 
     @Override
     public ActionBar createActionBar(Context context) {
-        // НОВАЯ ДИАГНОСТИКА (источник подмены шрифта "typefeed" при повторном открытии
-        // приложения): раньше здесь не логировался сам факт вызова этого метода. Если
-        // после повторного открытия приложения в логе появится ВТОРАЯ строка
-        // "createActionBar ВЫЗВАН" — значит ActionBar/titleTextView пересоздаются заново
-        // (и тогда искать причину неправильного шрифта нужно именно в момент повторного
-        // создания — например, context.getAssets() на этот раз ведёт себя иначе). Если
-        // строка появится только ОДИН раз за всю "холодную" сессию, а шрифт всё равно
-        // меняется при повторном открытии — значит ActionBar НЕ пересоздаётся, объект
-        // titleTextView тот же самый, и что-то меняет typeface у уже существующего
-        // View извне (см. новый лог в onResume() ниже).
-        PotokDebugLog.log("PotokFeedLogo", "DialogsActivity createActionBar ВЫЗВАН, fragment="
-                + System.identityHashCode(this) + " folderId=" + folderId);
         ActionBar actionBar = new ActionBar(context, resourceProvider) {
 
             @Override
@@ -3551,34 +3533,13 @@ public boolean onTouchEvent(MotionEvent ev) {
                     if (actionBar.getTitleTextView() != null) {
                         actionBar.getTitleTextView().setTypeface(typefeedFont);
                         // ДИАГНОСТИКА "шрифт заголовка typefeed на главном экране — не
-                        // Avenir Black": по коду загрузка шрифта и применение должны
-                        // отрабатывать без ошибок (см. try/catch), но пользователь
-                        // визуально видит другой шрифт. Логируем УСПЕШНОЕ применение
-                        // явно (раньше логировался только сбой в catch) — если этот
-                        // лог появится, значит код точно отработал и typeface
-                        // применился на view, а расхождение нужно искать в другом
-                        // месте (например, что-то СБРАСЫВАЕТ typeface обратно уже
-                        // ПОСЛЕ этой строки — при обновлении темы/пересоздании
-                        // actionBar и т.п.). Если лога НЕ будет вообще — значит этот
-                        // блок кода в реальности не выполняется на устройстве, и
-                        // проблема на уровне "какая сборка реально установлена".
-                        PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: avenir_black.ttf успешно применён на titleTextView, typeface=" + typefeedFont);
-                        // ФАЗА 2 ДИАГНОСТИКИ (эта сессия): предыдущий лог подтвердил, что
-                        // шрифт применяется успешно — значит проблема не "код не
-                        // выполняется", а что-то СБРАСЫВАЕТ typeface обратно уже ПОСЛЕ.
-                        // Запоминаем этот конкретный объект Typeface как эталон, чтобы
-                        // сравнивать с ним при каждом изменении прогресса раскрытия
-                        // сторис-хедера (см. updateStoriesViewAlpha ниже) — если объект
-                        // вдруг перестанет совпадать (по ссылке ==), залогируем ОДИН раз
-                        // сам факт подмены плюс новый typeface, чтобы понять, кто и когда
-                        // его меняет.
                         typefeedExpectedTypeface = typefeedFont;
                         typefeedTypefaceMismatchLogged = false;
                     } else {
-                        PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: actionBar.getTitleTextView() == null, применить typeface некуда");
+                        // actionBar.getTitleTextView() == null — применить typeface некуда.
                     }
                 } catch (Exception e) {
-                    PotokDebugLog.log("PotokFeedLogo", "DialogsActivity typefeed: fonts/avenir_black.ttf не найден в assets, использован дефолтный шрифт: " + e.getMessage());
+                    // fonts/avenir_black.ttf не найден в assets, использован дефолтный шрифт.
                 }
                 updateStatus(UserConfig.getInstance(currentAccount).getCurrentUser(), false);
             }
@@ -4562,10 +4523,6 @@ public boolean onTouchEvent(MotionEvent ev) {
 
                 @Override
                 public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
-                    PotokDebugLog.d("SCROLL_CHATS", "onScrollStateChanged newState="
-                            + (newState == RecyclerView.SCROLL_STATE_IDLE ? "IDLE"
-                            : newState == RecyclerView.SCROLL_STATE_DRAGGING ? "DRAGGING"
-                            : newState == RecyclerView.SCROLL_STATE_SETTLING ? "SETTLING(fling)" : String.valueOf(newState)));
                     if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
                         wasManualScroll = true;
                         scrollingManually = true;
@@ -6982,6 +6939,22 @@ public boolean onTouchEvent(MotionEvent ev) {
                 filterTabsView.finishAddingTabs(animatedUpdateItems);
                 if (updateCurrentTab) {
                     switchToCurrentSelectedMode(false);
+                    // ФИКС (задача 1b, подпись верхнего таббара): этот путь смены активной
+                    // вкладки (восстановление сохранённой вкладки при пересчёте фильтров,
+                    // включая холодный старт) идёт в обход FilterTabsViewDelegate.onPageSelected
+                    // — там же обычно вызываются applyPotokMainTabsActionBarTitle() и
+                    // dialogStoriesCell.applyPotokTabTitleOverride(). Раньше здесь заголовок
+                    // никогда не обновлялся, поэтому оставался тем, что жёстко поставил
+                    // createActionBar() ("typefeed"), даже если реально была активна другая
+                    // вкладка (например "Непрочитанные", восстановленная как последняя
+                    // использованная). Синхронизируем здесь тем же способом.
+                    if (hasMainTabs) {
+                        FilterTabsView.Tab currentTab = filterTabsView.getTab(viewPages[0].selectedType);
+                        applyPotokMainTabsActionBarTitle(currentTab);
+                        if (dialogStoriesCell != null) {
+                            dialogStoriesCell.applyPotokTabTitleOverride(currentTab == null || currentTab.isDefault ? null : currentTab.title);
+                        }
+                    }
                 }
                 if (filterTabsView.isLocked(filterTabsView.getCurrentTabId())) {
                     filterTabsView.selectFirstTab();
@@ -7107,30 +7080,14 @@ public boolean onTouchEvent(MotionEvent ev) {
             android.graphics.Typeface liveTypefaceAtResume = actionBar.getTitleTextView().getPaint() != null
                     ? actionBar.getTitleTextView().getPaint().getTypeface() : null;
             boolean matchesAtResume = liveTypefaceAtResume == typefeedExpectedTypeface;
-            PotokDebugLog.log("PotokFeedLogo", "DialogsActivity onResume: typeface на titleTextView="
-                    + liveTypefaceAtResume + " typefeedExpectedTypeface(эталон)=" + typefeedExpectedTypeface
-                    + " СОВПАДАЕТ=" + matchesAtResume
-                    + " titleTextView instance=" + System.identityHashCode(actionBar.getTitleTextView()));
-            // ФИКС "шрифт typefeed слетает на дефолтный" (не только диагностика).
-            // Причина найдена чтением ActionBar.java: titleTextView[0] пересоздаётся
-            // заново (createTitleTextView(0), новый инстанс всегда с дефолтным
-            // AndroidUtilities.bold()) в НЕСКОЛЬКИХ местах общего класса ActionBar —
-            // не только в нашем createActionBar(), но и, например, в
-            // setTitleOverlayText() при getMeasuredWidth()==0 или когда
-            // titleTextView[0] на тот момент невидим — это НЕ баг ActionBar как
-            // такового (он общий для всего приложения и трогать его рискованно),
-            // а просто мы не переприменяли свой кастомный шрифт после каждого
-            // такого пересоздания. Раз эталонный typefeedExpectedTypeface уже
-            // загружен и лежит в памяти — просто переприменяем его тут же, если
-            // видим расхождение.
+            // ФИКС "шрифт typefeed слетает на дефолтный": titleTextView[0]
+            // общего класса ActionBar пересоздаётся заново (createTitleTextView(0),
+            // новый инстанс всегда с дефолтным AndroidUtilities.bold()) в нескольких
+            // местах, не только в нашем createActionBar() — переприменяем свой
+            // кастомный шрифт здесь же, если видим расхождение.
             if (!matchesAtResume && typefeedExpectedTypeface != null) {
                 actionBar.getTitleTextView().setTypeface(typefeedExpectedTypeface);
-                PotokDebugLog.log("PotokFeedLogo", "DialogsActivity onResume: ФИКС — Avenir Black переприменён"
-                        + " на titleTextView instance=" + System.identityHashCode(actionBar.getTitleTextView()));
             }
-        } else {
-            PotokDebugLog.log("PotokFeedLogo", "DialogsActivity onResume: actionBar или titleTextView == null,"
-                    + " сравнить шрифт невозможно");
         }
         if (dialogStoriesCell != null) {
             dialogStoriesCell.onResume();

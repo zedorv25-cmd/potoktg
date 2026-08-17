@@ -1557,13 +1557,20 @@ public boolean onTouchEvent(MotionEvent ev) {
                             public void onAnimationEnd(Animator animator) {
                                 tabsAnimation = null;
                                 if (!backAnimation) {
-                                    ViewPage tempPage = viewPages[0];
-                                    viewPages[0] = viewPages[1];
-                                    viewPages[1] = tempPage;
-                                    filterTabsView.selectTabWithId(viewPages[0].selectedType, 1.0f);
-                                    updateCounters(false);
-                                    viewPages[0].dialogsAdapter.resume();
-                                    viewPages[1].dialogsAdapter.pause();
+                                    // ФИКС (задача 1b, подпись верхнего таббара): раньше здесь
+                                    // swap viewPages[0]/[1] делался ВРУЧНУЮ, а сразу следом
+                                    // filterTabsView.selectTabWithId(viewPages[0].selectedType, 1f)
+                                    // синхронно вызывал delegate.onPageScrolled(1f), внутри
+                                    // которого стоит СВОЙ отдельный swap (см. ниже, там же
+                                    // теперь и синхронизация заголовка). Два swap'а подряд для
+                                    // одного и того же завершения свайпа отменяли друг друга —
+                                    // viewPages[0] откатывался обратно на СТАРУЮ вкладку, хотя
+                                    // контент на экране уже показывал новую. Заголовок таббара
+                                    // синхронизировался с этой откаченной (старой) вкладкой —
+                                    // отсюда неправильная подпись при обычном свайпе. Оставляем
+                                    // ЕДИНСТВЕННЫЙ swap внутри onPageScrolled — передаём туда
+                                    // ещё не свапнутый viewPages[1] (это и есть целевая вкладка).
+                                    filterTabsView.selectTabWithId(viewPages[1].selectedType, 1.0f);
                                 }
                                 viewPages[1].setVisibility(View.GONE);
                                 showScrollbars(true);

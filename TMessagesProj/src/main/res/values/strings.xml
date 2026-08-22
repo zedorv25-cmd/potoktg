@@ -3,6 +3,15 @@
     <string name="AppName">Telegram</string>
     <string name="AppNameLauncher">typefeed</string>
     <string name="AppNameBeta">Telegram Beta</string>
+    <string name="PotokChatLockedTitle">Chat is locked</string>
+    <string name="PotokChatLockWrongPassword">Wrong password</string>
+    <string name="PotokSetChatPassword">Set chat password</string>
+    <string name="PotokRemoveChatPassword">Remove chat password</string>
+    <string name="PotokChatPasswordSet">Chat is now locked with a password</string>
+    <string name="PotokChatPasswordRemoved">Password removed from this chat</string>
+    <string name="PotokEnterNewChatPassword">Enter a password for this chat</string>
+    <string name="PotokChatPasswordHint">Password</string>
+    <string name="PotokChatPasswordTooShort">Password must be at least 4 characters</string>
     <string name="LanguageName">English</string>
     <string name="English">English</string>
     <string name="LanguageNameInEnglish">English</string>

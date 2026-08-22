@@ -473,6 +473,7 @@ public class ChatActivity extends BaseFragment implements
     private RecyclerListView.OnItemClickListener mentionsOnItemClickListener;
     private SuggestEmojiView suggestEmojiPanel;
     private ActionBarMenuItem.Item muteItem;
+    private ActionBarMenuItem.Item potokChatLockMenuItem;
     private ActionBarMenuItem.Item muteItemGap;
     private ActionBarMenuItem.Item feeItemGap;
     private ActionBarMenuItem.Item feeItemText;
@@ -1571,6 +1572,7 @@ public class ChatActivity extends BaseFragment implements
     private final static int bot_settings = 31;
     private final static int call = 32;
     private final static int video_call = 33;
+    private final static int potok_chat_lock = 891;
 
     private final static int attach_photo = 0;
     private final static int attach_gallery = 1;
@@ -3990,6 +3992,19 @@ public class ChatActivity extends BaseFragment implements
                     presentFragment(TopicCreateFragment.create(-dialog_id, 0).setOpenInChatActivity(ChatActivity.this));
                 } else if (id == 888) {
                     dumpCanvas();
+                } else if (id == potok_chat_lock) {
+                    Runnable updateMenuText = () -> {
+                        if (potokChatLockMenuItem != null) {
+                            potokChatLockMenuItem.setText(PotokChatLock.isLocked(dialog_id)
+                                    ? LocaleController.getString(R.string.PotokRemoveChatPassword)
+                                    : LocaleController.getString(R.string.PotokSetChatPassword));
+                        }
+                    };
+                    if (PotokChatLock.isLocked(dialog_id)) {
+                        PotokChatLockDialogs.showUnlockChatConfirm(ChatActivity.this, currentAccount, dialog_id, updateMenuText);
+                    } else {
+                        PotokChatLockDialogs.showLockChatFlow(ChatActivity.this, currentAccount, dialog_id, updateMenuText);
+                    }
                 }
             }
         });
@@ -4276,6 +4291,11 @@ public class ChatActivity extends BaseFragment implements
             if (currentChat != null) {
                 headerItem.lazilyAddSubItem(open_direct, R.drawable.msg_markunread, getString(R.string.ChannelOpenDirect));
                 headerItem.setSubItemShown(open_direct, ChatObject.isChannel(currentChat) && !ChatObject.isMonoForum(currentChat) && currentChat.linked_monoforum_id != 0 && ChatObject.canManageMonoForum(currentAccount, -currentChat.linked_monoforum_id));
+            }
+            if (chatMode != MODE_SAVED && dialog_id != 0) {
+                boolean potokChatIsLocked = PotokChatLock.isLocked(dialog_id);
+                potokChatLockMenuItem = headerItem.lazilyAddSubItem(potok_chat_lock, R.drawable.msg_secret,
+                        potokChatIsLocked ? LocaleController.getString(R.string.PotokRemoveChatPassword) : LocaleController.getString(R.string.PotokSetChatPassword));
             }
             if (currentUser != null && chatMode != MODE_SAVED) {
                 headerItem.lazilyAddSubItem(call, R.drawable.msg_callback, LocaleController.getString(R.string.Call));

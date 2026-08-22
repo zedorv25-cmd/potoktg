@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="AppName">typefeed</string>
+    <string name="PotokChatLockedTitle">Чат защищён паролем</string>
+    <string name="PotokChatLockWrongPassword">Неверный пароль</string>
+    <string name="PotokSetChatPassword">Поставить пароль</string>
+    <string name="PotokRemoveChatPassword">Убрать пароль</string>
+    <string name="PotokChatPasswordSet">На чат установлен пароль</string>
+    <string name="PotokChatPasswordRemoved">Пароль с чата снят</string>
+    <string name="PotokEnterNewChatPassword">Введите пароль для этого чата</string>
+    <string name="PotokChatPasswordHint">Пароль</string>
+    <string name="PotokChatPasswordTooShort">Пароль должен быть не короче 4 символов</string>
     <string name="LanguageName">Русский</string>
     <string name="English">Английский</string>
     <string name="LanguageNameInEnglish">Russian</string>

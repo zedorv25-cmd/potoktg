@@ -474,6 +474,7 @@ public class ChatActivity extends BaseFragment implements
     private SuggestEmojiView suggestEmojiPanel;
     private ActionBarMenuItem.Item muteItem;
     private ActionBarMenuItem.Item potokChatLockMenuItem;
+    private PotokChatLockView potokChatLockView;
     private ActionBarMenuItem.Item muteItemGap;
     private ActionBarMenuItem.Item feeItemGap;
     private ActionBarMenuItem.Item feeItemText;
@@ -8808,6 +8809,16 @@ public class ChatActivity extends BaseFragment implements
         onBottomItemsVisibilityChanged();
         ViewCompat.setOnApplyWindowInsetsListener(fragmentView, this::onApplyWindowInsets);
         Timer.finish(t);
+
+        potokChatLockView = new PotokChatLockView(context);
+        potokChatLockView.setDelegate(() -> {
+            // скрытие оверлея уже выполняется внутри PotokChatLockView до
+            // вызова делегата, дополнительных действий здесь не требуется
+        });
+        contentView.addView(potokChatLockView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+        if (dialog_id != 0 && PotokChatLock.isLocked(dialog_id)) {
+            potokChatLockView.show();
+        }
 
         return fragmentView;
     }
@@ -29263,6 +29274,10 @@ public class ChatActivity extends BaseFragment implements
         if (starReactionsOverlay != null) {
             starReactionsOverlay.bringToFront();
         }
+
+        if (potokChatLockView != null && dialog_id != 0 && PotokChatLock.isLocked(dialog_id)) {
+            potokChatLockView.show();
+        }
     }
 
     public float getPullingDownOffset() {
@@ -29442,6 +29457,10 @@ public class ChatActivity extends BaseFragment implements
         }
         if (AvatarPreviewer.hasVisibleInstance()) {
             AvatarPreviewer.getInstance().close();
+        }
+
+        if (potokChatLockView != null) {
+            potokChatLockView.hide();
         }
     }
 

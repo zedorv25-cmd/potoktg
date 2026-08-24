@@ -8,8 +8,8 @@
     <string name="PotokChatPasswordSet">На чат установлен пароль</string>
     <string name="PotokChatPasswordRemoved">Пароль с чата снят</string>
     <string name="PotokEnterNewChatPassword">Введите пароль для этого чата</string>
-    <string name="PotokChatPasswordHint">Пароль</string>
-    <string name="PotokChatPasswordTooShort">Пароль должен быть не короче 4 символов</string>
+    <string name="PotokRepeatChatPassword">Повторите пароль</string>
+    <string name="PotokChatPasswordMismatch">Пароли не совпадают, попробуйте снова</string>
     <string name="LanguageName">Русский</string>
     <string name="English">Английский</string>
     <string name="LanguageNameInEnglish">Russian</string>

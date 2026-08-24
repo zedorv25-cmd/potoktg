@@ -10,8 +10,8 @@
     <string name="PotokChatPasswordSet">Chat is now locked with a password</string>
     <string name="PotokChatPasswordRemoved">Password removed from this chat</string>
     <string name="PotokEnterNewChatPassword">Enter a password for this chat</string>
-    <string name="PotokChatPasswordHint">Password</string>
-    <string name="PotokChatPasswordTooShort">Password must be at least 4 characters</string>
+    <string name="PotokRepeatChatPassword">Repeat the password</string>
+    <string name="PotokChatPasswordMismatch">Passwords don\'t match, try again</string>
     <string name="LanguageName">English</string>
     <string name="English">English</string>
     <string name="LanguageNameInEnglish">English</string>

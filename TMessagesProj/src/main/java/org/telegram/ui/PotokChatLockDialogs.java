@@ -1,36 +1,32 @@
 package org.telegram.ui;
 
+import android.app.Dialog;
 import android.content.Context;
-import android.content.DialogInterface;
-import android.text.InputType;
-import android.util.TypedValue;
 import android.view.Gravity;
-import android.view.inputmethod.EditorInfo;
-import android.widget.LinearLayout;
-import android.widget.TextView;
+import android.view.Window;
+import android.view.WindowManager;
+import android.widget.FrameLayout;
 
-import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.R;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
-import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.BulletinFactory;
-import org.telegram.ui.Components.EditTextBoldCursor;
 import org.telegram.ui.Components.LayoutHelper;
-
-import static org.telegram.messenger.AndroidUtilities.dp;
+import org.telegram.ui.Components.RLottieImageView;
 
 /**
  * Диалоги установки/снятия пароля на конкретный чат (пункт меню трёх точек
  * в ChatActivity). Пароль общий на все защищённые чаты (PotokChatLock).
+ * Ввод — сетка цифр (PotokPinPadView), не клавиатура.
  */
 public class PotokChatLockDialogs {
 
     /**
      * Если общий пароль уже установлен ранее — просто ставит защиту на этот
      * чат без повторного ввода пароля (пароль один на все чаты). Если пароля
-     * ещё нет вообще — сначала просит его придумать.
+     * ещё нет вообще — сначала просит его придумать (два шага: придумать +
+     * повторить, чтобы не ошибиться, ввод не показывается на экране).
      */
     public static void showLockChatFlow(BaseFragment fragment, int currentAccount, long dialogId, Runnable onSuccess) {
         if (fragment == null || fragment.getParentActivity() == null) {
@@ -44,82 +40,69 @@ public class PotokChatLockDialogs {
             }
             return;
         }
-        showCreatePasswordDialog(fragment, currentAccount, dialogId, onSuccess);
+        showCreatePinDialog(fragment, currentAccount, dialogId, onSuccess);
     }
 
-    private static void showCreatePasswordDialog(BaseFragment fragment, int currentAccount, long dialogId, Runnable onSuccess) {
+    private static void showCreatePinDialog(BaseFragment fragment, int currentAccount, long dialogId, Runnable onSuccess) {
         Context context = fragment.getParentActivity();
         if (context == null) {
             return;
         }
 
-        final EditTextBoldCursor editText = new EditTextBoldCursor(context);
-        editText.setBackground(null);
-        editText.setLineColors(Theme.getColor(Theme.key_dialogInputField), Theme.getColor(Theme.key_dialogInputFieldActivated), Theme.getColor(Theme.key_text_RedBold));
+        Dialog dialog = new Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+        }
+        dialog.setCancelable(true);
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(context);
-        builder.setTitle(LocaleController.getString(R.string.PotokSetChatPassword));
-        builder.setNegativeButton(LocaleController.getString(R.string.Cancel), null);
+        FrameLayout root = new FrameLayout(context);
+        root.setBackgroundColor(0xff1c1c1e);
 
-        LinearLayout linearLayout = new LinearLayout(context);
-        linearLayout.setOrientation(LinearLayout.VERTICAL);
-        builder.setView(linearLayout);
+        RLottieImageView imageView = new RLottieImageView(context);
+        imageView.setAnimation(R.raw.passcode_lock, 58, 58);
+        imageView.setAutoRepeat(false);
+        root.addView(imageView, LayoutHelper.createFrame(58, 58, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 90, 0, 0));
 
-        final TextView message = new TextView(context);
-        message.setText(LocaleController.getString(R.string.PotokEnterNewChatPassword));
-        message.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
-        message.setPadding(dp(23), dp(12), dp(23), dp(6));
-        message.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
-        linearLayout.addView(message, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+        PotokPinPadView pinPadView = new PotokPinPadView(context);
+        pinPadView.setTitle(LocaleController.getString(R.string.PotokEnterNewChatPassword));
+        root.addView(pinPadView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL | Gravity.TOP, 0, 175, 0, 0));
 
-        editText.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
-        editText.setTextColor(Theme.getColor(Theme.key_dialogTextBlack));
-        editText.setMaxLines(1);
-        editText.setLines(1);
-        editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        editText.setHint(LocaleController.getString(R.string.PotokChatPasswordHint));
-        editText.setGravity(Gravity.LEFT | Gravity.TOP);
-        editText.setSingleLine(true);
-        editText.setImeOptions(EditorInfo.IME_ACTION_DONE);
-        editText.setCursorColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText));
-        editText.setCursorSize(dp(20));
-        editText.setCursorWidth(1.5f);
-        editText.setPadding(0, dp(4), 0, 0);
-        linearLayout.addView(editText, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 36, Gravity.TOP | Gravity.LEFT, 24, 6, 24, 0));
+        dialog.setContentView(root);
 
-        builder.setPositiveButton(LocaleController.getString(R.string.PotokSetChatPassword), (dialog, which) -> {
-            String password = editText.getText().toString();
-            if (password.length() < 4) {
-                showSimpleBulletin(fragment, LocaleController.getString(R.string.PotokChatPasswordTooShort));
-                return;
-            }
-            PotokChatLock.setPassword(password);
-            PotokChatLock.lockDialog(currentAccount, dialogId);
-            showSimpleBulletin(fragment, LocaleController.getString(R.string.PotokChatPasswordSet));
-            if (onSuccess != null) {
-                onSuccess.run();
+        final String[] firstPin = new String[1];
+        pinPadView.setListener(pin -> {
+            if (firstPin[0] == null) {
+                firstPin[0] = pin;
+                pinPadView.reset(false);
+                pinPadView.setTitle(LocaleController.getString(R.string.PotokRepeatChatPassword));
+            } else {
+                if (pin.equals(firstPin[0])) {
+                    PotokChatLock.setPassword(pin);
+                    PotokChatLock.lockDialog(currentAccount, dialogId);
+                    dialog.dismiss();
+                    showSimpleBulletin(fragment, LocaleController.getString(R.string.PotokChatPasswordSet));
+                    if (onSuccess != null) {
+                        onSuccess.run();
+                    }
+                } else {
+                    // пароли не совпали - начинаем сначала, с первого шага
+                    firstPin[0] = null;
+                    pinPadView.reset(true);
+                    pinPadView.setTitle(LocaleController.getString(R.string.PotokChatPasswordMismatch));
+                    org.telegram.messenger.AndroidUtilities.runOnUIThread(() ->
+                            pinPadView.setTitle(LocaleController.getString(R.string.PotokEnterNewChatPassword)), 1200);
+                }
             }
         });
 
-        final AlertDialog alertDialog = builder.create();
-        alertDialog.setOnShowListener(dialog -> AndroidUtilities.runOnUIThread(() -> {
-            editText.requestFocus();
-            AndroidUtilities.showKeyboard(editText);
-        }));
-        fragment.showDialog(alertDialog);
-        editText.setOnEditorActionListener((textView, i, keyEvent) -> {
-            if (i == EditorInfo.IME_ACTION_DONE) {
-                alertDialog.getButton(DialogInterface.BUTTON_POSITIVE).performClick();
-                return true;
-            }
-            return false;
-        });
+        dialog.show();
     }
 
     /**
      * Снятие пароля с одного конкретного чата (не трогает пароль остальных
-     * защищённых чатов). Повторный ввод пароля не требуется — пользователь
-     * уже прошёл проверку, раз находится внутри открытого чата.
+     * защищённых чатов). Повторный ввод PIN не требуется — пользователь уже
+     * прошёл проверку, раз находится внутри открытого чата.
      */
     public static void showUnlockChatConfirm(BaseFragment fragment, int currentAccount, long dialogId, Runnable onSuccess) {
         if (fragment == null || fragment.getParentActivity() == null) {
@@ -127,7 +110,7 @@ public class PotokChatLockDialogs {
         }
         AlertDialog.Builder builder = new AlertDialog.Builder(fragment.getParentActivity());
         builder.setTitle(LocaleController.getString(R.string.PotokRemoveChatPassword));
-        builder.setPositiveButton(LocaleController.getString(R.string.PotokRemoveChatPassword), (dialog, which) -> {
+        builder.setPositiveButton(LocaleController.getString(R.string.PotokRemoveChatPassword), (d, which) -> {
             PotokChatLock.unlockDialog(currentAccount, dialogId);
             showSimpleBulletin(fragment, LocaleController.getString(R.string.PotokChatPasswordRemoved));
             if (onSuccess != null) {

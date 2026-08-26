@@ -86,13 +86,6 @@ public class PotokChatLockView extends FrameLayout {
     }
 
     @Override
-    public boolean onInterceptTouchEvent(android.view.MotionEvent ev) {
-        // Оверлей полностью перехватывает касания, чтобы под ним нельзя было
-        // взаимодействовать с содержимым чата, пока не введён верный PIN.
-        return getVisibility() == VISIBLE;
-    }
-
-    @Override
     public boolean dispatchKeyEvent(android.view.KeyEvent event) {
         if (getVisibility() == VISIBLE && event.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK) {
             // Назад с экрана блокировки не должен открывать содержимое чата -

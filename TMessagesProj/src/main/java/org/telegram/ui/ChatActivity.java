@@ -8812,15 +8812,30 @@ public class ChatActivity extends BaseFragment implements
 
         potokChatLockView = new PotokChatLockView(context);
         potokChatLockView.setDelegate(() -> {
-            // скрытие оверлея уже выполняется внутри PotokChatLockView до
-            // вызова делегата, дополнительных действий здесь не требуется
+            // при верном PIN возвращаем шапку чата обратно
+            potokSetHeaderVisible(true);
         });
         contentView.addView(potokChatLockView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         if (dialog_id != 0 && PotokChatLock.isLocked(dialog_id)) {
+            potokSetHeaderVisible(false);
             potokChatLockView.show();
         }
 
         return fragmentView;
+    }
+
+    /**
+     * Полностью скрывает/показывает шапку чата (ActionBar: аватар, название,
+     * три точки меню) на время блокировки паролем. Раньше вместо этого
+     * пытались просто перекрыть её сверху оверлеем PotokChatLockView, но
+     * шапка оставалась кликабельной под оверлеем (можно было через меню трёх
+     * точек снять пароль, не вводя PIN) - обычное перекрытие view поверх не
+     * помогло, поэтому шапку прячем целиком, это надёжнее.
+     */
+    private void potokSetHeaderVisible(boolean visible) {
+        if (actionBar != null) {
+            actionBar.setVisibility(visible ? View.VISIBLE : View.GONE);
+        }
     }
 
     private boolean lastImeVisible;
@@ -29276,6 +29291,7 @@ public class ChatActivity extends BaseFragment implements
         }
 
         if (potokChatLockView != null && dialog_id != 0 && PotokChatLock.isLocked(dialog_id)) {
+            potokSetHeaderVisible(false);
             potokChatLockView.show();
         }
     }

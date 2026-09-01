@@ -1,18 +1,71 @@
-// Top-level build file where you can add configuration options common to all sub-projects/modules.
-buildscript {
-    repositories {
-        mavenCentral()
-        google()
-        maven { url 'https://developer.huawei.com/repo/' }
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.13.0'
-        classpath 'com.google.gms:google-services:4.3.15'
-        classpath 'com.huawei.agconnect:agcp:1.9.1.301'
-        classpath 'com.google.firebase:firebase-crashlytics-gradle:2.9.0'
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.20"
-    }
-}
-repositories {
-    google()
-}
+name: Build
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_HARDLINK: "true"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_MAXSIZE: "10G"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show commit info
+        run: |
+          echo "Building commit:"
+          git log -1 --format="%H %ci %s"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+          df -h
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "build-tools;36.0.0 ndk;27.2.12479018 platforms;android-36"
+
+      - name: Configure Signing
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
+          echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+          echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
+          echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+
+      - name: Configure Secrets
+        run: |
+          echo "apiId=${{ secrets.API_ID }}" >> local.properties
+          echo "apiHash=${{ secrets.API_HASH }}" >> local.properties
+          echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 --decode > TMessagesProj_App/google-services.json
+
+      - name: Build with Gradle
+        run: |
+          chmod +x gradlew
+          ./gradlew clean bundleAfatRelease --no-build-cache --rerun-tasks
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: aab-release
+          path: TMessagesProj_App/build/outputs/bundle/

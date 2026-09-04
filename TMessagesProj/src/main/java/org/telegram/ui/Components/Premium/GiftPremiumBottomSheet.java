@@ -189,7 +189,8 @@ public class GiftPremiumBottomSheet extends BottomSheetWithRecyclerListView impl
                 }
             } else if (!products.isEmpty()) {
                 long startMs = System.currentTimeMillis();
-                BillingController.getInstance().queryProductDetails(products, (billingResult, list) -> {
+                BillingController.getInstance().queryProductDetails(products, (billingResult, queryProductDetailsResult) -> {
+                    List<ProductDetails> list = queryProductDetailsResult.getProductDetailsList();
                     long pricePerMonthMaxStore = 0;
 
                     for (ProductDetails details : list) {

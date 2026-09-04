@@ -10097,7 +10097,8 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                             .build()
                     );
                     FileLog.d("LoginBilling querying \"" + product + "\" product");
-                    BillingController.getInstance().queryProductDetails(productQueries, (result, list) -> AndroidUtilities.runOnUIThread(() -> {
+                    BillingController.getInstance().queryProductDetails(productQueries, (result, queryProductDetailsResult) -> AndroidUtilities.runOnUIThread(() -> {
+                        List<ProductDetails> list = queryProductDetailsResult.getProductDetailsList();
                         FileLog.d("LoginBilling queried \"" + product + "\" product: " + BillingController.getResponseCodeString(result.getResponseCode()));
                         if (result.getResponseCode() != BillingClient.BillingResponseCode.OK) {
                             lastError = "BILLING_" + BillingController.getResponseCodeString(result.getResponseCode());

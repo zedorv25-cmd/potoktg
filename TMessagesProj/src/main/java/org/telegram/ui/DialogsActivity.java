@@ -3747,6 +3747,14 @@ public boolean onTouchEvent(MotionEvent ev) {
                     if (tabId < 0 || tabId >= dialogFilters.size()) {
                         return 0;
                     }
+                    // ДОБАВЛЕНО: в режиме hasMainTabs все не-дефолтные вкладки — это наши локальные
+                    // пресеты (Непрочитанные/Группы/Траф), их filter.unreadCount не считается штатно
+                    // (см. potokComputePresetTabUnreadCount выше) — считаем сами вместо чтения
+                    // всегда-нулевого поля. Вне hasMainTabs (обычные папки Telegram) поведение
+                    // не меняется — используется прежняя строка ниже.
+                    if (hasMainTabs) {
+                        return potokComputePresetTabUnreadCount(dialogFilters.get(tabId));
+                    }
                     return getPotokActiveDialogFilters().get(tabId).unreadCount;
                 }
 
@@ -6878,6 +6886,34 @@ public boolean onTouchEvent(MotionEvent ev) {
             return getMessagesController().getPotokMainTabsFilters();
         }
         return getMessagesController().getDialogFilters();
+    }
+
+    // ДОБАВЛЕНО: бейджи-счётчики непрочитанных на вкладках верхнего таббара (Непрочитанные/Группы/Траф).
+    // Эти 3 вкладки — локальные пресеты (см. getPotokMainTabsFilters() в MessagesController), они
+    // намеренно НЕ входят в общий dialogFilters аккаунта, поэтому штатный механизм подсчёта
+    // (calcUnreadCounters в MessagesStorage) их filter.unreadCount никогда не заполняет — там всегда
+    // остаётся 0. Вместо того чтобы трогать этот хрупкий общий механизм, считаем счётчик здесь же,
+    // "вживую", по той же логике, что уже использует didSelectTab() чуть выше для наполнения самой
+    // вкладки: getAllDialogs() + filter.includesDialog(). Считаем СУММУ непрочитанных СООБЩЕНИЙ
+    // (а не количество чатов) через getDialogUnreadCount(), замьюченные чаты не исключаются —
+    // согласовано с пользователем. Вызывается редко (по событиям обновления диалогов/прочтения),
+    // не на каждый кадр, поэтому линейный проход по диалогам не создаёт проблем с производительностью.
+    private int potokComputePresetTabUnreadCount(MessagesController.DialogFilter filter) {
+        if (filter == null) {
+            return 0;
+        }
+        int sum = 0;
+        ArrayList<TLRPC.Dialog> dialogs = getMessagesController().getAllDialogs();
+        for (int a = 0, N = dialogs.size(); a < N; a++) {
+            TLRPC.Dialog d = dialogs.get(a);
+            if (d == null || DialogObject.isFolderDialogId(d.id)) {
+                continue;
+            }
+            if (filter.includesDialog(getAccountInstance(), d.id, d)) {
+                sum += getMessagesController().getDialogUnreadCount(d);
+            }
+        }
+        return sum;
     }
 
     private void updateFilterTabs(boolean force, boolean animated) {

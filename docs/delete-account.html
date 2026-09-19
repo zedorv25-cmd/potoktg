@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TypeFeed — Удаление аккаунта и данных</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a1a;
+    --text-secondary: #55575c;
+    --accent: #e0342a;
+    --border: #e6e6e6;
+    --card-bg: #f7f7f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17181a;
+      --text: #f2f2f3;
+      --text-secondary: #a8a9ac;
+      --accent: #ff5c50;
+      --border: #2c2d30;
+      --card-bg: #1f2022;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17181a;
+    --text: #f2f2f3;
+    --text-secondary: #a8a9ac;
+    --accent: #ff5c50;
+    --border: #2c2d30;
+    --card-bg: #1f2022;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 20px 80px;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .logo .bars {
+    width: 26px;
+    height: 18px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .logo .bars span {
+    display: block;
+    height: 5px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+  .logo .bars span:first-child { width: 100%; }
+  .logo .bars span:last-child { width: 65%; }
+  .logo .word {
+    font-weight: 800;
+    font-size: 22px;
+    letter-spacing: -0.02em;
+  }
+  h1 {
+    font-size: 28px;
+    margin: 24px 0 4px;
+  }
+  .updated {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 32px;
+  }
+  h2 {
+    font-size: 19px;
+    margin-top: 36px;
+    margin-bottom: 10px;
+  }
+  p, li {
+    color: var(--text);
+    font-size: 15.5px;
+  }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin: 20px 0;
+  }
+  .card.warn {
+    border-color: var(--accent);
+  }
+  a { color: var(--accent); }
+  .contact {
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+  code {
+    background: var(--card-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">
+    <span class="bars"><span></span><span></span></span>
+    <span class="word">typefeed</span>
+  </div>
+  <h1>Удаление аккаунта и данных</h1>
+  <div class="updated">Дата последнего обновления: 17 сентября 2026 г.</div>
+
+  <p>TypeFeed (пакет <code>app.potok.messenger</code>) — клиент для обмена сообщениями, построенный на основе открытого кода Telegram и работающий через официальную инфраструктуру Telegram. Приложение не ведёт собственной отдельной базы учётных записей: ваш аккаунт в TypeFeed — это тот же аккаунт, что и в самом Telegram, привязанный к вашему номеру телефона.</p>
+
+  <div class="card">
+    <p><strong>Поэтому удаление аккаунта и связанных с ним данных (сообщений, контактов, профиля) выполняется через стандартный механизм самого Telegram</strong> — это полностью и безвозвратно удаляет учётную запись со всех серверов, а вместе с ней и данные, доступные через TypeFeed.</p>
+  </div>
+
+  <h2>Способ 1 — прямо в приложении</h2>
+  <ol>
+    <li>Откройте TypeFeed.</li>
+    <li>Перейдите в <strong>Настройки → Конфиденциальность → Удалить мой аккаунт</strong> (Settings → Privacy and Security → Delete My Account).</li>
+    <li>Подтвердите удаление. Аккаунт и все связанные с ним данные (сообщения, медиафайлы, список контактов, профиль) будут удалены с серверов в течение нескольких дней согласно официальной политике Telegram.</li>
+  </ol>
+
+  <h2>Способ 2 — через сайт Telegram</h2>
+  <ol>
+    <li>Откройте <a href="https://my.telegram.org/auth?to=deactivate" target="_blank" rel="noopener">my.telegram.org/auth?to=deactivate</a>.</li>
+    <li>Войдите, указав тот же номер телефона, что используется в TypeFeed, и подтвердите код, присланный в Telegram или по SMS.</li>
+    <li>Следуйте инструкциям на странице для полной деактивации аккаунта.</li>
+  </ol>
+
+  <h2>Что именно удаляется</h2>
+  <ul>
+    <li>Профиль (имя, фото, номер телефона в системе Telegram);</li>
+    <li>Личные и групповые сообщения, отправленные и полученные медиафайлы, хранящиеся на серверах Telegram;</li>
+    <li>Список контактов, синхронизированный с аккаунтом;</li>
+    <li>Членство в каналах и группах.</li>
+  </ul>
+
+  <div class="card warn">
+    <p><strong>Отдельно про функцию «Пароль на чат» в TypeFeed.</strong> PIN-код и список чатов, защищённых этой функцией, хранятся только локально на вашем устройстве и никогда не передаются на серверы. Удаление аккаунта через способы выше на них не влияет напрямую — эти данные удаляются автоматически при удалении самого приложения с устройства.</p>
+  </div>
+
+  <div class="contact">
+    По вопросам, связанным с этой страницей, вы можете связаться с разработчиком через контактные данные, указанные в карточке приложения TypeFeed в Google Play.
+  </div>
+</div>
+</body>
+</html>

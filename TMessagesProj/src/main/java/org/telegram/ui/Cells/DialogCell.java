@@ -93,6 +93,7 @@ import org.telegram.tgnet.tl.TL_stories;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Adapters.DialogsAdapter;
 import org.telegram.ui.AvatarSpan;
+import org.telegram.ui.PotokChatLock;
 import org.telegram.ui.Components.AnimatedEmojiDrawable;
 import org.telegram.ui.Components.AnimatedEmojiSpan;
 import org.telegram.ui.Components.AnimatedFloat;
@@ -2533,6 +2534,10 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
                     messageString = s;
                 }
             }
+        }
+        if (PotokChatLock.isLocked(currentDialogId)) {
+            messageString = getString(R.string.PotokChatLockedTitle);
+            messageNameString = null;
         }
         messageWidth = Math.max(dp(12), messageWidth);
         buttonTop = dp(useForceThreeLines || SharedConfig.useThreeLinesLayout ? 58 : 62);

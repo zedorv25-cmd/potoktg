@@ -2903,7 +2903,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && AndroidUtilities.isSimAvailable()) {
                             boolean allowCall = getParentActivity().checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
                             boolean allowCancelCall = getParentActivity().checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED;
-                            boolean allowReadCallLog = Build.VERSION.SDK_INT < Build.VERSION_CODES.P || getParentActivity().checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED;
+                            boolean allowReadCallLog = true; // Potok: READ_CALL_LOG removed from manifest, never request it
                             boolean allowReadPhoneNumbers = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || getParentActivity().checkSelfPermission(Manifest.permission.READ_PHONE_NUMBERS) == PackageManager.PERMISSION_GRANTED;;
                             if (codeField != null && "888".equals(codeField.getText())) {
                                 allowCall = true;
@@ -2984,7 +2984,7 @@ public class LoginActivity extends BaseFragment implements NotificationCenter.No
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && simcardAvailable) {
                 allowCall = getParentActivity().checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED;
                 allowCancelCall = getParentActivity().checkSelfPermission(Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED;
-                allowReadCallLog = Build.VERSION.SDK_INT < Build.VERSION_CODES.P || getParentActivity().checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED;
+                allowReadCallLog = true; // Potok: READ_CALL_LOG removed from manifest, never request it
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     allowReadPhoneNumbers = getParentActivity().checkSelfPermission(Manifest.permission.READ_PHONE_NUMBERS) == PackageManager.PERMISSION_GRANTED;
                 }

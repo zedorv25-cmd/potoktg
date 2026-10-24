@@ -3072,6 +3072,10 @@ public class AndroidUtilities {
         if (!hasCallPermissions) {
             return null;
         }
+        // Potok: READ_CALL_LOG removed from manifest, never actually query the call log
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && ApplicationLoader.applicationContext.checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
+            return null;
+        }
         String order;
         Bundle selectionArgs;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

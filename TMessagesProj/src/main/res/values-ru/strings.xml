@@ -280,4 +280,9 @@
     <string name="SavedMessages">Избранное</string>
     <string name="Calls">Звонки</string>
     <string name="Settings">Настройки</string>
+    <string name="PotokCameraNoAsk">Больше не спрашивать</string>
+    <string name="PotokCameraBack">Задняя камера</string>
+    <string name="PotokCameraFront">Фронтальная камера</string>
+    <string name="PotokCameraAskOff">Выбор камеры отключён</string>
+    <string name="PotokCameraAskUndo">Вернуть</string>
 </resources>

@@ -874,6 +874,9 @@ public class ChatActivityEnterView extends FrameLayout implements
             if (delegate == null || parentActivity == null) {
                 return;
             }
+            if (potokInterceptForCameraChoice()) {
+                return;
+            }
             delegate.onPreAudioVideoRecord();
             calledRecordRunnable = true;
             recordAudioVideoRunnableStarted = false;
@@ -941,6 +944,50 @@ public class ChatActivityEnterView extends FrameLayout implements
             }
         }
     };
+
+    // typefeed: выбор камеры перед записью видеокружка
+    private boolean potokBypassCameraChoice;
+    private boolean potokCameraMenuActive;
+
+    private boolean potokInterceptForCameraChoice() {
+        if (potokBypassCameraChoice || !isInVideoMode()) {
+            return false;
+        }
+        if (!PotokCameraChoice.isAskEnabled()) {
+            PotokCameraChoice.pendingFront = PotokCameraChoice.isLastFront();
+            return false;
+        }
+        if (parentFragment == null || audioVideoButtonContainer == null) {
+            return false;
+        }
+        PotokCameraChoice.pendingFront = null;
+        recordAudioVideoRunnableStarted = false;
+        potokCameraMenuActive = true;
+        try {
+            audioVideoButtonContainer.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP, HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING);
+        } catch (Exception ignore) {}
+        PotokCameraChoice.showMenu(parentFragment, audioVideoButtonContainer, front -> potokStartRecordingWithCamera(front), () -> potokCameraMenuActive = false);
+        return true;
+    }
+
+    private void potokStartRecordingWithCamera(boolean front) {
+        potokCameraMenuActive = false;
+        PotokCameraChoice.pendingFront = front;
+        potokBypassCameraChoice = true;
+        try {
+            recordAudioVideoRunnable.run();
+        } finally {
+            potokBypassCameraChoice = false;
+        }
+        // запись без удержания пальца: тот же путь, что у жеста «вверх» (замок)
+        AndroidUtilities.runOnUIThread(() -> {
+            if (recordingAudioVideo && recordCircle != null && !sendButtonVisible) {
+                recordCircle.setLockTranslation(0f);
+                recordCircle.setLockTranslation(-dp(60));
+                startLockTransition();
+            }
+        }, 250);
+    }
 
     private AnimationNotificationsLocker notificationsLocker = new AnimationNotificationsLocker();
 
@@ -2939,6 +2986,9 @@ public class ChatActivityEnterView extends FrameLayout implements
                     }
                     return true;
                 } else if (motionEvent.getAction() == MotionEvent.ACTION_UP || motionEvent.getAction() == MotionEvent.ACTION_CANCEL) {
+                    if (potokCameraMenuActive) {
+                        return true;
+                    }
                     if (motionEvent.getAction() == MotionEvent.ACTION_CANCEL && recordingAudioVideo) {
                         if (slideToCancelProgress < 0.7f) {
                             if (hasRecordVideo && isInVideoMode()) {

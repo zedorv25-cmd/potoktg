@@ -10832,4 +10832,9 @@
 <string name="PotokTabTraf">Траф</string>
 <string name="PotokTabContacts">Контакты</string>
 <string name="PotokTabSettings">Настройки</string>
+    <string name="PotokCameraNoAsk">Don\'t ask again</string>
+    <string name="PotokCameraBack">Back camera</string>
+    <string name="PotokCameraFront">Front camera</string>
+    <string name="PotokCameraAskOff">Camera choice turned off</string>
+    <string name="PotokCameraAskUndo">Undo</string>
 </resources>

@@ -737,6 +737,11 @@ public class InstantCameraView extends FrameLayout implements NotificationCenter
             recordedTime = 0;
             progress = 0;
         }
+        if (PotokCameraChoice.pendingFront != null) {
+            isFrontface = PotokCameraChoice.pendingFront;
+            PotokCameraChoice.pendingFront = null;
+            updateFlash();
+        }
         cancelled = false;
         file = null;
         encryptedFile = null;
